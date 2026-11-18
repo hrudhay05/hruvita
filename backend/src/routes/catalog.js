@@ -37,6 +37,7 @@ router.put('/settings', requireAuth, requireRole('admin'), async (req, res) => {
     'cutoffHour',
     'storeOpen',
     'aiEnabled',
+    'codEnabled',
   ];
   const patch = {};
   for (const key of allowed) {

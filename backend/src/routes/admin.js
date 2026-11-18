@@ -14,6 +14,13 @@ import {
   listAllPayments,
   transitionOrderStatus,
   getOrderById,
+  listAllCoupons,
+  upsertCoupon,
+  deleteCouponByCode,
+  listAllSlots,
+  updateSlotConfig,
+  listAllSubscriptions,
+  getSettings,
 } from '../store/repository.js';
 
 const router = Router();
@@ -21,14 +28,17 @@ const router = Router();
 router.use(requireAuth, requireRole('admin', 'staff'));
 
 router.get('/overview', async (_req, res) => {
-  const [products, categories, users, orders, payments, auditLogs] = await Promise.all([
-    listProducts({ includeInactive: true }),
-    listCategories(),
-    listUsers(),
-    listAllOrders(),
-    listAllPayments(),
-    listAuditLogs(25),
-  ]);
+  const [products, categories, users, orders, payments, subscriptions, auditLogs, settings] =
+    await Promise.all([
+      listProducts({ includeInactive: true }),
+      listCategories(),
+      listUsers(),
+      listAllOrders(),
+      listAllPayments(),
+      listAllSubscriptions(),
+      listAuditLogs(25),
+      getSettings(),
+    ]);
 
   const lowStock = products.filter((p) => p.stock > 0 && p.stock <= 5);
   const outOfStock = products.filter((p) => p.stock <= 0);
@@ -36,6 +46,7 @@ router.get('/overview', async (_req, res) => {
   const activeOrders = orders.filter(
     (o) => !['delivered', 'cancelled', 'refunded'].includes(o.status)
   );
+  const activeSubscriptions = subscriptions.filter((s) => s.status === 'active');
   const totalRevenue = orders
     .filter((o) => !['cancelled', 'refund_initiated', 'refunded', 'payment_pending'].includes(o.status))
     .reduce((sum, o) => sum + (o.pricing?.grandTotal || 0), 0);
@@ -49,6 +60,7 @@ router.get('/overview', async (_req, res) => {
       totalCustomers: customers.length,
       totalOrders: orders.length,
       activeOrdersCount: activeOrders.length,
+      activeSubscriptionsCount: activeSubscriptions.length,
       totalRevenue,
     },
     lowStock,
@@ -56,9 +68,270 @@ router.get('/overview', async (_req, res) => {
     customers,
     orders,
     payments,
+    subscriptions,
+    settings,
     orderStatuses: ORDER_STATUSES,
     auditLogs,
   });
+});
+
+// Phase 5: Kitchen Tomorrow-Prep View grouped by delivery slot
+router.get('/kitchen', async (req, res) => {
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const targetDate = String(req.query.date || tomorrow).slice(0, 10);
+
+  const [orders, subscriptions, slots] = await Promise.all([
+    listAllOrders(),
+    listAllSubscriptions(),
+    listAllSlots(),
+  ]);
+
+  const dayOrders = orders.filter(
+    (o) =>
+      o.scheduledDate === targetDate &&
+      !['cancelled', 'refund_initiated', 'refunded', 'payment_pending'].includes(o.status)
+  );
+
+  const activeSubs = subscriptions.filter(
+    (s) => s.status === 'active' && s.remainingDeliveries > 0 && s.startDate <= targetDate
+  );
+
+  const slotMap = {};
+  for (const sl of slots) {
+    slotMap[sl.id] = {
+      slotId: sl.id,
+      slotName: sl.name,
+      window: sl.window,
+      maxOrders: sl.maxOrders,
+      orders: [],
+      subscriptions: [],
+      itemTotals: {},
+    };
+  }
+
+  const grandTotals = {};
+
+  for (const ord of dayOrders) {
+    const key = slotMap[ord.slotId] ? ord.slotId : 'morning';
+    if (!slotMap[key]) {
+      slotMap[key] = {
+        slotId: key,
+        slotName: ord.slotLabel || key,
+        window: '',
+        maxOrders: 40,
+        orders: [],
+        subscriptions: [],
+        itemTotals: {},
+      };
+    }
+    slotMap[key].orders.push(ord);
+    for (const item of ord.items || []) {
+      slotMap[key].itemTotals[item.name] = (slotMap[key].itemTotals[item.name] || 0) + item.qty;
+      grandTotals[item.name] = (grandTotals[item.name] || 0) + item.qty;
+    }
+  }
+
+  for (const sub of activeSubs) {
+    const key = slotMap[sub.slotId] ? sub.slotId : 'morning';
+    if (slotMap[key]) {
+      slotMap[key].subscriptions.push(sub);
+      const dish = `${sub.preferredBreakfast} (Subscription)`;
+      slotMap[key].itemTotals[dish] = (slotMap[key].itemTotals[dish] || 0) + 1;
+      grandTotals[dish] = (grandTotals[dish] || 0) + 1;
+    }
+  }
+
+  res.json({
+    date: targetDate,
+    totalOrders: dayOrders.length,
+    totalSubscriptions: activeSubs.length,
+    slots: Object.values(slotMap),
+    grandTotals: Object.entries(grandTotals)
+      .map(([name, qty]) => ({ name, qty }))
+      .sort((a, b) => b.qty - a.qty),
+  });
+});
+
+// Phase 5: Coupons Manager
+router.get('/coupons', async (_req, res) => {
+  const coupons = await listAllCoupons();
+  res.json({ coupons });
+});
+
+router.post('/coupons', requireRole('admin'), async (req, res) => {
+  try {
+    const coupon = await upsertCoupon(req.body || {});
+    await recordAudit({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'UPSERT_COUPON',
+      entity: 'coupon',
+      entityId: coupon.code,
+      details: { type: coupon.type, value: coupon.value, active: coupon.active },
+    });
+    res.status(201).json({ coupon });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Could not save coupon.' });
+  }
+});
+
+router.delete('/coupons/:code', requireRole('admin'), async (req, res) => {
+  const ok = await deleteCouponByCode(req.params.code);
+  if (!ok) return res.status(404).json({ error: 'Coupon not found.' });
+  await recordAudit({
+    actorId: req.user.id,
+    actorEmail: req.user.email,
+    action: 'DELETE_COUPON',
+    entity: 'coupon',
+    entityId: req.params.code.toUpperCase(),
+  });
+  res.json({ deleted: true });
+});
+
+// Phase 5: Delivery Slots Manager
+router.get('/slots', async (_req, res) => {
+  const slots = await listAllSlots();
+  res.json({ slots });
+});
+
+router.put('/slots/:id', requireRole('admin'), async (req, res) => {
+  const updated = await updateSlotConfig(req.params.id, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'Delivery slot not found.' });
+  await recordAudit({
+    actorId: req.user.id,
+    actorEmail: req.user.email,
+    action: 'UPDATE_SLOT',
+    entity: 'deliverySlot',
+    entityId: updated.id,
+    details: { window: updated.window, maxOrders: updated.maxOrders, active: updated.active },
+  });
+  res.json({ slot: updated });
+});
+
+// Phase 5: Sales & Inventory Reports
+router.get('/reports', async (_req, res) => {
+  const [orders, products, subscriptions, users] = await Promise.all([
+    listAllOrders(),
+    listProducts({ includeInactive: true }),
+    listAllSubscriptions(),
+    listUsers(),
+  ]);
+
+  const validOrders = orders.filter(
+    (o) => !['cancelled', 'refund_initiated', 'refunded', 'payment_pending'].includes(o.status)
+  );
+
+  const productSales = {};
+  const paymentBreakdown = { cod: { count: 0, amount: 0 }, razorpay: { count: 0, amount: 0 } };
+  const dailySales = {};
+
+  for (const ord of validOrders) {
+    const total = ord.pricing?.grandTotal || 0;
+    const method = ord.paymentMethod === 'cod' ? 'cod' : 'razorpay';
+    paymentBreakdown[method].count += 1;
+    paymentBreakdown[method].amount += total;
+
+    const dayKey = (ord.scheduledDate || ord.createdAt || '').slice(0, 10) || 'Today';
+    if (!dailySales[dayKey]) dailySales[dayKey] = { date: dayKey, orders: 0, revenue: 0 };
+    dailySales[dayKey].orders += 1;
+    dailySales[dayKey].revenue += total;
+
+    for (const it of ord.items || []) {
+      if (!productSales[it.name]) productSales[it.name] = { name: it.name, qty: 0, revenue: 0 };
+      productSales[it.name].qty += it.qty;
+      productSales[it.name].revenue += it.lineTotal;
+    }
+  }
+
+  const subscriptionRevenue = subscriptions.reduce((sum, s) => sum + (s.price || 0), 0);
+
+  res.json({
+    summary: {
+      validOrderCount: validOrders.length,
+      orderRevenue: validOrders.reduce((s, o) => s + (o.pricing?.grandTotal || 0), 0),
+      subscriptionCount: subscriptions.length,
+      subscriptionRevenue,
+      customerCount: users.filter((u) => u.role === 'customer').length,
+      lowStockItems: products.filter((p) => p.stock <= 5).length,
+    },
+    paymentBreakdown,
+    dailySales: Object.values(dailySales).sort((a, b) => b.date.localeCompare(a.date)),
+    topProducts: Object.values(productSales)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10),
+  });
+});
+
+// Phase 5: Free CSV Export (Orders, Inventory, Customers)
+function csvEscape(val) {
+  const s = String(val ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+router.get('/export/:type', async (req, res) => {
+  const type = req.params.type;
+  let headers = [];
+  let rows = [];
+
+  if (type === 'orders') {
+    const orders = await listAllOrders();
+    headers = ['Order ID', 'Date', 'Slot', 'Customer', 'Phone', 'Payment Method', 'Payment Status', 'Order Status', 'Subtotal', 'Discount', 'Delivery', 'Tax', 'Grand Total'];
+    rows = orders.map((o) => [
+      o.id,
+      o.scheduledDate,
+      o.slotLabel,
+      o.customerName,
+      o.customerPhone,
+      o.paymentMethod,
+      o.paymentStatus,
+      o.status,
+      o.pricing?.subtotal || 0,
+      o.pricing?.couponDiscount || 0,
+      o.pricing?.deliveryCharge || 0,
+      o.pricing?.taxAmount || 0,
+      o.pricing?.grandTotal || 0,
+    ]);
+  } else if (type === 'inventory') {
+    const products = await listProducts({ includeInactive: true });
+    headers = ['Product ID', 'Name', 'Category', 'MRP', 'Offer Price', 'Stock', 'Prep Mins', 'Veg', 'Bestseller'];
+    rows = products.map((p) => [
+      p.id,
+      p.name,
+      p.category,
+      p.price,
+      p.discountPrice || '',
+      p.stock,
+      p.prepMins,
+      p.veg ? 'Yes' : 'No',
+      p.bestseller ? 'Yes' : 'No',
+    ]);
+  } else if (type === 'customers') {
+    const users = await listUsers();
+    const customers = users.filter((u) => u.role === 'customer');
+    headers = ['User ID', 'Full Name', 'Username', 'Email', 'Mobile', 'Email Verified', 'Referral Code', 'Reward Points', 'Blocked'];
+    rows = customers.map((u) => [
+      u.id,
+      u.fullName || u.name,
+      u.username || '',
+      u.email,
+      u.mobileNumber || u.phone || '',
+      u.isEmailVerified ? 'Yes' : 'No',
+      u.referralCode || '',
+      u.rewardPoints || 0,
+      u.blocked ? 'Yes' : 'No',
+    ]);
+  } else {
+    return res.status(400).json({ error: 'Invalid export type. Use orders, inventory, or customers.' });
+  }
+
+  const csvContent = [
+    headers.map(csvEscape).join(','),
+    ...rows.map((r) => r.map(csvEscape).join(',')),
+  ].join('\n');
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="hruvita-${type}-${new Date().toISOString().slice(0, 10)}.csv"`);
+  return res.send(csvContent);
 });
 
 router.get('/orders', async (req, res) => {
@@ -102,7 +375,6 @@ router.post('/orders/:id/refund', requireRole('admin'), async (req, res) => {
     const order = await getOrderById(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found.' });
 
-    // Step 1: Move to refund_initiated, then complete to refunded (simulating Razorpay instant test refund)
     await transitionOrderStatus({
       orderId: order.id,
       status: 'refund_initiated',
@@ -113,7 +385,7 @@ router.post('/orders/:id/refund', requireRole('admin'), async (req, res) => {
     const refunded = await transitionOrderStatus({
       orderId: order.id,
       status: 'refunded',
-      note: 'Refund processed via Razorpay test gateway',
+      note: 'Refund processed via payment gateway',
       by: req.user.email,
     });
 
@@ -154,7 +426,7 @@ router.patch('/users/:id/block', requireRole('admin'), async (req, res) => {
     entityId: updated.id,
     details: { email: updated.email, blocked },
   });
-  res.json({ user: sanitizeUser(updated) });
+  res.json({ user: await sanitizeUser(updated) });
 });
 
 export default router;

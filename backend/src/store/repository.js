@@ -432,12 +432,96 @@ export async function listSlots() {
   return mem.slots.filter((s) => s.active !== false).map((s) => ({ ...s }));
 }
 
+export async function listAllSlots() {
+  if (mongoConnected) {
+    const docs = await DeliverySlot.find().lean();
+    return docs.map(stripMongo);
+  }
+  return mem.slots.map((s) => ({ ...s }));
+}
+
+export async function updateSlotConfig(id, patch) {
+  const allowed = {
+    ...(patch.name !== undefined ? { name: String(patch.name).trim() } : {}),
+    ...(patch.window !== undefined ? { window: String(patch.window).trim() } : {}),
+    ...(patch.maxOrders !== undefined ? { maxOrders: Math.max(1, Number(patch.maxOrders) || 30) } : {}),
+    ...(patch.active !== undefined ? { active: Boolean(patch.active) } : {}),
+  };
+  if (mongoConnected) {
+    const doc = await DeliverySlot.findOneAndUpdate({ id }, { $set: allowed }, { new: true }).lean();
+    return stripMongo(doc);
+  }
+  const idx = mem.slots.findIndex((s) => s.id === id);
+  if (idx === -1) return null;
+  mem.slots[idx] = { ...mem.slots[idx], ...allowed };
+  return { ...mem.slots[idx] };
+}
+
 export async function listCoupons() {
   if (mongoConnected) {
     const docs = await Coupon.find({ active: true }).lean();
     return docs.map(stripMongo);
   }
   return mem.coupons.filter((c) => c.active !== false).map((c) => ({ ...c }));
+}
+
+export async function listAllCoupons() {
+  if (mongoConnected) {
+    const docs = await Coupon.find().sort({ createdAt: -1 }).lean();
+    return docs.map(stripMongo);
+  }
+  return mem.coupons.map((c) => ({ ...c }));
+}
+
+export async function upsertCoupon(data) {
+  const code = String(data.code || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '')
+    .trim();
+  if (!code) throw new Error('Coupon code is required.');
+
+  const payload = {
+    code,
+    title: String(data.title || `${code} Offer`).trim(),
+    type: data.type === 'flat' ? 'flat' : 'percent',
+    value: Math.max(1, Number(data.value) || 10),
+    minOrder: Math.max(0, Number(data.minOrder) || 0),
+    maxDiscount: Math.max(1, Number(data.maxDiscount) || 100),
+    firstOrderOnly: Boolean(data.firstOrderOnly),
+    active: data.active !== undefined ? Boolean(data.active) : true,
+  };
+
+  if (mongoConnected) {
+    const doc = await Coupon.findOneAndUpdate({ code }, { $set: payload }, { new: true, upsert: true }).lean();
+    return stripMongo(doc);
+  }
+  const idx = mem.coupons.findIndex((c) => c.code === code);
+  if (idx >= 0) {
+    mem.coupons[idx] = { ...mem.coupons[idx], ...payload };
+    return { ...mem.coupons[idx] };
+  }
+  mem.coupons.unshift(payload);
+  return { ...payload };
+}
+
+export async function deleteCouponByCode(code) {
+  const norm = String(code || '').toUpperCase().trim();
+  if (mongoConnected) {
+    const res = await Coupon.findOneAndDelete({ code: norm }).lean();
+    return Boolean(res);
+  }
+  const idx = mem.coupons.findIndex((c) => c.code === norm);
+  if (idx === -1) return false;
+  mem.coupons.splice(idx, 1);
+  return true;
+}
+
+export async function listAllSubscriptions() {
+  if (mongoConnected) {
+    const docs = await Subscription.find().sort({ createdAt: -1 }).lean();
+    return docs.map(stripMongo);
+  }
+  return mem.subscriptions.map((s) => ({ ...s }));
 }
 
 export async function findCouponByCode(code) {
