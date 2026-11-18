@@ -601,6 +601,7 @@ export default function VoiceButton() {
           lang: replyLang,
           actions: data.actions || [],
           products: data.recommendedProducts || [],
+          orders: data.recommendedOrders || [],
         },
       ]);
 
@@ -812,6 +813,44 @@ export default function VoiceButton() {
                 }`.trim()}
               >
                 <div>{m.text}</div>
+
+                {m.orders?.length > 0 && (
+                  <div className="voice-order-cards">
+                    {m.orders.map((ord) => {
+                      const st = String(ord.status || 'Confirmed').toLowerCase();
+                      const statusEmoji = st.includes('deliver')
+                        ? '🎉'
+                        : st.includes('out')
+                        ? '🛵'
+                        : st.includes('process')
+                        ? '👨‍🍳'
+                        : st.includes('cancel')
+                        ? '❌'
+                        : '✅';
+                      const statusClass = st.includes('cancel')
+                        ? 'voice-order-status-danger'
+                        : st.includes('deliver')
+                        ? 'voice-order-status-done'
+                        : 'voice-order-status-active';
+                      return (
+                        <div key={ord.id} className="voice-order-card">
+                          <div className="voice-order-top">
+                            <strong>#{ord.id}</strong>
+                            <span className={`voice-order-status ${statusClass}`.trim()}>
+                              {statusEmoji} {ord.status}
+                            </span>
+                          </div>
+                          <div className="voice-order-items">🍽️ {ord.items}</div>
+                          <div className="voice-order-meta">
+                            <span>💰 <strong>{money(ord.total)}</strong></span>
+                            <span>📅 {ord.scheduledDate}</span>
+                          </div>
+                          <div className="voice-order-slot">⏰ {ord.slotLabel}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {m.products?.length > 0 && (
                   <div className="voice-prod-cards">

@@ -163,6 +163,7 @@ router.post('/chat', async (req, res) => {
       toolsUsed: result.toolsUsed,
       actions: result.actions,
       recommendedProducts: result.recommendedProducts || [],
+      recommendedOrders: result.recommendedOrders || [],
     });
   } catch (err) {
     logAIError(`POST /api/assistant/chat [${requestId}] failed`, err);

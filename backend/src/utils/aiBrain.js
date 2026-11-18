@@ -541,34 +541,63 @@ async function executeToolCall(
         stateAcc.actions.push({ type: 'NAVIGATE', to: '/login', label: 'Sign In' });
         result = { authenticated: false, error: 'Customer must sign in to view or track orders.' };
       } else {
+        const formatOrderStatus = (raw) => {
+          const map = {
+            pending: 'Confirmed',
+            payment_pending: 'Payment Pending',
+            confirmed: 'Confirmed',
+            accepted: 'Processing',
+            preparing: 'Processing',
+            packed: 'Processing',
+            out_for_delivery: 'Out for Delivery',
+            delivered: 'Delivered',
+            cancelled: 'Cancelled',
+            refund_initiated: 'Cancelled',
+            refunded: 'Cancelled',
+          };
+          return map[raw] || String(raw || 'Confirmed').replace(/_/g, ' ');
+        };
+
         stateAcc.actions.push({ type: 'NAVIGATE', to: '/dashboard', label: 'Open Orders' });
         if (args.orderId) {
           const ord = await getOrderById(args.orderId);
           if (!ord || ord.userId !== user.id) {
             result = { error: 'Order not found for your account.' };
           } else {
+            const card = {
+              id: ord.id,
+              status: formatOrderStatus(ord.status),
+              rawStatus: ord.status,
+              total: ord.pricing?.grandTotal || 0,
+              scheduledDate: ord.scheduledDate,
+              slotLabel: ord.slotLabel,
+              items: (ord.items || []).map((i) => `${i.qty}× ${i.name}`).join(', '),
+            };
+            stateAcc.recommendedOrders = [card];
             result = {
-              order: {
-                id: ord.id,
-                status: ord.status,
-                total: ord.pricing?.grandTotal,
-                scheduledDate: ord.scheduledDate,
-                slotLabel: ord.slotLabel,
-              },
+              order: card,
+              formattingRule: 'Do NOT use a Markdown table. The UI renders the order card automatically.',
             };
           }
         } else {
           const orders = await listOrdersByUser(user.id);
+          const recentCards = orders.slice(0, 5).map((o) => ({
+            id: o.id,
+            status: formatOrderStatus(o.status),
+            rawStatus: o.status,
+            total: o.pricing?.grandTotal || 0,
+            scheduledDate: o.scheduledDate,
+            slotLabel: o.slotLabel,
+            items: (o.items || []).map((i) => `${i.qty}× ${i.name}`).join(', '),
+          }));
+          stateAcc.recommendedOrders = recentCards;
           result = {
             orderCount: orders.length,
-            latestOrders: orders.slice(0, 3).map((o) => ({
-              id: o.id,
-              status: o.status,
-              total: o.pricing?.grandTotal,
-              scheduledDate: o.scheduledDate,
-              slotLabel: o.slotLabel,
-              items: (o.items || []).map((i) => `${i.qty}x ${i.name}`).join(', '),
-            })),
+            latestOrders: recentCards,
+            formattingRule:
+              orders.length === 0
+                ? 'Respond warmly that there are no previous orders yet and invite them to explore the menu.'
+                : 'Do NOT output a Markdown table (| ... |). Start warmly with "Of course! 😊 Let me show you your recent orders." (or Telugu equivalent), briefly mention the count, and end with "Would you like to check the details of any order, track your latest order, or reorder your favourites? ❤️" (or Telugu equivalent). The UI will display clean visual order cards automatically.',
           };
         }
       }
@@ -919,6 +948,7 @@ export async function processAssistantTurn({
     actions: [],
     toolsUsed: [],
     recommendedProducts: [],
+    recommendedOrders: [],
     aiDurationMs: 0,
     toolDurationMs: 0,
     dbDurationMs: 0,
@@ -938,7 +968,7 @@ export async function processAssistantTurn({
     `1. You do NOT know product IDs, prices, or stock from memory. Whenever a customer asks for food, call search_products or show_category FIRST. Whenever they ask to open/view a specific product (e.g. "ఈ ఇడ్లీ ఓపెన్ చేయండి", "open idli", "open masala dosa"), call search_products AND then IMMEDIATELY call open_product_details on the best matching single productId (preferring the main dish over combos) so the website navigates to /product/:id right away without asking first.`,
     `2. Always call open_checkout for checkout requests, view_cart for cart requests, build_custom_bowl for ANY custom fruit bowl request or question, get_subscription_plans for subscription questions, get_business_info_and_offers for coupons/slots/delivery charges, and get_my_orders/track_order for order tracking. When proceeding to checkout/payment, ask: "${isTelugu ? 'మీరు ఏ పద్ధతిలో చెల్లించాలనుకుంటున్నారు? క్యాష్ ఆన్ డెలివరీనా లేదా ఆన్లైన్ పేమెంటా?' : 'Which payment method would you prefer: Cash on Delivery or Online Payment?'}"`,
     `3. When customer chooses COD/Cash, call select_payment_method({ method: "cod" }), show the summary, and ask confirmation before calling place_cod_order({ confirmed: true }). When customer chooses Online/UPI/GPay/PhonePe, call select_payment_method({ method: "razorpay" }) and reply politely that for security reasons we cannot guide through online payment and they should complete payment using the secure options on our website.`,
-    `4. Never invent products, prices, stock, offers, or slots. Never collect UPI PIN, OTP, CVV, or card PIN. Never claim payment succeeded without backend gateway verification.`,
+    `4. Never invent products, prices, stock, offers, or slots. Never collect UPI PIN, OTP, CVV, or card PIN. Never claim payment succeeded without backend gateway verification. NEVER output Markdown pipe tables (| ... |) in your reply — the chat UI renders clean order and product cards automatically.`,
     settings.aiInstructions || '',
   ]
     .filter(Boolean)
@@ -1031,6 +1061,7 @@ export async function processAssistantTurn({
     toolsUsed: stateAcc.toolsUsed,
     actions: stateAcc.actions,
     recommendedProducts: stateAcc.recommendedProducts,
+    recommendedOrders: stateAcc.recommendedOrders,
     sessionState: { pendingIntent: null, customBowlDraft: null },
     debug: {
       provider: stateAcc.provider,

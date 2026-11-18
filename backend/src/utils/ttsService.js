@@ -29,7 +29,8 @@ function assertFemaleVoiceId(voiceId) {
 
 function cleanTextForSpeech(rawText = '') {
   return String(rawText || '')
-    .replace(/[*_`#]/g, '')
+    .replace(/[*_`#|]/g, '')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
     .replace(/₹\s*(\d+)/g, '$1 rupees')
     .replace(/\s+/g, ' ')
     .trim()
