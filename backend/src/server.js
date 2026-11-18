@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { initDatabase, getDbStatus } from './store/repository.js';
 import { sanitizeNoSqlInput } from './middleware/auth.js';
+import { startAutomationJobs } from './jobs/scheduler.js';
 import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
 import addressRoutes from './routes/addresses.js';
@@ -99,6 +100,7 @@ app.use((err, _req, res, _next) => {
 
 async function start() {
   await initDatabase();
+  startAutomationJobs();
   const server = app.listen(PORT, () => {
     console.log(`[HRUVITA API] Listening on http://localhost:${PORT}`);
   });

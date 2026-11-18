@@ -1,0 +1,44 @@
+{
+  "name": "HRUVITA - Daily Sales & Health Automation",
+  "nodes": [
+    {
+      "name": "Daily 9 PM Schedule",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "hour": 21,
+              "minute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Keep Backend Awake (Health Ping)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [500, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.HRUVITA_API_URL || 'http://localhost:5000'}}/api/health"
+      }
+    }
+  ],
+  "connections": {
+    "Daily 9 PM Schedule": {
+      "main": [
+        [
+          {
+            "node": "Keep Backend Awake (Health Ping)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

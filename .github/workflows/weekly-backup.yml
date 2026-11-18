@@ -1,0 +1,36 @@
+name: Weekly MongoDB Atlas Backup
+
+on:
+  schedule:
+    # Runs every Sunday at 02:00 UTC (07:30 AM IST)
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Export MongoDB collections to JSON
+        working-directory: backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        run: node src/scripts/backupDb.js
+
+      - name: Upload backup artifact (30-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hruvita-mongodb-backup-${{ github.run_id }}
+          path: backend/backups/*.json
+          retention-days: 30

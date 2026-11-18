@@ -3,6 +3,11 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { ORDER_STATUSES } from '../models/Order.js';
 import { sendUserNotification } from '../utils/emailService.js';
 import {
+  runDailySubscriptionGenerator,
+  runLowStockCheck,
+  runAbandonedPaymentCleanup,
+} from '../jobs/scheduler.js';
+import {
   listProducts,
   listCategories,
   listUsers,
@@ -21,6 +26,7 @@ import {
   updateSlotConfig,
   listAllSubscriptions,
   getSettings,
+  listAutomationLogs,
 } from '../store/repository.js';
 
 const router = Router();
@@ -427,6 +433,36 @@ router.patch('/users/:id/block', requireRole('admin'), async (req, res) => {
     details: { email: updated.email, blocked },
   });
   res.json({ user: await sanitizeUser(updated) });
+});
+
+// Phase 7: Automation logs & manual job triggers
+router.get('/automation/logs', async (_req, res) => {
+  const logs = await listAutomationLogs(30);
+  res.json({ logs });
+});
+
+router.post('/automation/run/:job', requireRole('admin'), async (req, res) => {
+  try {
+    const job = req.params.job;
+    let log;
+    if (job === 'subscriptions') log = await runDailySubscriptionGenerator();
+    else if (job === 'low-stock') log = await runLowStockCheck();
+    else if (job === 'cleanup') log = await runAbandonedPaymentCleanup();
+    else return res.status(400).json({ error: 'Unknown job. Use subscriptions, low-stock, or cleanup.' });
+
+    await recordAudit({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'RUN_AUTOMATION_JOB',
+      entity: 'automation',
+      entityId: job,
+      details: { summary: log.summary },
+    });
+
+    res.json({ log });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Automation job failed.' });
+  }
 });
 
 export default router;

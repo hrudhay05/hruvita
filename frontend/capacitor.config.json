@@ -1,0 +1,14 @@
+{
+  "appId": "com.hruvita.app",
+  "appName": "HRUVITA",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "backgroundColor": "#245C45"
+    }
+  }
+}

@@ -16,6 +16,7 @@ import { Notification } from '../models/Notification.js';
 import { Review } from '../models/Review.js';
 import { Subscription } from '../models/Subscription.js';
 import { Conversation } from '../models/Conversation.js';
+import { AutomationLog } from '../models/AutomationLog.js';
 import { computeCustomBowlPrice } from '../data/bowlOptions.js';
 import {
   initialSettings,
@@ -50,6 +51,7 @@ const mem = {
   reviews: [],
   subscriptions: [],
   conversations: [],
+  automationLogs: [],
   notifications: [
     {
       id: 'notif-seed-1',
@@ -1690,5 +1692,53 @@ export async function listConversations(limit = 40) {
   }
   return mem.conversations.slice(0, limit);
 }
+
+// Automation Logs & Subscription Delivery Decrement
+export async function decrementSubscriptionDelivery(subId) {
+  if (mongoConnected) {
+    const doc = await Subscription.findOne({ id: subId });
+    if (!doc) return null;
+    doc.remainingDeliveries = Math.max(0, (doc.remainingDeliveries || 0) - 1);
+    if (doc.remainingDeliveries === 0) doc.status = 'completed';
+    await doc.save();
+    return stripMongo(doc);
+  }
+  const idx = mem.subscriptions.findIndex((s) => s.id === subId);
+  if (idx === -1) return null;
+  const rem = Math.max(0, (mem.subscriptions[idx].remainingDeliveries || 0) - 1);
+  mem.subscriptions[idx] = {
+    ...mem.subscriptions[idx],
+    remainingDeliveries: rem,
+    status: rem === 0 ? 'completed' : mem.subscriptions[idx].status,
+  };
+  return { ...mem.subscriptions[idx] };
+}
+
+export async function recordAutomationLog({ jobName, status = 'success', summary, details = {} }) {
+  const entry = {
+    id: `auto-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    jobName,
+    status,
+    summary,
+    details,
+    createdAt: new Date().toISOString(),
+  };
+  if (mongoConnected) {
+    const created = await AutomationLog.create(entry);
+    return stripMongo(created);
+  }
+  mem.automationLogs.unshift(entry);
+  if (mem.automationLogs.length > 100) mem.automationLogs.length = 100;
+  return entry;
+}
+
+export async function listAutomationLogs(limit = 30) {
+  if (mongoConnected) {
+    const docs = await AutomationLog.find().sort({ createdAt: -1 }).limit(limit).lean();
+    return docs.map(stripMongo);
+  }
+  return mem.automationLogs.slice(0, limit);
+}
+
 
 
