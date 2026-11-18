@@ -1,0 +1,16 @@
+.layout-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom));
+}
+
+.layout-main {
+  flex: 1;
+}
+
+@media (min-width: 768px) {
+  .layout-shell {
+    padding-bottom: 0;
+  }
+}

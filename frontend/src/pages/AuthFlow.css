@@ -1,0 +1,323 @@
+.auth-page {
+  padding: 36px 0 64px;
+}
+
+.auth-card {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 32px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: var(--white);
+  box-shadow: var(--shadow-lg);
+}
+
+.auth-card-wide {
+  max-width: 780px;
+}
+
+.auth-head {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.auth-head h1 {
+  font-size: 1.65rem;
+  color: var(--green-900);
+}
+
+.auth-head p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.auth-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.auth-step-pill {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--green-50);
+  color: var(--green-700);
+}
+
+.auth-step-active {
+  background: var(--green-700);
+  color: var(--white);
+}
+
+.auth-form {
+  display: grid;
+  gap: 15px;
+}
+
+.auth-row-2 {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.auth-field label {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--green-900);
+}
+
+.auth-field input,
+.auth-field select,
+.auth-field textarea {
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--white);
+  font-size: 0.94rem;
+  font-family: inherit;
+}
+
+.auth-field input:focus,
+.auth-field select:focus,
+.auth-field textarea:focus {
+  border-color: var(--green-700);
+  outline: none;
+}
+
+.auth-pwd-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.auth-pwd-box input {
+  width: 100%;
+  padding-right: 44px;
+}
+
+.auth-pwd-toggle {
+  position: absolute;
+  right: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  padding: 4px;
+}
+
+.auth-pwd-checklist {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--green-50);
+  font-size: 0.78rem;
+}
+
+.auth-pwd-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.auth-pwd-item-ok {
+  color: var(--green-700);
+  font-weight: 600;
+}
+
+.auth-inline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.88rem;
+}
+
+.auth-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.auth-checkbox-label input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--green-700);
+}
+
+.auth-otp-input {
+  text-align: center;
+  font-size: 1.65rem !important;
+  font-weight: 700;
+  letter-spacing: 0.35em;
+}
+
+.auth-foot {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.auth-foot a {
+  color: var(--green-700);
+  font-weight: 600;
+}
+
+.auth-foot a:hover {
+  text-decoration: underline;
+}
+
+/* Address Page & Cards */
+.addr-location-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--green-50) 0%, var(--cream) 100%);
+  border: 1.5px dashed var(--green-700);
+}
+
+.addr-location-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 20px;
+  border-radius: 999px;
+  border: 0;
+  background: var(--green-700);
+  color: var(--white);
+  font-weight: 700;
+  font-size: 0.9rem;
+  box-shadow: var(--shadow);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.addr-location-btn:hover:not(:disabled) {
+  background: var(--green-900);
+  transform: translateY(-1px);
+}
+
+.addr-location-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.addr-labels-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.addr-label-chip {
+  padding: 8px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--white);
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.addr-label-chip-active {
+  background: var(--green-700);
+  border-color: var(--green-700);
+  color: var(--white);
+}
+
+.addr-cards-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.addr-card {
+  padding: 20px;
+  border-radius: var(--radius);
+  border: 1.5px solid var(--line);
+  background: var(--white);
+  box-shadow: 0 2px 10px rgba(20, 83, 45, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.addr-card-selected {
+  border-color: var(--green-700);
+  background: var(--green-50);
+}
+
+.addr-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.addr-badge-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.addr-type-pill {
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: var(--green-100);
+  color: var(--green-900);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.addr-default-pill {
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: var(--orange);
+  color: var(--white);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.addr-actions-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+@media (min-width: 640px) {
+  .auth-row-2 {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .addr-cards-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

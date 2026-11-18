@@ -1,0 +1,32 @@
+.subscriptions-head {
+  padding: 32px 0 28px;
+}
+
+.subscriptions-head h1 {
+  font-size: 1.8rem;
+  color: var(--green-900);
+}
+
+.subscriptions-head p {
+  margin-top: 6px;
+  max-width: 560px;
+  color: var(--muted);
+}
+
+.subscriptions-plans {
+  display: grid;
+  gap: 24px;
+  padding-top: 8px;
+}
+
+.subscriptions-note {
+  margin-top: 28px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+@media (min-width: 768px) {
+  .subscriptions-plans {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

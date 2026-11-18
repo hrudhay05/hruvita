@@ -1,0 +1,43 @@
+:root {
+  /* HRUVITA Editorial Healthy Lifestyle Brand Palette */
+  --primary: #245c45;
+  --primary-dark: #194231;
+  --secondary: #70a86b;
+  --bg: #fff9ef;
+  --surface: #ffffff;
+  --accent: #f4b59a;
+  --accent-dark: #de9272;
+  --ink: #292d29;
+  --muted: #777c75;
+  --line: #eae7de;
+  --danger: #c44545;
+
+  /* Mapped legacy variable aliases so every component uses the unified palette */
+  --green-900: #1b4634;
+  --green-700: #245c45;
+  --green-600: #70a86b;
+  --green-100: #eaf2eb;
+  --green-50: #f4f8f3;
+  --cream: #fff9ef;
+  --cream-dark: #f2e8d7;
+  --orange: #e38e6c;
+  --orange-dark: #c96f4c;
+  --orange-100: #fdeee7;
+  --white: #ffffff;
+
+  /* Radii & Elevation */
+  --radius-sm: 10px;
+  --radius: 18px;
+  --radius-lg: 26px;
+  --shadow: 0 8px 26px rgba(36, 92, 69, 0.06);
+  --shadow-lg: 0 18px 44px rgba(36, 92, 69, 0.12);
+
+  /* Typography */
+  --font-heading: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --font-body: 'DM Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font: var(--font-body);
+
+  --container: 1200px;
+  --nav-h: 76px;
+  --bottom-nav-h: 64px;
+}
