@@ -71,17 +71,20 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
         ...(endDate ? { endDate } : {}),
         ...(category ? { category } : {}),
       }).toString();
-      const [anaRes, invRes, notRes, actRes] = await Promise.all([
+      const [anaRes, invRes, notRes, actRes] = await Promise.allSettled([
         apiRequest(`/api/analyst/analytics${qs ? `?${qs}` : ''}`),
         apiRequest(`/api/analyst/inventory${qs ? `?${qs}` : ''}`),
         apiRequest('/api/analyst/notifications'),
         apiRequest('/api/analyst/activity'),
       ]);
-      setAnalytics(anaRes);
-      setInventoryData(invRes);
-      setNotifications(notRes.notifications || []);
-      setUnreadCount(notRes.unreadCount || 0);
-      setActivityLogs(actRes.logs || []);
+      if (anaRes.status === 'fulfilled') setAnalytics(anaRes.value);
+      else setError(anaRes.reason?.message || 'Could not load analytics.');
+      if (invRes.status === 'fulfilled') setInventoryData(invRes.value);
+      if (notRes.status === 'fulfilled') {
+        setNotifications(notRes.value.notifications || []);
+        setUnreadCount(notRes.value.unreadCount || 0);
+      }
+      if (actRes.status === 'fulfilled') setActivityLogs(actRes.value.logs || []);
     } catch (err) {
       setError(err.message || 'Could not load analytics.');
     } finally {
@@ -259,28 +262,32 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
                 <div className="ana-bell-pop">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <strong>Notifications ({unreadCount} unread)</strong>
-                    <button type="button" className="admin-mini-btn" onClick={handleMarkAllRead}>
+                    <button type="button" className="ana-btn" onClick={handleMarkAllRead}>
                       Mark all read
                     </button>
                   </div>
-                  {notifications.slice(0, 6).map((n) => (
-                    <button
-                      key={n.id}
-                      type="button"
-                      className={`ana-notif-item ${!n.read ? 'ana-notif-unread' : ''}`}
-                      onClick={() => handleNotificationClick(n)}
-                    >
-                      <strong style={{ fontSize: '0.82rem' }}>{n.title}</strong>
-                      <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>{n.description}</span>
-                    </button>
-                  ))}
-                  <button type="button" className="admin-mini-btn" onClick={() => { setBellOpen(false); setSection('notifications'); }}>
+                  {notifications.length === 0 ? (
+                    <p className="ana-empty">No notifications yet.</p>
+                  ) : (
+                    notifications.slice(0, 6).map((n) => (
+                      <button
+                        key={n.id}
+                        type="button"
+                        className={`ana-notif-item ${!n.read ? 'ana-notif-unread' : ''}`}
+                        onClick={() => handleNotificationClick(n)}
+                      >
+                        <strong style={{ fontSize: '0.82rem' }}>{n.title}</strong>
+                        <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>{n.description}</span>
+                      </button>
+                    ))
+                  )}
+                  <button type="button" className="ana-btn" onClick={() => { setBellOpen(false); setSection('notifications'); }}>
                     View all notifications
                   </button>
                 </div>
               )}
             </div>
-            <button type="button" className="admin-mini-btn" onClick={onLogout}>
+            <button type="button" className="ana-btn" onClick={onLogout}>
               <FiLogOut size={14} /> Sign Out
             </button>
           </div>
@@ -289,22 +296,22 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
         <div className="ana-filters-bar">
           <div className="ana-filter-field">
             <label htmlFor="ana-start">Start Date</label>
-            <input id="ana-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <input id="ana-start" className="ana-input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </div>
           <div className="ana-filter-field">
             <label htmlFor="ana-end">End Date</label>
-            <input id="ana-end" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            <input id="ana-end" className="ana-input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
           </div>
           <div className="ana-filter-field">
             <label htmlFor="ana-cat">Category</label>
-            <select id="ana-cat" value={category} onChange={(e) => setCategory(e.target.value)}>
+            <select id="ana-cat" className="ana-select" value={category} onChange={(e) => setCategory(e.target.value)}>
               <option value="">All Categories</option>
               {(analytics?.categories || []).map((c) => (
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>
           </div>
-          <button type="button" className="admin-mini-btn" onClick={() => { setStartDate(''); setEndDate(''); setCategory(''); }}>
+          <button type="button" className="ana-btn" onClick={() => { setStartDate(''); setEndDate(''); setCategory(''); }}>
             Reset Filters
           </button>
         </div>
@@ -392,9 +399,9 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
 
         {!loading && section === 'alerts' && (
           <section className="ana-panel">
-            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
-              <h3>Inventory Alerts &amp; Stock Thresholds</h3>
-              <select value={invStatusFilter} onChange={(e) => setInvStatusFilter(e.target.value)} className="menu-select">
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+              <h3>Inventory Alerts &amp; Stock Thresholds ({(inventoryData.items || []).length})</h3>
+              <select value={invStatusFilter} onChange={(e) => setInvStatusFilter(e.target.value)} className="ana-select">
                 <option value="">All Stock Statuses</option>
                 <option value="Out of Stock">Out of Stock</option>
                 <option value="Low Stock">Low Stock</option>
@@ -409,11 +416,15 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
                     .filter((it) => !invStatusFilter || it.stockStatus === invStatusFilter)
                     .map((it) => (
                       <tr key={it.id}>
-                        <td>{it.name}</td>
+                        <td><strong>{it.name}</strong></td>
                         <td>{it.category}</td>
                         <td>{it.stock}</td>
                         <td>{it.lowStockThreshold}</td>
-                        <td><strong>{it.stockStatus}</strong></td>
+                        <td>
+                          <span className={`ana-badge ${it.stockStatus === 'Out of Stock' ? 'ana-badge-oos' : it.stockStatus === 'Low Stock' ? 'ana-badge-low' : 'ana-badge-ok'}`}>
+                            {it.stockStatus}
+                          </span>
+                        </td>
                         <td>{String(it.updatedAt || '').slice(0, 10) || '—'}</td>
                       </tr>
                     ))}
@@ -499,13 +510,13 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between', alignItems: 'center' }}>
               <h3>Reports &amp; Exports ({reportResult.total || 0} records)</h3>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button type="button" className="admin-mini-btn" onClick={() => downloadExport('csv')}><FiDownload size={13} /> CSV</button>
-                <button type="button" className="admin-mini-btn" onClick={() => downloadExport('xls')}><FiDownload size={13} /> Excel</button>
-                <button type="button" className="admin-mini-btn" onClick={printReportPdf}><FiDownload size={13} /> PDF</button>
+                <button type="button" className="ana-btn ana-btn-primary" onClick={() => downloadExport('csv')}><FiDownload size={13} /> CSV</button>
+                <button type="button" className="ana-btn" onClick={() => downloadExport('xls')}><FiDownload size={13} /> Excel</button>
+                <button type="button" className="ana-btn" onClick={printReportPdf}><FiDownload size={13} /> PDF</button>
               </div>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              <select value={reportType} onChange={(e) => { setReportType(e.target.value); setReportPage(1); }} className="menu-select">
+              <select value={reportType} onChange={(e) => { setReportType(e.target.value); setReportPage(1); }} className="ana-select">
                 <option value="sales">Sales Reports</option>
                 <option value="orders">Orders Reports</option>
                 <option value="inventory">Inventory Reports</option>
@@ -515,8 +526,8 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
                 <option value="payments">Payment Reports</option>
                 <option value="activity">Admin Activity Reports</option>
               </select>
-              <input type="search" placeholder="Search..." value={reportSearch} onChange={(e) => { setReportSearch(e.target.value); setReportPage(1); }} className="menu-select" />
-              <input type="text" placeholder="Status filter..." value={reportStatus} onChange={(e) => { setReportStatus(e.target.value); setReportPage(1); }} className="menu-select" />
+              <input type="search" placeholder="Search..." value={reportSearch} onChange={(e) => { setReportSearch(e.target.value); setReportPage(1); }} className="ana-input" />
+              <input type="text" placeholder="Status filter..." value={reportStatus} onChange={(e) => { setReportStatus(e.target.value); setReportPage(1); }} className="ana-input" />
             </div>
             <div className="ana-table-wrap">
               <table className="ana-table">
@@ -535,19 +546,19 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
               </table>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button type="button" className="admin-mini-btn" disabled={reportPage <= 1} onClick={() => setReportPage((p) => p - 1)}>Prev</button>
+              <button type="button" className="ana-btn" disabled={reportPage <= 1} onClick={() => setReportPage((p) => p - 1)}>Prev</button>
               <span style={{ fontSize: '0.82rem' }}>Page {reportResult.page || 1} of {reportResult.totalPages || 1}</span>
-              <button type="button" className="admin-mini-btn" disabled={reportPage >= (reportResult.totalPages || 1)} onClick={() => setReportPage((p) => p + 1)}>Next</button>
+              <button type="button" className="ana-btn" disabled={reportPage >= (reportResult.totalPages || 1)} onClick={() => setReportPage((p) => p + 1)}>Next</button>
             </div>
           </section>
         )}
 
         {section === 'notifications' && (
           <section className="ana-panel">
-            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
               <h3>Admin Notifications</h3>
               <div style={{ display: 'flex', gap: 8 }}>
-                <select value={notifCategory} onChange={(e) => setNotifCategory(e.target.value)} className="menu-select">
+                <select value={notifCategory} onChange={(e) => setNotifCategory(e.target.value)} className="ana-select">
                   <option value="">All Categories</option>
                   <option value="order">Orders</option>
                   <option value="payment">Payments</option>
@@ -555,7 +566,7 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
                   <option value="subscription">Subscriptions</option>
                   <option value="cancellation">Cancellations</option>
                 </select>
-                <button type="button" className="admin-mini-btn" onClick={handleMarkAllRead}>Mark all read</button>
+                <button type="button" className="ana-btn" onClick={handleMarkAllRead}>Mark all read</button>
               </div>
             </div>
             {notifications
@@ -602,9 +613,12 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
         {section === 'profile' && (
           <section className="ana-panel">
             <h3>My Analyst Profile</h3>
-            <p><strong>Name:</strong> {user?.fullName || user?.name}</p>
-            <p><strong>Email:</strong> {user?.email}</p>
-            <p><strong>Role:</strong> {user?.role} (Read-only business analytics &amp; exports)</p>
+            <div className="ana-profile-grid">
+              <div className="ana-profile-item"><span>Full Name</span><strong>{user?.fullName || user?.name}</strong></div>
+              <div className="ana-profile-item"><span>Username</span><strong>@{user?.username || 'hruvita_analyst'}</strong></div>
+              <div className="ana-profile-item"><span>Email</span><strong>{user?.email}</strong></div>
+              <div className="ana-profile-item"><span>Role &amp; Access</span><strong>{user?.role} (Read-only analytics &amp; exports)</strong></div>
+            </div>
           </section>
         )}
       </main>
