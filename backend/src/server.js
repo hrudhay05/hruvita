@@ -12,6 +12,7 @@ import addressRoutes from './routes/addresses.js';
 import catalogRoutes from './routes/catalog.js';
 import orderRoutes from './routes/orders.js';
 import extrasRoutes from './routes/extras.js';
+import assistantRoutes from './routes/assistant.js';
 import adminRoutes from './routes/admin.js';
 
 dotenv.config();
@@ -84,6 +85,7 @@ app.use('/api/profile/addresses', addressRoutes);
 app.use('/api', catalogRoutes);
 app.use('/api', orderRoutes);
 app.use('/api', extrasRoutes);
+app.use('/api/assistant', assistantRoutes);
 app.use('/api/admin', adminRoutes);
 
 app.use((_req, res) => {

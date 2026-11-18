@@ -103,20 +103,23 @@ export default function Admin() {
   const [reports, setReports] = useState(null);
   const [slots, setSlots] = useState([]);
   const [settingsForm, setSettingsForm] = useState(null);
+  const [conversations, setConversations] = useState([]);
 
   const loadOverview = useCallback(async () => {
     if (!isAdmin) return;
     try {
-      const [ov, cp, sl, rp] = await Promise.all([
+      const [ov, cp, sl, rp, convRes] = await Promise.all([
         apiRequest('/api/admin/overview'),
         apiRequest('/api/admin/coupons'),
         apiRequest('/api/admin/slots'),
         apiRequest('/api/admin/reports'),
+        apiRequest('/api/assistant/conversations').catch(() => ({ conversations: [] })),
       ]);
       setOverview(ov);
       setCoupons(cp.coupons || []);
       setSlots(sl.slots || []);
       setReports(rp);
+      setConversations(convRes.conversations || []);
       if (ov.settings) setSettingsForm(ov.settings);
     } catch (err) {
       setError(err.message);
@@ -1329,10 +1332,63 @@ export default function Admin() {
                       Voice Assistant Enabled
                     </label>
                   </div>
+                  <div className="admin-field">
+                    <label htmlFor="st-ainame">Assistant Display Name</label>
+                    <input
+                      id="st-ainame"
+                      type="text"
+                      value={settingsForm.aiName || 'HRUVITA Assistant'}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, aiName: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="admin-field">
+                    <label htmlFor="st-aiinst">Custom Assistant Instructions</label>
+                    <input
+                      id="st-aiinst"
+                      type="text"
+                      value={settingsForm.aiInstructions || ''}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, aiInstructions: e.target.value })
+                      }
+                      placeholder="e.g. Mention morning breakfast plans politely"
+                    />
+                  </div>
                   <Button type="submit" size="sm">
                     Save Store Settings
                   </Button>
                 </form>
+
+                {conversations.length > 0 && (
+                  <div style={{ marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--line)' }}>
+                    <h3 style={{ fontSize: '1.05rem', marginBottom: 10 }}>
+                      Recent Voice Assistant Conversations ({conversations.length})
+                    </h3>
+                    <div className="admin-table-wrap">
+                      <table className="admin-table">
+                        <thead>
+                          <tr>
+                            <th>User</th>
+                            <th>Lang</th>
+                            <th>Messages</th>
+                            <th>Cart Adds</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {conversations.slice(0, 8).map((c) => (
+                            <tr key={c.id}>
+                              <td>{c.userName}</td>
+                              <td>{c.language}</td>
+                              <td>{c.messages?.length || 0}</td>
+                              <td>{c.cartActionsCount || 0}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </section>
 
               <section className="admin-panel">

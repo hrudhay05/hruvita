@@ -15,6 +15,7 @@ import { DeliverySlot } from '../models/DeliverySlot.js';
 import { Notification } from '../models/Notification.js';
 import { Review } from '../models/Review.js';
 import { Subscription } from '../models/Subscription.js';
+import { Conversation } from '../models/Conversation.js';
 import { computeCustomBowlPrice } from '../data/bowlOptions.js';
 import {
   initialSettings,
@@ -48,6 +49,7 @@ const mem = {
   payments: [],
   reviews: [],
   subscriptions: [],
+  conversations: [],
   notifications: [
     {
       id: 'notif-seed-1',
@@ -1623,4 +1625,70 @@ export async function toggleSubscriptionStatus(subId, userId) {
   };
   return { ...mem.subscriptions[idx] };
 }
+
+// Assistant Conversations Repository
+export async function saveConversationTurn({
+  conversationId,
+  userId = 'guest',
+  userName = 'Guest',
+  language = 'en-IN',
+  userText,
+  assistantText,
+  toolsUsed = [],
+  addedToCart = false,
+}) {
+  const now = new Date().toISOString();
+  const newMsgs = [
+    { role: 'user', text: userText, toolsUsed: [], at: now },
+    { role: 'assistant', text: assistantText, toolsUsed, at: now },
+  ];
+
+  if (mongoConnected) {
+    const doc = await Conversation.findOneAndUpdate(
+      { id: conversationId },
+      {
+        $setOnInsert: { id: conversationId, userId, userName },
+        $set: { language },
+        $push: { messages: { $each: newMsgs } },
+        $inc: { cartActionsCount: addedToCart ? 1 : 0 },
+      },
+      { new: true, upsert: true }
+    ).lean();
+    return stripMongo(doc);
+  }
+
+  const idx = mem.conversations.findIndex((c) => c.id === conversationId);
+  if (idx >= 0) {
+    mem.conversations[idx] = {
+      ...mem.conversations[idx],
+      language,
+      messages: [...mem.conversations[idx].messages, ...newMsgs],
+      cartActionsCount: (mem.conversations[idx].cartActionsCount || 0) + (addedToCart ? 1 : 0),
+      updatedAt: now,
+    };
+    return { ...mem.conversations[idx] };
+  }
+
+  const entry = {
+    id: conversationId,
+    userId,
+    userName,
+    language,
+    messages: newMsgs,
+    cartActionsCount: addedToCart ? 1 : 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+  mem.conversations.unshift(entry);
+  return { ...entry };
+}
+
+export async function listConversations(limit = 40) {
+  if (mongoConnected) {
+    const docs = await Conversation.find().sort({ updatedAt: -1 }).limit(limit).lean();
+    return docs.map(stripMongo);
+  }
+  return mem.conversations.slice(0, limit);
+}
+
 

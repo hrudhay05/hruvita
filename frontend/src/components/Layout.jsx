@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Navbar from './Navbar.jsx';
 import Footer from './Footer.jsx';
 import BottomNav from './BottomNav.jsx';
+import VoiceButton from './VoiceButton.jsx';
 import './Layout.css';
 
 export default function Layout() {
@@ -20,6 +21,7 @@ export default function Layout() {
       </main>
       <Footer />
       <BottomNav />
+      <VoiceButton />
     </div>
   );
 }
