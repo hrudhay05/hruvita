@@ -51,6 +51,8 @@ const userSchema = new mongoose.Schema(
       enum: ['available', 'busy', 'offline'],
       default: 'available',
     },
+    profileImage: { type: String, default: '' },
+    address: { type: String, default: '' },
     resetPasswordTokenHash: { type: String, default: null, select: false },
     resetPasswordExpiresAt: { type: Date, default: null, select: false },
     referralCode: { type: String, unique: true, sparse: true },

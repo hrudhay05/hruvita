@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  FiBell,
   FiCheckCircle,
+  FiDollarSign,
   FiLogOut,
   FiMapPin,
   FiMenu,
   FiMessageCircle,
+  FiNavigation,
   FiPackage,
   FiPhone,
+  FiSearch,
   FiTruck,
   FiUser,
   FiXCircle,
@@ -18,14 +22,17 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { apiRequest } from '../lib/api.js';
 import { money } from '../lib/format.js';
+import { createHruvitaSocket } from '../lib/socket.js';
 import './DeliveryDashboard.css';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: FiTruck },
-  { id: 'assigned', label: 'My Assigned Orders', icon: FiPackage },
+  { id: 'orders', label: 'My Orders', icon: FiPackage },
   { id: 'active', label: 'Active Deliveries', icon: FiTruck },
   { id: 'completed', label: 'Completed Deliveries', icon: FiCheckCircle },
   { id: 'failed', label: 'Failed Deliveries', icon: FiXCircle },
+  { id: 'earnings', label: 'Earnings', icon: FiDollarSign },
+  { id: 'notifications', label: 'Notifications', icon: FiBell },
   { id: 'profile', label: 'My Profile', icon: FiUser },
 ];
 
@@ -44,16 +51,23 @@ export default function DeliveryDashboard() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [orders, setOrders] = useState([]);
   const [stats, setStats] = useState({});
+  const [earnings, setEarnings] = useState({});
   const [profile, setProfile] = useState(null);
+  const [liveNotifs, setLiveNotifs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Search & filter
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Login form state
   const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
 
-  // Delivery exception / COD collection state per order
-  const [codChecks, setCodChecks] = useState({});
+  // Delivery OTP & COD amount state per order
+  const [otpInputs, setOtpInputs] = useState({});
+  const [codAmounts, setCodAmounts] = useState({});
   const [failModalOrder, setFailModalOrder] = useState(null);
   const [failStatus, setFailStatus] = useState('delivery_failed');
   const [failReason, setFailReason] = useState('');
@@ -68,6 +82,7 @@ export default function DeliveryDashboard() {
       const data = await apiRequest('/api/delivery/orders');
       setOrders(data.orders || []);
       setStats(data.stats || {});
+      setEarnings(data.earnings || {});
       setProfile(data.profile || null);
     } catch (err) {
       setError(err.message || 'Could not load assigned orders.');
@@ -79,6 +94,30 @@ export default function DeliveryDashboard() {
   useEffect(() => {
     loadDeliveryOrders();
   }, [loadDeliveryOrders]);
+
+  // Real-time Socket.IO updates
+  useEffect(() => {
+    if (!isDeliveryBoy) return undefined;
+    const sock = createHruvitaSocket();
+    const onNew = (payload) => {
+      showToast(`New assignment: Order ${payload.orderId}`);
+      setLiveNotifs((prev) => [
+        { id: Date.now(), title: `New Assignment: ${payload.orderId}`, desc: `${payload.customerName} (${money(payload.grandTotal)})`, at: new Date().toLocaleTimeString() },
+        ...prev,
+      ]);
+      loadDeliveryOrders();
+    };
+    const onCancelled = (payload) => {
+      showToast(`Assignment updated/reassigned: ${payload.orderId}`);
+      loadDeliveryOrders();
+    };
+    sock.on('delivery:new-assignment', onNew);
+    sock.on('delivery:assignment-cancelled', onCancelled);
+    sock.on('delivery:order-updated', loadDeliveryOrders);
+    return () => {
+      sock.disconnect();
+    };
+  }, [isDeliveryBoy, loadDeliveryOrders, showToast]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -93,20 +132,37 @@ export default function DeliveryDashboard() {
     }
   };
 
-  const handleStatusUpdate = async (orderId, deliveryStatus, reason = '') => {
+  const handleStatusUpdate = async (order, deliveryStatus, reason = '') => {
     setError('');
     try {
-      const codCollected = Boolean(codChecks[orderId]);
-      await apiRequest(`/api/delivery/orders/${orderId}/status`, {
+      const otp = otpInputs[order.id] || '';
+      const isCod = order.paymentMethod === 'cod' && order.paymentStatus !== 'paid';
+      const enteredCash = codAmounts[order.id] !== undefined ? Number(codAmounts[order.id]) : null;
+      await apiRequest(`/api/delivery/orders/${order.id}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ deliveryStatus, reason, codCollected }),
+        body: JSON.stringify({
+          deliveryStatus,
+          reason,
+          otp,
+          codCollected: isCod && enteredCash === Number(order.grandTotal),
+          collectedCash: enteredCash,
+        }),
       });
-      showToast(`Order ${orderId} marked as ${deliveryStatus.replace(/_/g, ' ')}.`);
+      showToast(`Order ${order.id} updated to ${deliveryStatus.replace(/_/g, ' ')}.`);
       setFailModalOrder(null);
       setFailReason('');
       await loadDeliveryOrders();
     } catch (err) {
       setError(err.message || 'Failed to update delivery status.');
+    }
+  };
+
+  const handleResendOtp = async (orderId) => {
+    try {
+      await apiRequest(`/api/delivery/orders/${orderId}/resend-otp`, { method: 'POST' });
+      showToast('Delivery OTP resent to customer email.');
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -117,7 +173,7 @@ export default function DeliveryDashboard() {
         body: JSON.stringify({ availability }),
       });
       setProfile((p) => (p ? { ...p, availability: res.availability } : p));
-      showToast(`Availability updated to ${res.availability}.`);
+      showToast(`Status: ${res.availability}`);
     } catch (err) {
       setError(err.message);
     }
@@ -131,17 +187,17 @@ export default function DeliveryDashboard() {
             <Logo />
           </div>
           <h1>Delivery Partner Portal</h1>
-          <p>Sign in with your HRUVITA Delivery Boy credentials.</p>
+          <p>Sign in with your HRUVITA Delivery Partner credentials.</p>
           {error && <div className="del-alert">{error}</div>}
           <form className="del-form" onSubmit={handleLogin}>
             <label>
-              Email or Username
+              Email or Mobile / Username
               <input
                 type="text"
                 required
                 value={loginId}
                 onChange={(e) => setLoginId(e.target.value)}
-                placeholder="hruvita_delivery or delivery@hruvita.com"
+                placeholder="Enter email or username"
               />
             </label>
             <label>
@@ -155,10 +211,9 @@ export default function DeliveryDashboard() {
             </label>
             <Button type="submit">Sign In</Button>
           </form>
-          <div style={{ marginTop: 16, textAlign: 'center', fontSize: '0.85rem' }}>
-            <Link to="/" style={{ color: 'var(--primary)', fontWeight: 600 }}>
-              &larr; Return to Storefront
-            </Link>
+          <div style={{ marginTop: 14, textAlign: 'center', fontSize: '0.84rem', display: 'flex', justifyContent: 'space-between' }}>
+            <Link to="/forgot-password" style={{ color: 'var(--primary)', fontWeight: 600 }}>Forgot password?</Link>
+            <Link to="/" style={{ color: 'var(--primary)', fontWeight: 600 }}>Storefront &rarr;</Link>
           </div>
         </div>
       </div>
@@ -166,9 +221,17 @@ export default function DeliveryDashboard() {
   }
 
   const filteredOrders = orders.filter((o) => {
-    if (section === 'active') return ['assigned', 'picked_up', 'out_for_delivery'].includes(o.deliveryStatus);
-    if (section === 'completed') return o.deliveryStatus === 'delivered';
-    if (section === 'failed') return FAILED_SET.has(o.deliveryStatus);
+    if (section === 'active' && !['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(o.deliveryStatus)) return false;
+    if (section === 'completed' && o.deliveryStatus !== 'delivered') return false;
+    if (section === 'failed' && !FAILED_SET.has(o.deliveryStatus)) return false;
+    if (statusFilter !== 'all') {
+      if (statusFilter === 'failed' && !FAILED_SET.has(o.deliveryStatus)) return false;
+      else if (statusFilter !== 'failed' && o.deliveryStatus !== statusFilter) return false;
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      if (!o.id.toLowerCase().includes(q) && !String(o.customerName || '').toLowerCase().includes(q)) return false;
+    }
     return true;
   });
 
@@ -197,23 +260,22 @@ export default function DeliveryDashboard() {
               </button>
             );
           })}
+          <button type="button" className="del-nav-btn" onClick={logout}>
+            <FiLogOut size={16} />
+            <span>Logout</span>
+          </button>
         </nav>
       </aside>
 
       <main className="del-main">
         <header className="del-topbar">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button
-              type="button"
-              className="del-mobile-toggle"
-              onClick={() => setMobileMenu((m) => !m)}
-              aria-label="Toggle menu"
-            >
+            <button type="button" className="del-mobile-toggle" onClick={() => setMobileMenu((m) => !m)} aria-label="Toggle menu">
               <FiMenu size={18} />
             </button>
             <div>
               <h1>{NAV_ITEMS.find((n) => n.id === section)?.label || 'Dashboard'}</h1>
-              <span className="del-sub">Role: delivery_boy &bull; {profile?.phone}</span>
+              <span className="del-sub">{profile?.phone} &bull; Real-time connected</span>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -221,14 +283,14 @@ export default function DeliveryDashboard() {
               className="del-select"
               value={profile?.availability || 'available'}
               onChange={(e) => handleAvailabilityChange(e.target.value)}
-              aria-label="Availability status"
+              aria-label="Online/Offline status"
             >
-              <option value="available">Available</option>
+              <option value="available">Online (Available)</option>
               <option value="busy">Busy</option>
               <option value="offline">Offline</option>
             </select>
             <button type="button" className="del-btn" onClick={logout}>
-              <FiLogOut size={14} /> Sign Out
+              <FiLogOut size={14} /> Logout
             </button>
           </div>
         </header>
@@ -237,183 +299,249 @@ export default function DeliveryDashboard() {
 
         {section === 'dashboard' && (
           <div className="del-kpi-grid">
-            <div className="del-kpi"><span>Total Assigned Orders</span><strong>{stats.totalAssigned || 0}</strong></div>
-            <div className="del-kpi"><span>Pending Deliveries</span><strong>{stats.pendingCount || 0}</strong></div>
+            <div className="del-kpi"><span>Total Assigned</span><strong>{stats.totalAssigned || 0}</strong></div>
+            <div className="del-kpi"><span>Pending</span><strong>{stats.pendingCount || 0}</strong></div>
+            <div className="del-kpi"><span>Accepted</span><strong>{stats.acceptedCount || 0}</strong></div>
             <div className="del-kpi"><span>Out for Delivery</span><strong>{stats.outForDeliveryCount || 0}</strong></div>
-            <div className="del-kpi"><span>Completed Today</span><strong>{stats.completedToday || 0}</strong></div>
-            <div className="del-kpi"><span>Failed Deliveries</span><strong>{stats.failedCount || 0}</strong></div>
+            <div className="del-kpi"><span>Delivered Today</span><strong>{stats.completedToday || 0}</strong></div>
+            <div className="del-kpi"><span>Failed</span><strong>{stats.failedCount || 0}</strong></div>
+            <div className="del-kpi"><span>Today&apos;s Earnings</span><strong>{money(stats.todayEarnings || 0)}</strong></div>
+            <div className="del-kpi"><span>Weekly Earnings</span><strong>{money(stats.weeklyEarnings || 0)}</strong></div>
           </div>
         )}
 
-        {section === 'profile' ? (
+        {section === 'earnings' && (
+          <section className="del-card">
+            <h2>Earnings &amp; Commission Summary</h2>
+            <p className="del-sub">Note: Cash collected on COD orders belongs to HRUVITA and is separate from your delivery commission.</p>
+            <div className="del-kpi-grid">
+              <div className="del-kpi"><span>Completed Deliveries</span><strong>{earnings.totalCompleted || 0}</strong></div>
+              <div className="del-kpi"><span>Per-Delivery Commission</span><strong>{money(earnings.perDeliveryCommission || 40)}</strong></div>
+              <div className="del-kpi"><span>Daily Earnings</span><strong>{money(earnings.daily || 0)}</strong></div>
+              <div className="del-kpi"><span>Weekly Earnings</span><strong>{money(earnings.weekly || 0)}</strong></div>
+              <div className="del-kpi"><span>Monthly Earnings</span><strong>{money(earnings.monthly || 0)}</strong></div>
+              <div className="del-kpi"><span>Total Earned</span><strong>{money(earnings.totalEarned || 0)}</strong></div>
+            </div>
+          </section>
+        )}
+
+        {section === 'notifications' && (
+          <section className="del-card">
+            <h2>Real-Time Notifications ({liveNotifs.length})</h2>
+            {liveNotifs.length === 0 ? (
+              <p className="del-sub">No new alerts right now. You will be notified instantly on new assignments.</p>
+            ) : (
+              liveNotifs.map((n) => (
+                <div key={n.id} className="del-note">
+                  <strong>{n.title}</strong> &bull; <small>{n.at}</small>
+                  <div>{n.desc}</div>
+                </div>
+              ))
+            )}
+          </section>
+        )}
+
+        {section === 'profile' && (
           <section className="del-card">
             <h2>My Delivery Profile</h2>
             <p><strong>Name:</strong> {profile?.fullName}</p>
             <p><strong>Phone:</strong> {profile?.phone}</p>
             <p><strong>Email:</strong> {profile?.email}</p>
-            <p><strong>Availability:</strong> {profile?.availability}</p>
+            <p><strong>Address:</strong> {profile?.address || 'Hyderabad'}</p>
+            <p><strong>Status:</strong> {profile?.availability}</p>
           </section>
-        ) : (
-          <section className="del-orders-grid">
-            {loading && <p className="del-sub">Loading assigned orders...</p>}
-            {!loading && filteredOrders.length === 0 && (
-              <div className="del-card"><p className="del-sub">No orders in this section.</p></div>
-            )}
-            {filteredOrders.map((ord) => {
-              const cleanPhone = String(ord.customerPhone || '').replace(/\D/g, '');
-              const waPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-              const isDone = ord.deliveryStatus === 'delivered';
-              const isFailed = FAILED_SET.has(ord.deliveryStatus);
-              return (
-                <article key={ord.id} className="del-card">
-                  <div className="del-card-top">
-                    <div>
-                      <strong>{ord.id}</strong>
-                      <div className="del-sub">{ord.scheduledDate} &bull; {ord.slotLabel}</div>
-                    </div>
-                    <span className={`del-badge del-badge-${ord.deliveryStatus}`}>
-                      {ord.deliveryStatus.replace(/_/g, ' ')}
-                    </span>
-                  </div>
+        )}
 
-                  <div className="del-info">
-                    <div><strong>Customer:</strong> {ord.customerName}</div>
-                    <div><strong>Phone:</strong> {ord.customerPhone}</div>
-                    <div>
-                      <FiMapPin size={13} />{' '}
-                      {[ord.address?.line1, ord.address?.area, ord.address?.city, ord.address?.pincode]
-                        .filter(Boolean)
-                        .join(', ')}
-                    </div>
-                    {ord.address?.notes && (
-                      <div className="del-note"><strong>Instructions:</strong> {ord.address.notes}</div>
-                    )}
-                  </div>
+        {['dashboard', 'orders', 'active', 'completed', 'failed'].includes(section) && (
+          <>
+            <div className="del-filter-bar">
+              <div className="del-search">
+                <FiSearch size={14} />
+                <input
+                  type="search"
+                  placeholder="Search by Order ID or Customer..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <select className="del-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                <option value="all">All Statuses</option>
+                <option value="assigned">New Assignments</option>
+                <option value="accepted">Accepted</option>
+                <option value="picked_up">Picked Up</option>
+                <option value="out_for_delivery">Out for Delivery</option>
+                <option value="delivered">Delivered</option>
+                <option value="failed">Failed</option>
+              </select>
+            </div>
 
-                  <div className="del-items">
-                    {(ord.items || []).map((it, idx) => (
-                      <span key={idx} className="del-item-pill">
-                        {it.qty}&times; {it.name}
+            <section className="del-orders-grid">
+              {loading && <p className="del-sub">Loading assigned orders...</p>}
+              {!loading && filteredOrders.length === 0 && (
+                <div className="del-card"><p className="del-sub">No orders match this view.</p></div>
+              )}
+              {filteredOrders.map((ord) => {
+                const cleanPhone = String(ord.customerPhone || '').replace(/\D/g, '');
+                const waPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+                const fullAddr = [ord.address?.line1, ord.address?.area, ord.address?.city, ord.address?.pincode].filter(Boolean).join(', ');
+                const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(fullAddr)}`;
+                const isDone = ord.deliveryStatus === 'delivered';
+                const isFailed = FAILED_SET.has(ord.deliveryStatus);
+                return (
+                  <article key={ord.id} className="del-card">
+                    <div className="del-card-top">
+                      <div>
+                        <strong>{ord.id}</strong>
+                        <div className="del-sub">{ord.scheduledDate} &bull; {ord.slotLabel}</div>
+                      </div>
+                      <span className={`del-badge del-badge-${ord.deliveryStatus}`}>
+                        {ord.deliveryStatus.replace(/_/g, ' ')}
                       </span>
-                    ))}
-                  </div>
+                    </div>
 
-                  <div className="del-pay-row">
-                    <span>
-                      <strong>{ord.paymentMethod.toUpperCase()}</strong> ({ord.paymentStatus}) &bull;{' '}
-                      <strong>{money(ord.grandTotal)}</strong>
-                    </span>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <a href={`tel:${ord.customerPhone}`} className="del-btn">
-                        <FiPhone size={13} /> Call
-                      </a>
-                      {waPhone && (
-                        <a
-                          href={`https://wa.me/${waPhone}?text=${encodeURIComponent(`Hello ${ord.customerName}, I am on the way with your HRUVITA order ${ord.id}.`)}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="del-btn"
-                        >
-                          <FiMessageCircle size={13} /> WhatsApp
+                    <div className="del-info">
+                      <div><strong>Customer:</strong> {ord.customerName}</div>
+                      <div><strong>Phone:</strong> {ord.customerPhone}</div>
+                      <div><FiMapPin size={13} /> {fullAddr}</div>
+                      {ord.address?.notes && <div className="del-note"><strong>Instructions:</strong> {ord.address.notes}</div>}
+                    </div>
+
+                    <div className="del-items">
+                      {(ord.items || []).map((it, idx) => (
+                        <span key={idx} className="del-item-pill">{it.qty}&times; {it.name}</span>
+                      ))}
+                    </div>
+
+                    <div className="del-pay-row">
+                      <span>
+                        <strong>{ord.paymentMethod.toUpperCase()}</strong> ({ord.paymentStatus === 'paid' ? 'Payment Successful' : ord.paymentStatus}) &bull;{' '}
+                        <strong>{money(ord.grandTotal)}</strong>
+                      </span>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <a href={mapsUrl} target="_blank" rel="noreferrer" className="del-btn">
+                          <FiNavigation size={13} /> Navigate
                         </a>
-                      )}
+                        <a href={`tel:${ord.customerPhone}`} className="del-btn">
+                          <FiPhone size={13} /> Call
+                        </a>
+                        {waPhone && (
+                          <a href={`https://wa.me/${waPhone}`} target="_blank" rel="noreferrer" className="del-btn">
+                            <FiMessageCircle size={13} /> WhatsApp
+                          </a>
+                        )}
+                      </div>
                     </div>
-                  </div>
 
-                  {!isDone && !isFailed && (
-                    <div className="del-actions">
-                      {ord.deliveryStatus === 'assigned' && (
+                    {!isDone && !isFailed && (
+                      <div className="del-actions">
+                        {ord.deliveryStatus === 'assigned' && (
+                          <button type="button" className="del-btn del-btn-primary" onClick={() => handleStatusUpdate(ord, 'accepted')}>
+                            Accept Order
+                          </button>
+                        )}
+                        {ord.deliveryStatus === 'accepted' && (
+                          <button type="button" className="del-btn del-btn-primary" onClick={() => handleStatusUpdate(ord, 'picked_up')}>
+                            Mark Picked Up
+                          </button>
+                        )}
+                        {['assigned', 'accepted', 'picked_up'].includes(ord.deliveryStatus) && (
+                          <button type="button" className="del-btn del-btn-primary" onClick={() => handleStatusUpdate(ord, 'out_for_delivery')}>
+                            Start Delivery (Send OTP)
+                          </button>
+                        )}
+
+                        {ord.deliveryStatus === 'out_for_delivery' && (
+                          <div className="del-otp-box">
+                            <input
+                              type="text"
+                              maxLength={6}
+                              placeholder="Enter 6-digit Customer OTP"
+                              value={otpInputs[ord.id] || ''}
+                              onChange={(e) => setOtpInputs((p) => ({ ...p, [ord.id]: e.target.value }))}
+                              className="del-otp-input"
+                            />
+                            {ord.paymentMethod === 'cod' && ord.paymentStatus !== 'paid' && (
+                              <input
+                                type="number"
+                                placeholder={`Cash ₹${ord.grandTotal}`}
+                                value={codAmounts[ord.id] ?? ''}
+                                onChange={(e) => setCodAmounts((p) => ({ ...p, [ord.id]: e.target.value }))}
+                                className="del-otp-input"
+                              />
+                            )}
+                            <button type="button" className="del-btn del-btn-primary" onClick={() => handleStatusUpdate(ord, 'delivered')}>
+                              Verify OTP &amp; Deliver
+                            </button>
+                            <button type="button" className="del-btn" onClick={() => handleResendOtp(ord.id)}>
+                              Resend OTP
+                            </button>
+                          </div>
+                        )}
+
                         <button
                           type="button"
-                          className="del-btn del-btn-primary"
-                          onClick={() => handleStatusUpdate(ord.id, 'picked_up')}
+                          className="del-btn del-btn-danger"
+                          onClick={() => {
+                            setFailModalOrder(ord);
+                            setFailStatus('delivery_failed');
+                            setFailReason('');
+                          }}
                         >
-                          Mark Picked Up
+                          Mark Failed
                         </button>
-                      )}
-                      {['assigned', 'picked_up'].includes(ord.deliveryStatus) && (
-                        <button
-                          type="button"
-                          className="del-btn del-btn-primary"
-                          onClick={() => handleStatusUpdate(ord.id, 'out_for_delivery')}
-                        >
-                          Out for Delivery
-                        </button>
-                      )}
-                      {ord.paymentMethod === 'cod' && ord.paymentStatus !== 'paid' && (
-                        <label className="del-cod-check">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(codChecks[ord.id])}
-                            onChange={(e) =>
-                              setCodChecks((prev) => ({ ...prev, [ord.id]: e.target.checked }))
-                            }
-                          />
-                          Confirm COD Cash Collected ({money(ord.grandTotal)})
-                        </label>
-                      )}
-                      <button
-                        type="button"
-                        className="del-btn del-btn-primary"
-                        onClick={() => handleStatusUpdate(ord.id, 'delivered')}
-                      >
-                        Mark Delivered
-                      </button>
-                      <button
-                        type="button"
-                        className="del-btn del-btn-danger"
-                        onClick={() => {
-                          setFailModalOrder(ord.id);
-                          setFailStatus('delivery_failed');
-                          setFailReason('');
-                        }}
-                      >
-                        Report Issue / Failed
-                      </button>
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </section>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </section>
+          </>
         )}
 
         {failModalOrder && (
           <div className="del-modal-back">
             <div className="del-modal">
-              <h3>Report Delivery Exception ({failModalOrder})</h3>
-              <select
-                className="del-select"
-                value={failStatus}
-                onChange={(e) => setFailStatus(e.target.value)}
-              >
-                <option value="delivery_failed">Delivery Failed</option>
-                <option value="customer_unavailable">Customer Unavailable</option>
-                <option value="address_not_found">Address Not Found</option>
-                <option value="customer_cancelled">Customer Cancelled</option>
+              <h3>Mark Delivery Failed ({failModalOrder.id})</h3>
+              <select className="del-select" value={failStatus} onChange={(e) => setFailStatus(e.target.value)}>
+                <option value="delivery_failed">Customer unavailable / Delivery failed</option>
+                <option value="customer_unavailable">Customer phone unreachable</option>
+                <option value="address_not_found">Incorrect address</option>
+                <option value="customer_cancelled">Customer refused delivery</option>
               </select>
               <textarea
                 rows={3}
-                placeholder="Reason (required)..."
+                placeholder="Additional notes (required)..."
                 value={failReason}
                 onChange={(e) => setFailReason(e.target.value)}
               />
               <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  type="button"
-                  className="del-btn del-btn-danger"
-                  onClick={() => handleStatusUpdate(failModalOrder, failStatus, failReason)}
-                >
-                  Confirm Exception
+                <button type="button" className="del-btn del-btn-danger" onClick={() => handleStatusUpdate(failModalOrder, failStatus, failReason)}>
+                  Submit Failure
                 </button>
-                <button type="button" className="del-btn" onClick={() => setFailModalOrder(null)}>
-                  Cancel
-                </button>
+                <button type="button" className="del-btn" onClick={() => setFailModalOrder(null)}>Cancel</button>
               </div>
             </div>
           </div>
         )}
       </main>
+
+      <nav className="del-bottom-nav" aria-label="Mobile delivery navigation">
+        {[
+          { id: 'dashboard', label: 'Home', icon: FiTruck },
+          { id: 'orders', label: 'Orders', icon: FiPackage },
+          { id: 'earnings', label: 'Earnings', icon: FiDollarSign },
+          { id: 'notifications', label: 'Alerts', icon: FiBell },
+          { id: 'profile', label: 'Profile', icon: FiUser },
+        ].map((b) => {
+          const Icon = b.icon;
+          return (
+            <button key={b.id} type="button" className={section === b.id ? 'active' : ''} onClick={() => setSection(b.id)}>
+              <Icon size={16} />
+              <span>{b.label}</span>
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }

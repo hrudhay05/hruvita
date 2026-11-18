@@ -5,7 +5,12 @@ import { buildWelcomeEmail } from '../emails/welcomeTemplate.js';
 import { buildPasswordResetEmail } from '../emails/passwordResetTemplate.js';
 import { buildOrderConfirmationEmail } from '../emails/orderConfirmationTemplate.js';
 import { buildOrderStatusEmail } from '../emails/orderStatusTemplate.js';
-import { buildDeliveryPartnerEmail } from '../emails/deliveryTemplate.js';
+import {
+  buildDeliveryPartnerWelcomeEmail,
+  buildDeliveryPartnerEmail,
+  buildDeliveryOtpEmail,
+  buildDeliveryLifecycleEmail,
+} from '../emails/deliveryTemplate.js';
 import { buildAdminAlertEmail } from '../emails/adminAlertTemplate.js';
 
 let cachedTransporter = null;
@@ -92,6 +97,46 @@ export async function sendPasswordResetEmail({ to, fullName, resetUrl }) {
 
 export async function sendOrderConfirmationEmail({ to, order }) {
   const { subject, text, html } = buildOrderConfirmationEmail({ order });
+  return sendMailViaNodemailer({ to, subject, text, html });
+}
+
+export async function sendDeliveryPartnerWelcomeEmail({ to, fullName }) {
+  const { subject, text, html } = buildDeliveryPartnerWelcomeEmail({ fullName, email: to });
+  return sendMailViaNodemailer({ to, subject, text, html });
+}
+
+export async function sendDeliveryAssignmentEmail({ to, orderId, partnerName, partnerPhone, address = '' }) {
+  const { subject, text, html } = buildDeliveryPartnerEmail({ orderId, partnerName, partnerPhone, isReassign: false, address });
+  return sendMailViaNodemailer({ to, subject, text, html });
+}
+
+export async function sendDeliveryReassignedEmail({ to, orderId, partnerName, partnerPhone, address = '' }) {
+  const { subject, text, html } = buildDeliveryPartnerEmail({ orderId, partnerName, partnerPhone, isReassign: true, address });
+  return sendMailViaNodemailer({ to, subject, text, html });
+}
+
+export async function sendDeliveryAcceptedEmail({ to, orderId, partnerName, partnerPhone }) {
+  const { subject, text, html } = buildDeliveryLifecycleEmail({ orderId, stage: 'accepted', partnerName, partnerPhone });
+  return sendMailViaNodemailer({ to, subject, text, html });
+}
+
+export async function sendOutForDeliveryEmail({ to, orderId, partnerName, partnerPhone }) {
+  const { subject, text, html } = buildDeliveryLifecycleEmail({ orderId, stage: 'out_for_delivery', partnerName, partnerPhone });
+  return sendMailViaNodemailer({ to, subject, text, html });
+}
+
+export async function sendDeliveryOtpEmail({ to, customerName, orderId, otp, partnerName = '' }) {
+  const { subject, text, html } = buildDeliveryOtpEmail({ customerName, orderId, otp, partnerName });
+  return sendMailViaNodemailer({ to, subject, text, html });
+}
+
+export async function sendDeliveryCompletedEmail({ to, orderId, partnerName }) {
+  const { subject, text, html } = buildDeliveryLifecycleEmail({ orderId, stage: 'delivered', partnerName });
+  return sendMailViaNodemailer({ to, subject, text, html });
+}
+
+export async function sendDeliveryFailedEmail({ to, orderId, partnerName, reason }) {
+  const { subject, text, html } = buildDeliveryLifecycleEmail({ orderId, stage: 'failed', partnerName, reason });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
 

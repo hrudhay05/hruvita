@@ -2,8 +2,14 @@ import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { ORDER_STATUSES, Order } from '../models/Order.js';
-import { sendUserNotification } from '../utils/emailService.js';
+import {
+  sendUserNotification,
+  sendDeliveryPartnerWelcomeEmail,
+  sendDeliveryAssignmentEmail,
+  sendDeliveryReassignedEmail,
+} from '../utils/emailService.js';
 import { notifyAdmins } from '../utils/adminNotifier.js';
+import { emitToAdmins, emitToDeliveryPartner, emitToUser } from '../utils/socketServer.js';
 import { createRazorpayClient } from '../utils/razorpayClient.js';
 import {
   runDailySubscriptionGenerator,
@@ -861,7 +867,15 @@ router.get('/delivery-boys', async (_req, res) => {
 
 router.post('/delivery-boys', requireRole('admin'), async (req, res) => {
   try {
-    const { fullName, phone, email, password, availability = 'available' } = req.body || {};
+    const {
+      fullName,
+      phone,
+      email,
+      password,
+      availability = 'available',
+      profileImage = '',
+      address = '',
+    } = req.body || {};
     if (!fullName || !phone || !email || !password || String(password).length < 8) {
       return res
         .status(400)
@@ -880,6 +894,8 @@ router.post('/delivery-boys', requireRole('admin'), async (req, res) => {
       email: normEmail,
       mobileNumber: String(phone).trim(),
       phone: String(phone).trim(),
+      profileImage: String(profileImage || '').trim(),
+      address: String(address || '').trim(),
       password: passwordHash,
       role: 'delivery_boy',
       deliveryAvailability: ['available', 'busy', 'offline'].includes(availability)
@@ -890,6 +906,7 @@ router.post('/delivery-boys', requireRole('admin'), async (req, res) => {
       termsAccepted: true,
       blocked: false,
     });
+    sendDeliveryPartnerWelcomeEmail({ to: normEmail, fullName: created.fullName }).catch(() => {});
     await recordAudit({
       actorId: req.user.id,
       actorEmail: req.user.email,
@@ -1010,11 +1027,61 @@ router.post('/orders/:id/assign-delivery', async (req, res) => {
         $set: {
           deliveryStatus: 'assigned',
           deliveryAssignment: assignment,
+          'delivery.partnerId': boy.id,
+          'delivery.partnerName': assignment.deliveryBoyName,
+          'delivery.partnerPhone': assignment.deliveryBoyPhone,
+          'delivery.assignedAt': new Date(nowIso),
+          'delivery.cashCollectionStatus': order.paymentMethod === 'cod' ? 'pending' : 'not_applicable',
         },
         $push: { assignmentHistory: historyItem },
       },
       { new: true }
     ).lean();
+
+    emitToDeliveryPartner(boy.id, 'delivery:new-assignment', {
+      orderId: order.id,
+      customerName: order.customerName,
+      grandTotal: order.pricing?.grandTotal || 0,
+    });
+    if (isReassign && order.deliveryAssignment?.deliveryBoyId && order.deliveryAssignment.deliveryBoyId !== boy.id) {
+      emitToDeliveryPartner(order.deliveryAssignment.deliveryBoyId, 'delivery:assignment-cancelled', {
+        orderId: order.id,
+      });
+    }
+    emitToAdmins('delivery:order-assigned', { orderId: order.id, partnerId: boy.id, partnerName: assignment.deliveryBoyName });
+    emitToUser(order.userId, 'order:delivery-assigned', {
+      orderId: order.id,
+      partnerName: assignment.deliveryBoyName,
+      partnerPhone: assignment.deliveryBoyPhone,
+    });
+
+    const addrLine = [order.address?.line1, order.address?.area, order.address?.city, order.address?.pincode]
+      .filter(Boolean)
+      .join(', ');
+    if (isReassign) {
+      sendDeliveryReassignedEmail({
+        to: order.customerEmail,
+        orderId: order.id,
+        partnerName: assignment.deliveryBoyName,
+        partnerPhone: assignment.deliveryBoyPhone,
+        address: addrLine,
+      }).catch(() => {});
+    } else {
+      sendDeliveryAssignmentEmail({
+        to: order.customerEmail,
+        orderId: order.id,
+        partnerName: assignment.deliveryBoyName,
+        partnerPhone: assignment.deliveryBoyPhone,
+        address: addrLine,
+      }).catch(() => {});
+    }
+    sendDeliveryAssignmentEmail({
+      to: boy.email,
+      orderId: order.id,
+      partnerName: assignment.deliveryBoyName,
+      partnerPhone: assignment.deliveryBoyPhone,
+      address: addrLine,
+    }).catch(() => {});
 
     await recordAudit({
       actorId: req.user.id,
@@ -1052,6 +1119,69 @@ router.post('/orders/:id/assign-delivery', async (req, res) => {
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Could not assign delivery partner.' });
   }
+});
+
+router.get('/delivery-reports', async (req, res) => {
+  const { format = 'json' } = req.query || {};
+  const [users, orders] = await Promise.all([listUsers(), listAllOrders()]);
+  const boys = users.filter((u) => u.role === 'delivery_boy');
+  const assignedOrders = orders.filter((o) => o.deliveryAssignment?.deliveryBoyId || o.delivery?.partnerId);
+  const completed = assignedOrders.filter((o) => o.deliveryStatus === 'delivered');
+  const failed = assignedOrders.filter((o) =>
+    ['delivery_failed', 'customer_unavailable', 'address_not_found', 'customer_cancelled'].includes(o.deliveryStatus)
+  );
+  const durations = completed
+    .map((o) => {
+      const a = new Date(o.delivery?.assignedAt || o.deliveryAssignment?.assignedAt || 0).getTime();
+      const d = new Date(o.delivery?.deliveredAt || o.deliveryAssignment?.deliveredAt || 0).getTime();
+      return a > 0 && d > a ? (d - a) / 60000 : null;
+    })
+    .filter((n) => n !== null);
+  const avgCompletionMins = durations.length ? Math.round(durations.reduce((s, n) => s + n, 0) / durations.length) : 0;
+  const codOrders = assignedOrders.filter((o) => o.paymentMethod === 'cod');
+  const codCollected = codOrders.filter((o) => o.paymentStatus === 'paid').reduce((s, o) => s + (o.pricing?.grandTotal || 0), 0);
+  const codPending = codOrders.filter((o) => o.paymentStatus !== 'paid' && o.status !== 'cancelled').reduce((s, o) => s + (o.pricing?.grandTotal || 0), 0);
+
+  const partnerPerformance = boys.map((b) => {
+    const mine = assignedOrders.filter((o) => (o.deliveryAssignment?.deliveryBoyId || o.delivery?.partnerId) === b.id);
+    const done = mine.filter((o) => o.deliveryStatus === 'delivered').length;
+    const fail = mine.filter((o) => ['delivery_failed', 'customer_unavailable', 'address_not_found', 'customer_cancelled'].includes(o.deliveryStatus)).length;
+    return {
+      id: b.id,
+      name: b.fullName || b.name,
+      phone: b.mobileNumber || b.phone || '',
+      availability: b.deliveryAvailability || 'available',
+      active: !b.blocked,
+      assigned: mine.length,
+      completed: done,
+      failed: fail,
+    };
+  });
+
+  if (format === 'csv') {
+    const lines = [
+      'Partner,Phone,Availability,Active,Assigned,Completed,Failed',
+      ...partnerPerformance.map((p) => `"${p.name}","${p.phone}","${p.availability}",${p.active},${p.assigned},${p.completed},${p.failed}`),
+    ];
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="hruvita-delivery-report.csv"');
+    return res.send(lines.join('\r\n'));
+  }
+
+  return res.json({
+    summary: {
+      totalPartners: boys.length,
+      activePartners: boys.filter((b) => !b.blocked && b.deliveryAvailability !== 'offline').length,
+      offlinePartners: boys.filter((b) => b.blocked || b.deliveryAvailability === 'offline').length,
+      totalAssigned: assignedOrders.length,
+      completedDeliveries: completed.length,
+      failedDeliveries: failed.length,
+      avgCompletionMins,
+      codCollected,
+      codPending,
+    },
+    partnerPerformance,
+  });
 });
 
 export default router;

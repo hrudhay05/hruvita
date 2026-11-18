@@ -20,6 +20,8 @@ const businessSettingsSchema = new mongoose.Schema(
     codEnabled: { type: Boolean, default: true },
     storeOpen: { type: Boolean, default: true },
     aiEnabled: { type: Boolean, default: true },
+    deliveryCommissionPerOrder: { type: Number, default: 40, min: 0 },
+    deliveryIncentivePer10Orders: { type: Number, default: 100, min: 0 },
   },
   { timestamps: true }
 );

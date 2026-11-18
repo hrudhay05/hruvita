@@ -31,6 +31,7 @@ import { useCart } from '../context/CartContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { apiRequest } from '../lib/api.js';
 import { money } from '../lib/format.js';
+import { createHruvitaSocket } from '../lib/socket.js';
 import './Account.css';
 import './AuthFlow.css';
 
@@ -123,6 +124,17 @@ export default function Account() {
     window.addEventListener('hruvita:order-placed', onOrderPlaced);
     return () => window.removeEventListener('hruvita:order-placed', onOrderPlaced);
   }, [loadDashboardData]);
+
+  useEffect(() => {
+    if (!user || user.role !== 'customer') return undefined;
+    const sock = createHruvitaSocket();
+    const refresh = () => loadDashboardData();
+    sock.on('order:delivery-assigned', refresh);
+    sock.on('order:out-for-delivery', refresh);
+    sock.on('order:delivered', refresh);
+    sock.on('order:delivery-failed', refresh);
+    return () => sock.disconnect();
+  }, [user, loadDashboardData]);
 
   useEffect(() => {
     if (user) {

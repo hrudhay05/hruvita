@@ -9,7 +9,9 @@ import dotenv from 'dotenv';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
+import crypto from 'node:crypto';
 import { initDatabase, listUsers, createOrderRecord } from '../store/repository.js';
+import { Order } from '../models/Order.js';
 import { signToken } from '../middleware/auth.js';
 
 const BASE = process.env.TEST_BASE_URL || 'http://127.0.0.1:5088';
@@ -135,8 +137,8 @@ async function main() {
   assert.equal(failNoReason.status, 400);
   console.log('PASS [7/10] Failed delivery requires non-empty reason (400)');
 
-  // 8. db2 progresses Picked Up -> Out for Delivery -> Delivered (with explicit COD collected)
-  for (const st of ['picked_up', 'out_for_delivery']) {
+  // 8. db2 progresses Accepted -> Picked Up -> Out for Delivery (generates hashed OTP) -> Delivered (OTP + COD check)
+  for (const st of ['accepted', 'picked_up', 'out_for_delivery']) {
     const r = await fetch(`${BASE}/api/delivery/orders/${ordId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${db2Token}` },
@@ -144,13 +146,40 @@ async function main() {
     });
     assert.equal(r.status, 200);
   }
+
+  // Verify wrong OTP is rejected (400)
+  const wrongOtpRes = await fetch(`${BASE}/api/delivery/orders/${ordId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${db2Token}` },
+    body: JSON.stringify({ deliveryStatus: 'delivered', otp: '000000', codCollected: true, collectedCash: 88 }),
+  });
+  assert.equal(wrongOtpRes.status, 400);
+
+  // Set known test OTP hash in DB (simulating customer reading their email OTP) and verify COD mismatch vs exact match
+  const knownOtp = '654321';
+  const knownHash = crypto.createHash('sha256').update(knownOtp).digest('hex');
+  await Order.updateOne({ id: ordId }, { $set: { 'delivery.deliveryOtpHash': knownHash, 'delivery.otpExpiry': new Date(Date.now() + 600000), 'delivery.otpAttempts': 0 } });
+
+  const badCashRes = await fetch(`${BASE}/api/delivery/orders/${ordId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${db2Token}` },
+    body: JSON.stringify({ deliveryStatus: 'delivered', otp: knownOtp, codCollected: true, collectedCash: 10 }),
+  });
+  assert.equal(badCashRes.status, 400);
+
   const delivRes = await fetch(`${BASE}/api/delivery/orders/${ordId}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${db2Token}` },
-    body: JSON.stringify({ deliveryStatus: 'delivered', codCollected: true }),
+    body: JSON.stringify({ deliveryStatus: 'delivered', otp: knownOtp, codCollected: true, collectedCash: 88 }),
   });
   assert.equal(delivRes.status, 200);
-  console.log('PASS [8/10] Delivery boy progressed order to Delivered + COD collected');
+
+  // Verify delivery reports & earnings
+  const repRes = await fetch(`${BASE}/api/admin/delivery-reports`, { headers: { Authorization: `Bearer ${adminToken}` } });
+  assert.equal(repRes.status, 200);
+  const repData = await repRes.json();
+  assert.ok(repData.summary.totalPartners >= 2);
+  console.log('PASS [8/10] OTP verification, COD validation, and Admin delivery reports verified');
 
   // 9. Customer sees updated delivered status & Boy Two details
   const finalOrd = (await (await fetch(`${BASE}/api/orders/${ordId}`, { headers: { Authorization: `Bearer ${custToken}` } })).json()).order;
