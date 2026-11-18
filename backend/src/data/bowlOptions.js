@@ -31,31 +31,40 @@ export const bowlOptions = {
   ],
 };
 
-export function computeCustomBowlPrice(bowlSpec = {}) {
+export function computeCustomBowlPrice(bowlSpec = {}, dynamicIngredients = null) {
   const size = bowlOptions.sizes.find((s) => s.id === bowlSpec.sizeId) || bowlOptions.sizes[1];
   const fruitIds = Array.isArray(bowlSpec.fruits) ? bowlSpec.fruits : [];
   const toppingIds = Array.isArray(bowlSpec.toppings) ? bowlSpec.toppings : [];
   const extraIds = Array.isArray(bowlSpec.extras) ? bowlSpec.extras : [];
 
-  const chosenFruits = bowlOptions.fruits.filter((f) => fruitIds.includes(f.id));
-  const chosenToppings = bowlOptions.toppings.filter((t) => toppingIds.includes(t.id));
-  const chosenExtras = bowlOptions.extras.filter((e) => extraIds.includes(e.id));
+  const fruitsPool = dynamicIngredients
+    ? dynamicIngredients.filter((i) => i.category === 'fruits')
+    : bowlOptions.fruits;
+  const toppingsPool = dynamicIngredients
+    ? dynamicIngredients.filter((i) => i.category === 'toppings')
+    : bowlOptions.toppings;
+  const extrasPool = dynamicIngredients
+    ? dynamicIngredients.filter((i) => i.category === 'extras')
+    : bowlOptions.extras;
 
-  const fruitsCost = chosenFruits.reduce((sum, f) => sum + f.price, 0);
-  const toppingsCost = chosenToppings.reduce((sum, t) => sum + t.price, 0);
-  const extrasCost = chosenExtras.reduce((sum, e) => sum + e.price, 0);
+  const chosenFruits = fruitsPool.filter((f) => fruitIds.includes(f.id));
+  const chosenToppings = toppingsPool.filter((t) => toppingIds.includes(t.id));
+  const chosenExtras = extrasPool.filter((e) => extraIds.includes(e.id));
+
+  const fruitsCost = chosenFruits.reduce((sum, f) => sum + (Number(f.price) || 0), 0);
+  const toppingsCost = chosenToppings.reduce((sum, t) => sum + (Number(t.price) || 0), 0);
+  const extrasCost = chosenExtras.reduce((sum, e) => sum + (Number(e.price) || 0), 0);
 
   const unitPrice = size.basePrice + fruitsCost + toppingsCost + extrasCost;
-  const parts = [
-    ...chosenFruits.map((f) => f.name),
-    ...chosenToppings.map((t) => t.name),
-    ...chosenExtras.map((e) => e.name),
-  ];
+  const chosenAll = [...chosenFruits, ...chosenToppings, ...chosenExtras];
+  const parts = chosenAll.map((item) => item.name);
 
   return {
     name: `Custom ${size.name} (${size.weight})`,
     summary: parts.join(', ') || 'Chef selection of fresh fruits',
     unitPrice,
     size,
+    ingredientIds: chosenAll.map((item) => item.id),
+    chosenIngredients: chosenAll,
   };
 }

@@ -19,6 +19,8 @@ import {
   revokeRefreshSessionByHash,
   revokeAllUserRefreshSessions,
   createNotification,
+  findUserByReferralCode,
+  createReferralRecord,
 } from '../store/repository.js';
 import {
   requireAuth,
@@ -87,7 +89,12 @@ async function handleSignup(req, res) {
       confirmPassword,
       termsAccepted,
       referredBy = '',
+      referralCode = '',
     } = req.body || {};
+
+    const cleanReferralInput = String(referredBy || referralCode || '')
+      .toUpperCase()
+      .trim();
 
     const finalFullName = String(fullName || name || '').trim();
     const emailClean = String(email || '').toLowerCase().trim();
@@ -118,6 +125,18 @@ async function handleSignup(req, res) {
       return res.status(409).json({ error: 'An account with this email address already exists.' });
     }
 
+    // Validate optional referral code (block self-referral; reward credits only after first paid order)
+    let validReferrer = null;
+    if (cleanReferralInput) {
+      validReferrer = await findUserByReferralCode(cleanReferralInput);
+      if (!validReferrer) {
+        return res.status(400).json({ error: `Referral code "${cleanReferralInput}" is not valid.` });
+      }
+      if (validReferrer.email === emailClean) {
+        return res.status(400).json({ error: 'Self-referral is not allowed.' });
+      }
+    }
+
     // Hash password with bcrypt cost factor 12 ($2b$12$...)
     const passwordHash = await bcrypt.hash(String(password), 12);
 
@@ -128,6 +147,7 @@ async function handleSignup(req, res) {
         name: finalFullName,
         password: passwordHash,
         termsAccepted: true,
+        ...(validReferrer ? { referredBy: cleanReferralInput } : {}),
       });
     } else {
       user = await createUser({
@@ -138,9 +158,17 @@ async function handleSignup(req, res) {
         isEmailVerified: false,
         isProfileCompleted: false,
         termsAccepted: true,
-        referredBy,
+        referredBy: validReferrer ? cleanReferralInput : '',
         role: 'customer',
-        rewardPoints: referredBy ? 50 : 25,
+        rewardPoints: 25, // Referral bonus credits after first paid order
+      });
+    }
+
+    if (validReferrer && user) {
+      await createReferralRecord({
+        referrer: validReferrer,
+        referredUser: user,
+        referralCode: cleanReferralInput,
       });
     }
 
@@ -375,8 +403,14 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Optional instant demo button bypass (only for seeded demo accounts when explicitly requested)
-    if (directDemo && (user.email === 'customer@hruvita.com' || user.email === 'admin@hruvita.com')) {
+    // Optional instant demo / configured admin portal sign-in bypass when explicitly requested
+    const configuredAdminEmail = (process.env.ADMIN_EMAIL || 'admin@hruvita.com').toLowerCase();
+    if (
+      directDemo &&
+      (user.email === 'customer@hruvita.com' ||
+        user.email === 'admin@hruvita.com' ||
+        user.email === configuredAdminEmail)
+    ) {
       const session = await issueSessionAndCookies(req, res, user, Boolean(rememberMe));
       return res.json(session);
     }

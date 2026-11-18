@@ -11,6 +11,7 @@ const reviewSchema = new mongoose.Schema(
     comment: { type: String, required: true, trim: true, maxlength: 600 },
     verifiedOrder: { type: Boolean, default: false },
     visible: { type: Boolean, default: true },
+    moderationNote: { type: String, default: '' },
   },
   { timestamps: true }
 );

@@ -14,7 +14,7 @@ import './Cart.css';
 export default function Cart() {
   const navigate = useNavigate();
   const { items, customBowls, setQty, setCustomBowlQty, clear } = useCart();
-  const { productById, refreshCatalog } = useCatalog();
+  const { productById, comboById, settings, refreshCatalog } = useCatalog();
   const { user, addresses, selectedAddressId, setSelectedAddressId } = useAuth();
   const { showToast } = useToast();
 
@@ -26,7 +26,19 @@ export default function Cart() {
   const [quote, setQuote] = useState(null);
 
   const todayStr = new Date().toISOString().slice(0, 10);
-  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const maxPreOrderDays = Number(settings?.maxPreOrderDays ?? 7);
+  const preOrderDates = Array.from({ length: maxPreOrderDays + 1 }, (_, i) => {
+    const dt = new Date(Date.now() + i * 86400000);
+    const iso = dt.toISOString().slice(0, 10);
+    const label =
+      i === 0
+        ? `Today (${iso})`
+        : i === 1
+          ? `Tomorrow (${iso})`
+          : dt.toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' }) +
+            ` (${iso})`;
+    return { iso, label };
+  });
   const [scheduledDate, setScheduledDate] = useState(todayStr);
   const [slotId, setSlotId] = useState('morning');
   const [paymentMethod, setPaymentMethod] = useState('cod');
@@ -48,17 +60,64 @@ export default function Cart() {
   const [confirmedOrder, setConfirmedOrder] = useState(null);
 
   const lines = Object.entries(items)
-    .map(([id, qty]) => ({ product: productById[id], qty }))
-    .filter((l) => l.product);
+    .map(([rawKey, qty]) => {
+      if (rawKey.startsWith('combo:')) {
+        const combo = comboById[rawKey.slice(6)];
+        if (!combo) return null;
+        return {
+          key: rawKey,
+          isCombo: true,
+          name: combo.name,
+          image: combo.image,
+          unitAmount: Number(combo.price),
+          maxStock: 20,
+          linkTo: '/menu?cat=combos',
+          subtitle: `${money(combo.price)} combo (${combo.scheduleStart}–${combo.scheduleEnd})`,
+          qty,
+        };
+      }
+      const [baseId, sizeLabel = ''] = rawKey.split('::');
+      const product = productById[baseId];
+      if (!product) return null;
+      const matchedSize =
+        sizeLabel && Array.isArray(product.sizes)
+          ? product.sizes.find((s) => String(s.name).toLowerCase() === sizeLabel.toLowerCase())
+          : null;
+      const delta = matchedSize ? Number(matchedSize.priceDelta) || 0 : 0;
+      const unitAmt = unitPrice(product) + delta;
+      return {
+        key: rawKey,
+        isCombo: false,
+        product,
+        name: matchedSize ? `${product.name} (${matchedSize.name})` : product.name,
+        image: product.image,
+        unitAmount: unitAmt,
+        maxStock: product.stock,
+        linkTo: `/product/${product.id}`,
+        subtitle: `${money(unitAmt)} each`,
+        qty,
+      };
+    })
+    .filter(Boolean);
 
   const hasItems = lines.length > 0 || customBowls.length > 0;
 
   useEffect(() => {
-    apiRequest('/api/slots')
+    apiRequest(`/api/slots?date=${encodeURIComponent(scheduledDate)}`)
       .then((d) => {
-        if (d.slots?.length) setSlots(d.slots);
+        if (d.slots?.length) {
+          setSlots(d.slots);
+          const currentValid = d.slots.find((s) => s.id === slotId && s.available !== false);
+          if (!currentValid) {
+            const firstAvail = d.slots.find((s) => s.available !== false);
+            if (firstAvail) setSlotId(firstAvail.id);
+          }
+        }
       })
       .catch(() => {});
+  }, [scheduledDate]);
+
+  useEffect(() => {
     apiRequest('/api/coupons')
       .then((d) => {
         if (d.coupons?.length) setCoupons(d.coupons);
@@ -142,7 +201,7 @@ export default function Cart() {
     );
   }
 
-  const localCatalogSubtotal = lines.reduce((sum, l) => sum + unitPrice(l.product) * l.qty, 0);
+  const localCatalogSubtotal = lines.reduce((sum, l) => sum + l.unitAmount * l.qty, 0);
   const localBowlSubtotal = customBowls.reduce(
     (sum, b) => sum + (Number(b.unitPrice) || 139) * (b.qty || 1),
     0
@@ -275,12 +334,12 @@ export default function Cart() {
       <div className="cart-layout">
         <div>
           <ul className="cart-list">
-            {lines.map(({ product, qty }) => (
-              <li key={product.id} className="cart-line">
+            {lines.map((line) => (
+              <li key={line.key} className="cart-line">
                 <span className="cart-emoji" aria-hidden="true">
                   <img
-                    src={product.image}
-                    alt={product.name}
+                    src={line.image}
+                    alt={line.name}
                     loading="lazy"
                     onError={(e) => {
                       e.currentTarget.style.display = 'none';
@@ -289,28 +348,28 @@ export default function Cart() {
                 </span>
                 <div className="cart-info">
                   <strong>
-                    <Link to={`/product/${product.id}`}>{product.name}</Link>
+                    <Link to={line.linkTo}>{line.name}</Link>
                   </strong>
-                  <span>{money(unitPrice(product))} each</span>
+                  <span>{line.subtitle}</span>
                 </div>
                 <div className="cart-qty">
                   <button
                     type="button"
-                    onClick={() => setQty(product.id, qty - 1)}
-                    aria-label={`Decrease ${product.name}`}
+                    onClick={() => setQty(line.key, line.qty - 1)}
+                    aria-label={`Decrease ${line.name}`}
                   >
-                    {qty === 1 ? <FiTrash2 size={15} /> : <FiMinus size={15} />}
+                    {line.qty === 1 ? <FiTrash2 size={15} /> : <FiMinus size={15} />}
                   </button>
-                  <b>{qty}</b>
+                  <b>{line.qty}</b>
                   <button
                     type="button"
-                    onClick={() => setQty(product.id, Math.min(qty + 1, product.stock))}
-                    aria-label={`Increase ${product.name}`}
+                    onClick={() => setQty(line.key, Math.min(line.qty + 1, line.maxStock))}
+                    aria-label={`Increase ${line.name}`}
                   >
                     <FiPlus size={15} />
                   </button>
                 </div>
-                <strong className="cart-total">{money(unitPrice(product) * qty)}</strong>
+                <strong className="cart-total">{money(line.unitAmount * line.qty)}</strong>
               </li>
             ))}
 
@@ -354,7 +413,7 @@ export default function Cart() {
           </ul>
 
           <div className="cart-checkout-box">
-            <h2>1. Delivery Date &amp; Time Slot</h2>
+            <h2>1. Delivery Date &amp; Time Slot (Pre-order up to {maxPreOrderDays} days)</h2>
             <div className="cart-field-grid">
               <div className="cart-field">
                 <label htmlFor="checkout-date">Delivery Date</label>
@@ -364,31 +423,51 @@ export default function Cart() {
                   value={scheduledDate}
                   onChange={(e) => setScheduledDate(e.target.value)}
                 >
-                  <option value={todayStr}>Today ({todayStr})</option>
-                  <option value={tomorrowStr}>Tomorrow ({tomorrowStr})</option>
+                  {preOrderDates.map((d) => (
+                    <option key={d.iso} value={d.iso}>
+                      {d.label}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
 
             <div className="cart-slots">
               {(slots.length
-                ? slots
+                ? slots.filter((s) => !s.isFull)
                 : [
-                    { id: 'morning', name: 'Morning Slot', window: '6:30 AM – 9:00 AM' },
-                    { id: 'afternoon', name: 'Afternoon Slot', window: '12:30 PM – 2:30 PM' },
-                    { id: 'evening', name: 'Evening Slot', window: '6:30 PM – 8:30 PM' },
+                    { id: 'morning', name: 'Morning Slot', window: '6:30 AM – 9:00 AM', available: true },
+                    { id: 'afternoon', name: 'Afternoon Slot', window: '12:30 PM – 2:30 PM', available: true },
+                    { id: 'evening', name: 'Evening Slot', window: '6:30 PM – 8:30 PM', available: true },
                   ]
-              ).map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`cart-slot-btn ${slotId === s.id ? 'cart-slot-active' : ''}`.trim()}
-                  onClick={() => setSlotId(s.id)}
-                >
-                  <span>{s.name}</span>
-                  <span>{s.window}</span>
-                </button>
-              ))}
+              ).map((s) => {
+                const disabled = s.available === false;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    disabled={disabled}
+                    title={s.unavailableReason || ''}
+                    className={`cart-slot-btn ${slotId === s.id && !disabled ? 'cart-slot-active' : ''}`.trim()}
+                    style={disabled ? { opacity: 0.48, cursor: 'not-allowed' } : undefined}
+                    onClick={() => !disabled && setSlotId(s.id)}
+                  >
+                    <span>{s.name}</span>
+                    <span>{s.window}</span>
+                    {disabled ? (
+                      <small style={{ color: 'var(--danger)', fontSize: '0.72rem' }}>
+                        {s.unavailableReason || 'Unavailable'}
+                      </small>
+                    ) : (
+                      s.remainingCapacity !== undefined && (
+                        <small style={{ color: 'var(--primary)', fontSize: '0.72rem' }}>
+                          {s.remainingCapacity} spots left
+                        </small>
+                      )
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>

@@ -27,6 +27,21 @@ import {
   listAllSubscriptions,
   getSettings,
   listAutomationLogs,
+  listIngredients,
+  upsertIngredient,
+  adjustProductStock,
+  adjustIngredientStock,
+  listInventoryLogs,
+  listCombos,
+  upsertCombo,
+  deleteCombo,
+  listPlans,
+  upsertSubscriptionPlan,
+  deleteSubscriptionPlan,
+  listAllReviews,
+  moderateReview,
+  listReferrals,
+  resolveReferral,
 } from '../store/repository.js';
 
 const router = Router();
@@ -462,6 +477,200 @@ router.post('/automation/run/:job', requireRole('admin'), async (req, res) => {
     res.json({ log });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Automation job failed.' });
+  }
+});
+
+// Inventory, Bowl Ingredients & Stock History Logs
+router.get('/inventory', async (_req, res) => {
+  const [products, ingredients, logs] = await Promise.all([
+    listProducts({ includeInactive: true }),
+    listIngredients(true),
+    listInventoryLogs(80),
+  ]);
+  const lowProducts = products.filter((p) => p.stock <= 5);
+  const lowIngredients = ingredients.filter((i) => i.stock <= (i.lowStockThreshold || 8));
+  res.json({ products, ingredients, logs, lowProducts, lowIngredients });
+});
+
+router.post('/inventory/products/:id/adjust', requireRole('admin'), async (req, res) => {
+  try {
+    const { delta, reason = 'admin_adjustment', note = '' } = req.body || {};
+    const product = await adjustProductStock({
+      productId: req.params.id,
+      delta,
+      reason,
+      actor: req.user.email,
+      note,
+    });
+    await recordAudit({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'ADJUST_PRODUCT_STOCK',
+      entity: 'product',
+      entityId: product.id,
+      details: { delta: Number(delta), stockAfter: product.stock, note },
+    });
+    res.json({ product });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Could not adjust stock.' });
+  }
+});
+
+router.post('/ingredients', requireRole('admin'), async (req, res) => {
+  try {
+    const ingredient = await upsertIngredient(req.body || {});
+    await recordAudit({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'UPSERT_INGREDIENT',
+      entity: 'ingredient',
+      entityId: ingredient.id,
+      details: { category: ingredient.category, price: ingredient.price, stock: ingredient.stock },
+    });
+    res.status(201).json({ ingredient });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Could not save ingredient.' });
+  }
+});
+
+router.post('/ingredients/:id/adjust', requireRole('admin'), async (req, res) => {
+  try {
+    const { delta, reason = 'admin_adjustment', note = '' } = req.body || {};
+    const ingredient = await adjustIngredientStock({
+      ingredientId: req.params.id,
+      delta,
+      reason,
+      actor: req.user.email,
+      note,
+    });
+    await recordAudit({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'ADJUST_INGREDIENT_STOCK',
+      entity: 'ingredient',
+      entityId: ingredient.id,
+      details: { delta: Number(delta), stockAfter: ingredient.stock, note },
+    });
+    res.json({ ingredient });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Could not adjust ingredient stock.' });
+  }
+});
+
+// Dynamic Combo Builder CRUD
+router.get('/combos', async (_req, res) => {
+  const combos = await listCombos(true);
+  res.json({ combos });
+});
+
+router.post('/combos', requireRole('admin'), async (req, res) => {
+  try {
+    const combo = await upsertCombo(req.body || {});
+    await recordAudit({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'UPSERT_COMBO',
+      entity: 'combo',
+      entityId: combo.id,
+      details: { price: combo.price, active: combo.active, items: combo.items },
+    });
+    res.status(201).json({ combo });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Could not save combo.' });
+  }
+});
+
+router.delete('/combos/:id', requireRole('admin'), async (req, res) => {
+  const ok = await deleteCombo(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'Combo not found.' });
+  await recordAudit({
+    actorId: req.user.id,
+    actorEmail: req.user.email,
+    action: 'DELETE_COMBO',
+    entity: 'combo',
+    entityId: req.params.id,
+  });
+  res.json({ deleted: true });
+});
+
+// Subscription Plans CRUD
+router.get('/plans', async (_req, res) => {
+  const plans = await listPlans(true);
+  res.json({ plans });
+});
+
+router.post('/plans', requireRole('admin'), async (req, res) => {
+  try {
+    const plan = await upsertSubscriptionPlan(req.body || {});
+    await recordAudit({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'UPSERT_SUBSCRIPTION_PLAN',
+      entity: 'subscriptionPlan',
+      entityId: plan.id,
+      details: { days: plan.days, price: plan.price, active: plan.active },
+    });
+    res.status(201).json({ plan });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Could not save subscription plan.' });
+  }
+});
+
+router.delete('/plans/:id', requireRole('admin'), async (req, res) => {
+  const ok = await deleteSubscriptionPlan(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'Plan not found.' });
+  await recordAudit({
+    actorId: req.user.id,
+    actorEmail: req.user.email,
+    action: 'DELETE_SUBSCRIPTION_PLAN',
+    entity: 'subscriptionPlan',
+    entityId: req.params.id,
+  });
+  res.json({ deleted: true });
+});
+
+// Review Moderation
+router.get('/reviews', async (_req, res) => {
+  const reviews = await listAllReviews(100);
+  res.json({ reviews });
+});
+
+router.patch('/reviews/:id/moderate', requireRole('admin'), async (req, res) => {
+  const { visible, moderationNote = '' } = req.body || {};
+  const review = await moderateReview(req.params.id, { visible, moderationNote });
+  if (!review) return res.status(404).json({ error: 'Review not found.' });
+  await recordAudit({
+    actorId: req.user.id,
+    actorEmail: req.user.email,
+    action: visible ? 'SHOW_REVIEW' : 'HIDE_REVIEW',
+    entity: 'review',
+    entityId: review.id,
+    details: { visible, moderationNote },
+  });
+  res.json({ review });
+});
+
+// Referrals & Fraud Review
+router.get('/referrals', async (_req, res) => {
+  const referrals = await listReferrals();
+  res.json({ referrals });
+});
+
+router.post('/referrals/:id/resolve', requireRole('admin'), async (req, res) => {
+  try {
+    const action = req.body?.action === 'approve' ? 'approve' : 'reject';
+    const referral = await resolveReferral(req.params.id, action);
+    await recordAudit({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: action === 'approve' ? 'APPROVE_REFERRAL' : 'REJECT_REFERRAL',
+      entity: 'referral',
+      entityId: referral.id,
+      details: { status: referral.status, rewardAmount: referral.rewardAmount },
+    });
+    res.json({ referral });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Could not resolve referral.' });
   }
 });
 

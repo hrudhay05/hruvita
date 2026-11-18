@@ -17,9 +17,14 @@ import {
   FiSettings,
   FiShield,
   FiShoppingBag,
+  FiStar,
   FiTag,
   FiTrash2,
   FiUsers,
+  FiGift,
+  FiPackage,
+  FiCalendar,
+  FiSliders,
 } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
 import Logo from '../components/Logo.jsx';
@@ -105,21 +110,69 @@ export default function Admin() {
   const [settingsForm, setSettingsForm] = useState(null);
   const [conversations, setConversations] = useState([]);
 
+  // Inventory & Ingredients, Combos, Plans, Reviews, Referrals
+  const [inventoryData, setInventoryData] = useState({ products: [], ingredients: [], logs: [] });
+  const [ingredientForm, setIngredientForm] = useState({
+    id: '',
+    name: '',
+    category: 'fruits',
+    price: 15,
+    stock: 40,
+    qtyPerBowl: 1,
+    active: true,
+  });
+  const [combos, setCombos] = useState([]);
+  const [comboForm, setComboForm] = useState({
+    id: '',
+    name: '',
+    description: '',
+    image: 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=700&q=80',
+    price: 99,
+    originalPrice: 120,
+    scheduleStart: '06:00',
+    scheduleEnd: '12:00',
+    item1Id: 'p1',
+    item2Id: 'p7',
+    active: true,
+  });
+  const [adminPlans, setAdminPlans] = useState([]);
+  const [planForm, setPlanForm] = useState({
+    id: '',
+    name: '',
+    days: 7,
+    price: 599,
+    badge: '',
+    perks: 'Fresh morning delivery\nFree pause before 10 PM',
+    active: true,
+  });
+  const [adminReviews, setAdminReviews] = useState([]);
+  const [adminReferrals, setAdminReferrals] = useState([]);
+
   const loadOverview = useCallback(async () => {
     if (!isAdmin) return;
     try {
-      const [ov, cp, sl, rp, convRes] = await Promise.all([
+      const [ov, cp, sl, rp, convRes, invRes, cmbRes, plRes, revRes, refRes] = await Promise.all([
         apiRequest('/api/admin/overview'),
         apiRequest('/api/admin/coupons'),
         apiRequest('/api/admin/slots'),
         apiRequest('/api/admin/reports'),
         apiRequest('/api/assistant/conversations').catch(() => ({ conversations: [] })),
+        apiRequest('/api/admin/inventory').catch(() => ({ products: [], ingredients: [], logs: [] })),
+        apiRequest('/api/admin/combos').catch(() => ({ combos: [] })),
+        apiRequest('/api/admin/plans').catch(() => ({ plans: [] })),
+        apiRequest('/api/admin/reviews').catch(() => ({ reviews: [] })),
+        apiRequest('/api/admin/referrals').catch(() => ({ referrals: [] })),
       ]);
       setOverview(ov);
       setCoupons(cp.coupons || []);
       setSlots(sl.slots || []);
       setReports(rp);
       setConversations(convRes.conversations || []);
+      setInventoryData(invRes);
+      setCombos(cmbRes.combos || []);
+      setAdminPlans(plRes.plans || []);
+      setAdminReviews(revRes.reviews || []);
+      setAdminReferrals(refRes.referrals || []);
       if (ov.settings) setSettingsForm(ov.settings);
     } catch (err) {
       setError(err.message);
@@ -441,6 +494,171 @@ export default function Admin() {
     }
   };
 
+  const handleAdjustProductStock = async (prodId, delta, note = 'Admin quick adjust') => {
+    try {
+      await apiRequest(`/api/admin/inventory/products/${prodId}/adjust`, {
+        method: 'POST',
+        body: JSON.stringify({ delta, note }),
+      });
+      showToast(`Product stock adjusted (${delta > 0 ? `+${delta}` : delta}).`);
+      await Promise.all([refreshCatalog(), loadOverview()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleAdjustIngredientStock = async (ingId, delta) => {
+    try {
+      await apiRequest(`/api/admin/ingredients/${ingId}/adjust`, {
+        method: 'POST',
+        body: JSON.stringify({ delta, note: 'Admin restock/adjustment' }),
+      });
+      showToast(`Ingredient stock updated.`);
+      await loadOverview();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleSaveIngredient = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      await apiRequest('/api/admin/ingredients', {
+        method: 'POST',
+        body: JSON.stringify(ingredientForm),
+      });
+      showToast(`Ingredient "${ingredientForm.name}" saved.`);
+      setIngredientForm({
+        id: '',
+        name: '',
+        category: 'fruits',
+        price: 15,
+        stock: 40,
+        qtyPerBowl: 1,
+        active: true,
+      });
+      await loadOverview();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleSaveCombo = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      const items = [comboForm.item1Id, comboForm.item2Id]
+        .filter(Boolean)
+        .map((productId) => ({ productId, qty: 1 }));
+      await apiRequest('/api/admin/combos', {
+        method: 'POST',
+        body: JSON.stringify({
+          id: comboForm.id || undefined,
+          name: comboForm.name,
+          description: comboForm.description,
+          image: comboForm.image,
+          price: Number(comboForm.price),
+          originalPrice: Number(comboForm.originalPrice),
+          scheduleStart: comboForm.scheduleStart,
+          scheduleEnd: comboForm.scheduleEnd,
+          active: comboForm.active,
+          items,
+        }),
+      });
+      showToast(`Combo "${comboForm.name}" saved.`);
+      setComboForm({
+        id: '',
+        name: '',
+        description: '',
+        image: 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=700&q=80',
+        price: 99,
+        originalPrice: 120,
+        scheduleStart: '06:00',
+        scheduleEnd: '12:00',
+        item1Id: 'p1',
+        item2Id: 'p7',
+        active: true,
+      });
+      await Promise.all([refreshCatalog(), loadOverview()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeleteCombo = async (comboId) => {
+    try {
+      await apiRequest(`/api/admin/combos/${comboId}`, { method: 'DELETE' });
+      showToast('Combo deleted.');
+      await Promise.all([refreshCatalog(), loadOverview()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleSavePlan = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      await apiRequest('/api/admin/plans', {
+        method: 'POST',
+        body: JSON.stringify(planForm),
+      });
+      showToast(`Plan "${planForm.name}" saved.`);
+      setPlanForm({
+        id: '',
+        name: '',
+        days: 7,
+        price: 599,
+        badge: '',
+        perks: 'Fresh morning delivery\nFree pause before 10 PM',
+        active: true,
+      });
+      await Promise.all([refreshCatalog(), loadOverview()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeletePlan = async (planId) => {
+    try {
+      await apiRequest(`/api/admin/plans/${planId}`, { method: 'DELETE' });
+      showToast('Subscription plan deleted.');
+      await Promise.all([refreshCatalog(), loadOverview()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleModerateReview = async (rev) => {
+    try {
+      await apiRequest(`/api/admin/reviews/${rev.id}/moderate`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          visible: !rev.visible,
+          moderationNote: rev.visible ? 'Hidden by admin' : 'Restored by admin',
+        }),
+      });
+      showToast(rev.visible ? 'Review hidden from storefront.' : 'Review restored.');
+      await loadOverview();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleResolveReferral = async (refId, action) => {
+    try {
+      await apiRequest(`/api/admin/referrals/${refId}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+      });
+      showToast(action === 'approve' ? 'Referral approved & reward points credited.' : 'Referral rejected.');
+      await loadOverview();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const stats = overview?.stats || {
     totalRevenue: 0,
     totalOrders: 0,
@@ -468,8 +686,13 @@ export default function Admin() {
     { id: 'kitchen', label: 'Kitchen Prep View', icon: FiCoffee },
     { id: 'orders', label: `Orders (${allOrders.length})`, icon: FiShoppingBag },
     { id: 'products', label: `Products (${products.length})`, icon: FiBox },
+    { id: 'inventory', label: `Inventory & Bowl (${inventoryData.ingredients?.length || 0})`, icon: FiSliders },
+    { id: 'combos', label: `Combos (${combos.length})`, icon: FiPackage },
+    { id: 'plans', label: `Plans (${adminPlans.length})`, icon: FiCalendar },
     { id: 'categories', label: `Categories (${categories.length})`, icon: FiLayers },
     { id: 'coupons', label: `Coupons (${coupons.length})`, icon: FiTag },
+    { id: 'reviews', label: `Reviews (${adminReviews.length})`, icon: FiStar },
+    { id: 'referrals', label: `Referrals (${adminReferrals.length})`, icon: FiGift },
     { id: 'reports', label: 'Reports & CSV', icon: FiBarChart2 },
     { id: 'customers', label: `Customers (${overview?.customers?.length || 0})`, icon: FiUsers },
     { id: 'settings', label: 'Settings & Slots', icon: FiSettings },
@@ -1300,6 +1523,53 @@ export default function Admin() {
                       />
                     </div>
                   </div>
+                  <div className="admin-form-row">
+                    <div className="admin-field">
+                      <label htmlFor="st-maxpre">Max Pre-Order Days Ahead</label>
+                      <input
+                        id="st-maxpre"
+                        type="number"
+                        min="1"
+                        max="30"
+                        value={settingsForm.maxPreOrderDays ?? 7}
+                        onChange={(e) =>
+                          setSettingsForm({ ...settingsForm, maxPreOrderDays: Number(e.target.value) })
+                        }
+                      />
+                    </div>
+                    <div className="admin-field">
+                      <label htmlFor="st-pausecut">Subscription Pause Cut-Off Hour</label>
+                      <input
+                        id="st-pausecut"
+                        type="number"
+                        min="0"
+                        max="23"
+                        value={settingsForm.subscriptionPauseCutoffHour ?? 22}
+                        onChange={(e) =>
+                          setSettingsForm({
+                            ...settingsForm,
+                            subscriptionPauseCutoffHour: Number(e.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="admin-field">
+                      <label htmlFor="st-refpts">Referral Reward Points</label>
+                      <input
+                        id="st-refpts"
+                        type="number"
+                        min="10"
+                        max="500"
+                        value={settingsForm.referralRewardPoints ?? 50}
+                        onChange={(e) =>
+                          setSettingsForm({
+                            ...settingsForm,
+                            referralRewardPoints: Number(e.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
                   <div className="admin-checks">
                     <label>
                       <input
@@ -1463,6 +1733,555 @@ export default function Admin() {
                 </div>
               </section>
             </div>
+          )}
+
+          {activeTab === 'inventory' && (
+            <div style={{ display: 'grid', gap: 20 }}>
+              <div className="admin-grid-2">
+                <section className="admin-panel">
+                  <h2>Bowl Ingredients &amp; Stock</h2>
+                  <div className="admin-table-wrap">
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th>Ingredient</th>
+                          <th>Group</th>
+                          <th>Extra</th>
+                          <th>Stock</th>
+                          <th>Adjust</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(inventoryData.ingredients || []).map((ing) => (
+                          <tr key={ing.id}>
+                            <td>
+                              <strong>{ing.name}</strong>
+                            </td>
+                            <td>{ing.category}</td>
+                            <td>{ing.price > 0 ? `+${money(ing.price)}` : 'Included'}</td>
+                            <td style={{ color: ing.stock <= (ing.lowStockThreshold || 8) ? 'var(--danger)' : 'inherit', fontWeight: 700 }}>
+                              {ing.stock} {ing.unit}
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button
+                                  type="button"
+                                  className="admin-mini-btn"
+                                  onClick={() => handleAdjustIngredientStock(ing.id, 10)}
+                                >
+                                  +10
+                                </button>
+                                <button
+                                  type="button"
+                                  className="admin-mini-btn"
+                                  onClick={() => handleAdjustIngredientStock(ing.id, -5)}
+                                >
+                                  -5
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section className="admin-panel">
+                  <h2>Add / Edit Bowl Ingredient</h2>
+                  <form className="admin-form" onSubmit={handleSaveIngredient}>
+                    <div className="admin-field">
+                      <label>Ingredient Name</label>
+                      <input
+                        type="text"
+                        required
+                        value={ingredientForm.name}
+                        onChange={(e) => setIngredientForm({ ...ingredientForm, name: e.target.value })}
+                        placeholder="e.g. Organic Blueberries"
+                      />
+                    </div>
+                    <div className="admin-form-row">
+                      <div className="admin-field">
+                        <label>Category</label>
+                        <select
+                          value={ingredientForm.category}
+                          onChange={(e) => setIngredientForm({ ...ingredientForm, category: e.target.value })}
+                        >
+                          <option value="fruits">Fruits</option>
+                          <option value="toppings">Toppings (Nuts &amp; Seeds)</option>
+                          <option value="extras">Extras (Honey / Yogurt)</option>
+                        </select>
+                      </div>
+                      <div className="admin-field">
+                        <label>Extra Charge (₹)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={ingredientForm.price}
+                          onChange={(e) => setIngredientForm({ ...ingredientForm, price: Number(e.target.value) })}
+                        />
+                      </div>
+                    </div>
+                    <div className="admin-form-row">
+                      <div className="admin-field">
+                        <label>Initial Stock</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={ingredientForm.stock}
+                          onChange={(e) => setIngredientForm({ ...ingredientForm, stock: Number(e.target.value) })}
+                        />
+                      </div>
+                      <div className="admin-field">
+                        <label>Qty Per Bowl</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={ingredientForm.qtyPerBowl}
+                          onChange={(e) =>
+                            setIngredientForm({ ...ingredientForm, qtyPerBowl: Number(e.target.value) })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <Button type="submit" size="sm">
+                      Save Ingredient
+                    </Button>
+                  </form>
+
+                  <h3 style={{ marginTop: 22, marginBottom: 10 }}>Product Quick Restock</h3>
+                  <div className="admin-table-wrap" style={{ maxHeight: 240, overflowY: 'auto' }}>
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th>Product</th>
+                          <th>Stock</th>
+                          <th>Adjust</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(inventoryData.products || products).map((p) => (
+                          <tr key={p.id}>
+                            <td>{p.name}</td>
+                            <td style={{ color: p.stock <= 5 ? 'var(--danger)' : 'inherit', fontWeight: 700 }}>
+                              {p.stock}
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button
+                                  type="button"
+                                  className="admin-mini-btn"
+                                  onClick={() => handleAdjustProductStock(p.id, 10, 'Restock +10')}
+                                >
+                                  +10
+                                </button>
+                                <button
+                                  type="button"
+                                  className="admin-mini-btn"
+                                  onClick={() => handleAdjustProductStock(p.id, -1, 'Manual -1')}
+                                >
+                                  -1
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+
+              <section className="admin-panel">
+                <h2>Inventory History Log ({inventoryData.logs?.length || 0})</h2>
+                <div className="admin-table-wrap">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>Type</th>
+                        <th>Item</th>
+                        <th>Change</th>
+                        <th>After</th>
+                        <th>Reason</th>
+                        <th>Order / Actor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(inventoryData.logs || []).length === 0 ? (
+                        <tr>
+                          <td colSpan="6" style={{ color: 'var(--muted)' }}>
+                            No stock movements logged yet. Adjust stock or place an order to see live logs.
+                          </td>
+                        </tr>
+                      ) : (
+                        (inventoryData.logs || []).map((l) => (
+                          <tr key={l.id}>
+                            <td>{l.itemType}</td>
+                            <td><strong>{l.itemName}</strong></td>
+                            <td style={{ color: l.change > 0 ? 'var(--primary)' : 'var(--danger)', fontWeight: 700 }}>
+                              {l.change > 0 ? `+${l.change}` : l.change}
+                            </td>
+                            <td>{l.stockAfter}</td>
+                            <td>{l.reason}</td>
+                            <td style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>
+                              {l.orderId || l.actor}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {activeTab === 'combos' && (
+            <div className="admin-grid-2">
+              <section className="admin-panel">
+                <h2>Dynamic Combos ({combos.length})</h2>
+                <div className="admin-table-wrap">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>Combo</th>
+                        <th>Price</th>
+                        <th>Schedule</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {combos.map((c) => (
+                        <tr key={c.id}>
+                          <td>
+                            <strong>{c.name}</strong>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                              {(c.componentDetails || []).map((d) => `${d.qty}× ${d.name}`).join(' + ')}
+                            </div>
+                          </td>
+                          <td>
+                            <strong>{money(c.price)}</strong>{' '}
+                            {c.originalPrice > c.price && <del>{money(c.originalPrice)}</del>}
+                          </td>
+                          <td>
+                            {c.scheduleStart} – {c.scheduleEnd}
+                          </td>
+                          <td>{c.availableNow ? 'Live' : c.active ? 'Scheduled/OOS' : 'Off'}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="admin-mini-btn admin-mini-danger"
+                              onClick={() => handleDeleteCombo(c.id)}
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section className="admin-panel">
+                <h2>Create / Update Combo</h2>
+                <form className="admin-form" onSubmit={handleSaveCombo}>
+                  <div className="admin-field">
+                    <label>Combo Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={comboForm.name}
+                      onChange={(e) => setComboForm({ ...comboForm, name: e.target.value })}
+                      placeholder="e.g. Breakfast Booster: Idli + Orange Juice"
+                    />
+                  </div>
+                  <div className="admin-field">
+                    <label>Description</label>
+                    <input
+                      type="text"
+                      value={comboForm.description}
+                      onChange={(e) => setComboForm({ ...comboForm, description: e.target.value })}
+                    />
+                  </div>
+                  <div className="admin-form-row">
+                    <div className="admin-field">
+                      <label>Component Item 1</label>
+                      <select
+                        value={comboForm.item1Id}
+                        onChange={(e) => setComboForm({ ...comboForm, item1Id: e.target.value })}
+                      >
+                        {products.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({money(p.discountPrice || p.price)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="admin-field">
+                      <label>Component Item 2</label>
+                      <select
+                        value={comboForm.item2Id}
+                        onChange={(e) => setComboForm({ ...comboForm, item2Id: e.target.value })}
+                      >
+                        <option value="">None</option>
+                        {products.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({money(p.discountPrice || p.price)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="admin-form-row">
+                    <div className="admin-field">
+                      <label>Combo Price (₹)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        required
+                        value={comboForm.price}
+                        onChange={(e) => setComboForm({ ...comboForm, price: e.target.value })}
+                      />
+                    </div>
+                    <div className="admin-field">
+                      <label>Original Price (₹)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={comboForm.originalPrice}
+                        onChange={(e) => setComboForm({ ...comboForm, originalPrice: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="admin-form-row">
+                    <div className="admin-field">
+                      <label>Schedule Start (HH:MM)</label>
+                      <input
+                        type="time"
+                        value={comboForm.scheduleStart}
+                        onChange={(e) => setComboForm({ ...comboForm, scheduleStart: e.target.value })}
+                      />
+                    </div>
+                    <div className="admin-field">
+                      <label>Schedule End (HH:MM)</label>
+                      <input
+                        type="time"
+                        value={comboForm.scheduleEnd}
+                        onChange={(e) => setComboForm({ ...comboForm, scheduleEnd: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <Button type="submit" size="sm">
+                    Save Combo
+                  </Button>
+                </form>
+              </section>
+            </div>
+          )}
+
+          {activeTab === 'plans' && (
+            <div className="admin-grid-2">
+              <section className="admin-panel">
+                <h2>Subscription Plans ({adminPlans.length})</h2>
+                <div className="admin-table-wrap">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>Plan</th>
+                        <th>Days</th>
+                        <th>Price</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminPlans.map((pl) => (
+                        <tr key={pl.id}>
+                          <td>
+                            <strong>{pl.name}</strong>
+                            {pl.badge && <div style={{ fontSize: '0.76rem', color: 'var(--primary)' }}>{pl.badge}</div>}
+                          </td>
+                          <td>{pl.days} days</td>
+                          <td><strong>{money(pl.price)}</strong></td>
+                          <td>
+                            <button
+                              type="button"
+                              className="admin-mini-btn admin-mini-danger"
+                              onClick={() => handleDeletePlan(pl.id)}
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section className="admin-panel">
+                <h2>Add / Edit Subscription Plan</h2>
+                <form className="admin-form" onSubmit={handleSavePlan}>
+                  <div className="admin-field">
+                    <label>Plan Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={planForm.name}
+                      onChange={(e) => setPlanForm({ ...planForm, name: e.target.value })}
+                      placeholder="e.g. 15-Day Wellness Morning"
+                    />
+                  </div>
+                  <div className="admin-form-row">
+                    <div className="admin-field">
+                      <label>Duration (Days)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        required
+                        value={planForm.days}
+                        onChange={(e) => setPlanForm({ ...planForm, days: Number(e.target.value) })}
+                      />
+                    </div>
+                    <div className="admin-field">
+                      <label>Total Price (₹)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        required
+                        value={planForm.price}
+                        onChange={(e) => setPlanForm({ ...planForm, price: Number(e.target.value) })}
+                      />
+                    </div>
+                  </div>
+                  <div className="admin-field">
+                    <label>Badge (Optional)</label>
+                    <input
+                      type="text"
+                      value={planForm.badge}
+                      onChange={(e) => setPlanForm({ ...planForm, badge: e.target.value })}
+                      placeholder="e.g. Most Popular"
+                    />
+                  </div>
+                  <Button type="submit" size="sm">
+                    Save Subscription Plan
+                  </Button>
+                </form>
+              </section>
+            </div>
+          )}
+
+          {activeTab === 'reviews' && (
+            <section className="admin-panel">
+              <h2>Customer Reviews Moderation ({adminReviews.length})</h2>
+              <div className="admin-table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Customer</th>
+                      <th>Rating</th>
+                      <th>Comment</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adminReviews.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" style={{ color: 'var(--muted)' }}>
+                          No customer reviews submitted yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      adminReviews.map((rev) => (
+                        <tr key={rev.id}>
+                          <td><strong>{rev.userName}</strong></td>
+                          <td>{'★'.repeat(rev.rating)}</td>
+                          <td>{rev.comment}</td>
+                          <td>{rev.visible !== false ? 'Visible' : 'Hidden'}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="admin-mini-btn"
+                              onClick={() => handleModerateReview(rev)}
+                            >
+                              {rev.visible !== false ? 'Hide Review' : 'Show Review'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'referrals' && (
+            <section className="admin-panel">
+              <h2>Referral Program &amp; Fraud Review ({adminReferrals.length})</h2>
+              <div className="admin-table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Referrer</th>
+                      <th>Referred Friend</th>
+                      <th>Code</th>
+                      <th>Reward</th>
+                      <th>Status / Fraud Flags</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adminReferrals.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" style={{ color: 'var(--muted)' }}>
+                          No referrals recorded yet. Share a customer&apos;s referral link to test!
+                        </td>
+                      </tr>
+                    ) : (
+                      adminReferrals.map((r) => (
+                        <tr key={r.id}>
+                          <td>{r.referrerEmail}</td>
+                          <td>{r.referredEmail}</td>
+                          <td><strong>{r.referralCode}</strong></td>
+                          <td>{r.rewardAmount} pts</td>
+                          <td>
+                            <strong>{r.status}</strong>
+                            {r.fraudFlags?.length > 0 && (
+                              <div style={{ fontSize: '0.78rem', color: 'var(--danger)' }}>
+                                ⚠ {r.fraudFlags.join(' • ')}
+                              </div>
+                            )}
+                          </td>
+                          <td>
+                            {r.status !== 'credited' && r.status !== 'rejected' && (
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button
+                                  type="button"
+                                  className="admin-mini-btn"
+                                  onClick={() => handleResolveReferral(r.id, 'approve')}
+                                >
+                                  Approve &amp; Credit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="admin-mini-btn admin-mini-danger"
+                                  onClick={() => handleResolveReferral(r.id, 'reject')}
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           )}
 
           {activeTab === 'audit' && (

@@ -3,7 +3,8 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { sendUserNotification } from '../utils/emailService.js';
 import {
-  listSlots,
+  listSlotsForDate,
+  validateDeliverySchedule,
   listCoupons,
   getSettings,
   calculateCheckoutQuote,
@@ -33,9 +34,10 @@ export function signRazorpayPair(razorpayOrderId, razorpayPaymentId) {
     .digest('hex');
 }
 
-// Public delivery slots & coupons
-router.get('/slots', async (_req, res) => {
-  const slots = await listSlots();
+// Public delivery slots (with live capacity & pre-order cut-off for ?date=YYYY-MM-DD)
+router.get('/slots', async (req, res) => {
+  const dateStr = String(req.query.date || '').slice(0, 10);
+  const slots = await listSlotsForDate(dateStr);
   res.json({ slots });
 });
 
@@ -83,12 +85,15 @@ router.post('/orders', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Cash on Delivery is currently disabled by admin.' });
     }
 
-    const slots = await listSlots();
-    const slot = slots.find((s) => s.id === slotId) || slots[0] || {
-      id: 'morning',
-      name: 'Morning Slot',
-      window: '6:30 AM – 9:00 AM',
-    };
+    const now = new Date().toISOString();
+    const orderId = `ORD-${Date.now().toString(36).toUpperCase()}`;
+    const deliveryDate = scheduledDate || now.slice(0, 10);
+
+    // Enforce slot capacity, cut-off hour, and max pre-order days on the server
+    const slot = await validateDeliverySchedule({
+      scheduledDate: deliveryDate,
+      slotId,
+    });
 
     const quote = await calculateCheckoutQuote({
       items,
@@ -98,13 +103,13 @@ router.post('/orders', requireAuth, async (req, res) => {
       userId: req.user.id,
     });
 
-    const now = new Date().toISOString();
-    const orderId = `ORD-${Date.now().toString(36).toUpperCase()}`;
-    const deliveryDate = scheduledDate || now.slice(0, 10);
-
     if (paymentMethod === 'cod') {
-      // Deduct stock immediately for confirmed COD orders
-      await deductOrderStockAtomically(quote.items);
+      // Deduct product/combo/ingredient stock atomically for confirmed COD orders
+      await deductOrderStockAtomically(quote.items, {
+        reason: 'order_deducted',
+        orderId,
+        actor: req.user.email,
+      });
 
       if (quote.pricing.rewardPointsUsed > 0) {
         const user = await findUserById(req.user.id);
@@ -162,9 +167,16 @@ router.post('/orders', requireAuth, async (req, res) => {
       return res.status(201).json({ order, payment });
     }
 
-    // Razorpay Online Flow: create Razorpay order for server-calculated amount
+    // Razorpay Online Flow: reserve stock for 10 minutes while customer completes payment
+    await deductOrderStockAtomically(quote.items, {
+      reason: 'order_reserved',
+      orderId,
+      actor: req.user.email,
+    });
+
     const rzpOrderId = `order_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const amountPaise = Math.round(quote.pricing.grandTotal * 100);
+    const reservationExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
     const order = await createOrderRecord({
       id: orderId,
@@ -183,11 +195,13 @@ router.post('/orders', requireAuth, async (req, res) => {
       paymentStatus: 'pending',
       razorpayOrderId: rzpOrderId,
       status: 'payment_pending',
-      stockDeducted: false,
+      stockDeducted: true,
+      stockReserved: true,
+      reservationExpiresAt,
       statusHistory: [
         {
           status: 'payment_pending',
-          note: `Razorpay order created (${rzpOrderId})`,
+          note: `Razorpay order created (${rzpOrderId}); stock reserved for 10 mins`,
           by: req.user.email,
           at: now,
         },

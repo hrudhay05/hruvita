@@ -17,7 +17,11 @@ import { Review } from '../models/Review.js';
 import { Subscription } from '../models/Subscription.js';
 import { Conversation } from '../models/Conversation.js';
 import { AutomationLog } from '../models/AutomationLog.js';
-import { computeCustomBowlPrice } from '../data/bowlOptions.js';
+import { Ingredient } from '../models/Ingredient.js';
+import { InventoryLog } from '../models/InventoryLog.js';
+import { Combo } from '../models/Combo.js';
+import { Referral } from '../models/Referral.js';
+import { computeCustomBowlPrice, bowlOptions } from '../data/bowlOptions.js';
 import {
   initialSettings,
   initialCategories,
@@ -25,6 +29,8 @@ import {
   initialPlans,
   initialSlots,
   initialCoupons,
+  initialIngredients,
+  initialCombos,
   buildInitialUsers,
   initialAddresses,
 } from '../data/seedData.js';
@@ -38,6 +44,10 @@ const mem = {
   plans: initialPlans.map((p) => ({ ...p })),
   slots: initialSlots.map((s) => ({ ...s })),
   coupons: initialCoupons.map((c) => ({ ...c })),
+  ingredients: initialIngredients.map((i) => ({ ...i })),
+  combos: initialCombos.map((c) => ({ ...c })),
+  inventoryLogs: [],
+  referrals: [],
   users: buildInitialUsers(),
   addresses: initialAddresses.map((a) => ({
     ...a,
@@ -102,6 +112,8 @@ async function seedMongoIfNeeded() {
   if ((await SubscriptionPlan.countDocuments()) === 0) await SubscriptionPlan.insertMany(initialPlans);
   if ((await DeliverySlot.countDocuments()) === 0) await DeliverySlot.insertMany(initialSlots);
   if ((await Coupon.countDocuments()) === 0) await Coupon.insertMany(initialCoupons);
+  if ((await Ingredient.countDocuments()) === 0) await Ingredient.insertMany(initialIngredients);
+  if ((await Combo.countDocuments()) === 0) await Combo.insertMany(initialCombos);
 
   const initialUsers = buildInitialUsers();
   for (const u of initialUsers) {
@@ -422,12 +434,61 @@ export async function deleteProduct(id) {
 }
 
 // Plans, Slots, Coupons
-export async function listPlans() {
+export async function listPlans(includeInactive = false) {
   if (mongoConnected) {
-    const docs = await SubscriptionPlan.find({ active: true }).sort({ days: 1 }).lean();
+    const query = includeInactive ? {} : { active: true };
+    const docs = await SubscriptionPlan.find(query).sort({ days: 1 }).lean();
     return docs.map(stripMongo);
   }
-  return mem.plans.filter((p) => p.active !== false).map((p) => ({ ...p }));
+  return mem.plans
+    .filter((p) => includeInactive || p.active !== false)
+    .map((p) => ({ ...p }));
+}
+
+export async function upsertSubscriptionPlan(data) {
+  const days = Math.max(1, Number(data.days) || 7);
+  const id = String(data.id || `plan-${days}`).toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const payload = {
+    id,
+    name: String(data.name || `${days}-Day Plan`).trim(),
+    days,
+    price: Math.max(1, Number(data.price) || 499),
+    perDay: Math.round((Math.max(1, Number(data.price) || 499)) / days),
+    badge: String(data.badge || '').trim(),
+    perks: Array.isArray(data.perks)
+      ? data.perks
+      : String(data.perks || '')
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean),
+    active: data.active !== undefined ? Boolean(data.active) : true,
+  };
+  if (mongoConnected) {
+    const doc = await SubscriptionPlan.findOneAndUpdate(
+      { id },
+      { $set: payload },
+      { new: true, upsert: true }
+    ).lean();
+    return stripMongo(doc);
+  }
+  const idx = mem.plans.findIndex((p) => p.id === id);
+  if (idx >= 0) {
+    mem.plans[idx] = { ...mem.plans[idx], ...payload };
+    return { ...mem.plans[idx] };
+  }
+  mem.plans.push(payload);
+  return { ...payload };
+}
+
+export async function deleteSubscriptionPlan(id) {
+  if (mongoConnected) {
+    const res = await SubscriptionPlan.findOneAndDelete({ id }).lean();
+    return Boolean(res);
+  }
+  const idx = mem.plans.findIndex((p) => p.id === id);
+  if (idx === -1) return false;
+  mem.plans.splice(idx, 1);
+  return true;
 }
 
 export async function listSlots() {
@@ -436,6 +497,89 @@ export async function listSlots() {
     return docs.map(stripMongo);
   }
   return mem.slots.filter((s) => s.active !== false).map((s) => ({ ...s }));
+}
+
+export async function listSlotsForDate(dateStr = '') {
+  const settings = await getSettings();
+  const slots = await listSlots();
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const targetDate = dateStr || todayStr;
+  const maxDays = Number(settings.maxPreOrderDays ?? 7);
+  const cutoffHour = Number(settings.cutoffHour ?? 21);
+
+  const now = new Date();
+  const currentHour = now.getHours();
+
+  const orders = await listAllOrders();
+  const activeOrdersForDate = orders.filter(
+    (o) =>
+      o.scheduledDate === targetDate &&
+      !['cancelled', 'refund_initiated', 'refunded'].includes(o.status)
+  );
+
+  const dayDiff = Math.round(
+    (new Date(`${targetDate}T00:00:00`).getTime() - new Date(`${todayStr}T00:00:00`).getTime()) /
+      86400000
+  );
+
+  return slots.map((slot) => {
+    const bookedCount = activeOrdersForDate.filter((o) => o.slotId === slot.id).length;
+    const maxOrders = Number(slot.maxOrders) || 30;
+    const remainingCapacity = Math.max(0, maxOrders - bookedCount);
+    const isFull = remainingCapacity <= 0;
+
+    let unavailableReason = '';
+    if (dayDiff < 0) {
+      unavailableReason = 'Selected date is in the past.';
+    } else if (dayDiff > maxDays) {
+      unavailableReason = `Pre-orders allowed up to ${maxDays} days ahead.`;
+    } else if (isFull) {
+      unavailableReason = 'Slot is fully booked for this date.';
+    } else if (targetDate === tomorrowStr && slot.id === 'morning' && currentHour >= cutoffHour) {
+      unavailableReason = `Morning pre-order cut-off (${cutoffHour}:00) has passed for tomorrow.`;
+    }
+
+    return {
+      ...slot,
+      date: targetDate,
+      bookedCount,
+      remainingCapacity,
+      isFull,
+      available: !unavailableReason,
+      unavailableReason,
+      maxPreOrderDays: maxDays,
+      cutoffHour,
+    };
+  });
+}
+
+export async function validateDeliverySchedule({ scheduledDate, slotId }) {
+  const settings = await getSettings();
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const targetDate = scheduledDate || todayStr;
+  const maxDays = Number(settings.maxPreOrderDays ?? 7);
+
+  const dayDiff = Math.round(
+    (new Date(`${targetDate}T00:00:00`).getTime() - new Date(`${todayStr}T00:00:00`).getTime()) /
+      86400000
+  );
+  if (Number.isNaN(dayDiff) || dayDiff < 0) {
+    throw new Error('Please choose today or a future delivery date.');
+  }
+  if (dayDiff > maxDays) {
+    throw new Error(`Pre-orders are accepted up to ${maxDays} days in advance.`);
+  }
+
+  const enrichedSlots = await listSlotsForDate(targetDate);
+  const chosen = enrichedSlots.find((s) => s.id === slotId) || enrichedSlots[0];
+  if (!chosen) {
+    throw new Error('Selected delivery slot is not available.');
+  }
+  if (!chosen.available) {
+    throw new Error(chosen.unavailableReason || 'Selected delivery slot is unavailable.');
+  }
+  return chosen;
 }
 
 export async function listAllSlots() {
@@ -541,7 +685,7 @@ export async function findCouponByCode(code) {
   return found ? { ...found } : null;
 }
 
-// Server-side Checkout Quote & Validation (supports catalog items + custom fruit bowls)
+// Server-side Checkout Quote & Validation (supports catalog items + size variants + dynamic combos + custom fruit bowls)
 export async function calculateCheckoutQuote({
   items = {},
   customBowls = [],
@@ -562,48 +706,129 @@ export async function calculateCheckoutQuote({
   const lineItems = [];
   let subtotal = 0;
 
-  for (const [productId, rawQty] of entries) {
+  // Track cumulative product qty needed across standard items + combos to prevent overselling
+  const neededProductQty = {};
+
+  for (const [rawKey, rawQty] of entries) {
     const qty = Math.max(1, Math.floor(Number(rawQty)));
-    const product = await getProductById(productId);
-    if (!product || product.active === false) {
-      throw new Error(`Item "${productId}" is no longer available.`);
+
+    // 1. Dynamic Combo item (`combo:<comboId>`)
+    if (String(rawKey).startsWith('combo:')) {
+      const comboId = String(rawKey).slice(6);
+      const combo = await getComboById(comboId);
+      if (!combo || combo.active === false) {
+        throw new Error(`Combo "${comboId}" is no longer available.`);
+      }
+      if (!isComboWithinSchedule(combo)) {
+        throw new Error(
+          `"${combo.name}" is only available between ${combo.scheduleStart} and ${combo.scheduleEnd}.`
+        );
+      }
+      const comboComponents = [];
+      for (const comp of combo.items || []) {
+        const compProd = await getProductById(comp.productId);
+        const compNeed = (Number(comp.qty) || 1) * qty;
+        neededProductQty[comp.productId] = (neededProductQty[comp.productId] || 0) + compNeed;
+        if (!compProd || compProd.active === false || compProd.stock < neededProductQty[comp.productId]) {
+          throw new Error(`"${combo.name}" is currently out of stock (component unavailable).`);
+        }
+        comboComponents.push({ productId: comp.productId, qty: Number(comp.qty) || 1 });
+      }
+
+      const price = Number(combo.price);
+      const lineTotal = price * qty;
+      subtotal += lineTotal;
+      lineItems.push({
+        productId: `combo:${combo.id}`,
+        name: combo.name,
+        emoji: combo.emoji || '🍱',
+        unitPrice: price,
+        mrp: Number(combo.originalPrice) || price,
+        qty,
+        lineTotal,
+        isCombo: true,
+        comboComponents,
+      });
+      continue;
     }
-    if (product.stock < qty) {
+
+    // 2. Standard catalog item (optionally with `productId::sizeLabel`)
+    const [baseProductId, sizeLabelRaw = ''] = String(rawKey).split('::');
+    const product = await getProductById(baseProductId);
+    if (!product || product.active === false) {
+      throw new Error(`Item "${baseProductId}" is no longer available.`);
+    }
+
+    neededProductQty[product.id] = (neededProductQty[product.id] || 0) + qty;
+    if (product.stock < neededProductQty[product.id]) {
       throw new Error(
         product.stock <= 0
           ? `"${product.name}" is out of stock.`
           : `Only ${product.stock} left of "${product.name}".`
       );
     }
-    const price = unitPrice(product);
-    const lineTotal = price * qty;
+
+    let sizeDelta = 0;
+    let resolvedSizeLabel = '';
+    if (sizeLabelRaw && Array.isArray(product.sizes) && product.sizes.length > 0) {
+      const matchedSize = product.sizes.find(
+        (s) => String(s.name || s.label || '').toLowerCase() === String(sizeLabelRaw).toLowerCase()
+      );
+      if (matchedSize) {
+        sizeDelta = Number(matchedSize.priceDelta) || 0;
+        resolvedSizeLabel = matchedSize.name || matchedSize.label;
+      }
+    }
+
+    const basePrice = unitPrice(product);
+    const finalUnitPrice = Math.max(1, basePrice + sizeDelta);
+    const finalMrp = Math.max(finalUnitPrice, (Number(product.price) || basePrice) + sizeDelta);
+    const lineTotal = finalUnitPrice * qty;
     subtotal += lineTotal;
+
     lineItems.push({
       productId: product.id,
-      name: product.name,
+      name: resolvedSizeLabel ? `${product.name} (${resolvedSizeLabel})` : product.name,
       emoji: product.emoji || '🍲',
-      unitPrice: price,
-      mrp: product.price,
+      unitPrice: finalUnitPrice,
+      mrp: finalMrp,
       qty,
       lineTotal,
+      sizeLabel: resolvedSizeLabel,
     });
   }
 
-  for (const bowl of validBowls) {
-    const qty = Math.max(1, Math.floor(Number(bowl.qty || 1)));
-    const computed = computeCustomBowlPrice(bowl);
-    const lineTotal = computed.unitPrice * qty;
-    subtotal += lineTotal;
-    lineItems.push({
-      productId: bowl.id || `custom-bowl-${Date.now().toString(36)}`,
-      name: `${computed.name}: ${computed.summary}`,
-      emoji: '🥣',
-      unitPrice: computed.unitPrice,
-      mrp: computed.unitPrice,
-      qty,
-      lineTotal,
-      isCustomBowl: true,
-    });
+  // 3. Custom Fruit Bowls validated against live DB Ingredient prices & stock
+  if (validBowls.length > 0) {
+    const dbIngredients = await listIngredients(false);
+    const neededIngredientQty = {};
+
+    for (const bowl of validBowls) {
+      const qty = Math.max(1, Math.floor(Number(bowl.qty || 1)));
+      const computed = computeCustomBowlPrice(bowl, dbIngredients);
+
+      for (const ing of computed.chosenIngredients || []) {
+        const perBowl = Number(ing.qtyPerBowl) || 1;
+        neededIngredientQty[ing.id] = (neededIngredientQty[ing.id] || 0) + perBowl * qty;
+        if ((Number(ing.stock) || 0) < neededIngredientQty[ing.id]) {
+          throw new Error(`Bowl ingredient "${ing.name}" does not have enough stock right now.`);
+        }
+      }
+
+      const lineTotal = computed.unitPrice * qty;
+      subtotal += lineTotal;
+      lineItems.push({
+        productId: bowl.id || `custom-bowl-${Date.now().toString(36)}`,
+        name: `${computed.name}: ${computed.summary}`,
+        emoji: '🥣',
+        unitPrice: computed.unitPrice,
+        mrp: computed.unitPrice,
+        qty,
+        lineTotal,
+        isCustomBowl: true,
+        bowlIngredientIds: computed.ingredientIds || [],
+      });
+    }
   }
 
   let couponDiscount = 0;
@@ -613,6 +838,23 @@ export async function calculateCheckoutQuote({
     const coupon = await findCouponByCode(couponCode);
     if (!coupon) {
       couponMessage = 'Invalid or expired coupon code.';
+    } else if (coupon.firstOrderOnly && userId) {
+      const pastOrders = await listOrdersByUser(userId);
+      const hasValidOrder = pastOrders.some(
+        (o) => !['cancelled', 'refunded', 'payment_pending'].includes(o.status)
+      );
+      if (hasValidOrder) {
+        couponMessage = `Coupon ${coupon.code} is valid on first order only.`;
+      } else if (subtotal < (coupon.minOrder || 0)) {
+        couponMessage = `Coupon ${coupon.code} requires a minimum order of ₹${coupon.minOrder}.`;
+      } else {
+        appliedCoupon = coupon.code;
+        couponDiscount =
+          coupon.type === 'percent'
+            ? Math.min(Math.round((subtotal * coupon.value) / 100), coupon.maxDiscount || subtotal)
+            : Math.min(coupon.value, subtotal);
+        couponMessage = `Coupon ${coupon.code} applied (saved ₹${couponDiscount}).`;
+      }
     } else if (subtotal < (coupon.minOrder || 0)) {
       couponMessage = `Coupon ${coupon.code} requires a minimum order of ₹${coupon.minOrder}.`;
     } else {
@@ -663,50 +905,277 @@ export async function calculateCheckoutQuote({
   };
 }
 
-// Atomic Stock Deduction & Restoration (skips custom bowls which deduct dynamically)
-export async function deductOrderStockAtomically(lineItems) {
-  const catalogItems = (lineItems || []).filter(
-    (item) => !item.isCustomBowl && !String(item.productId || '').startsWith('custom-bowl')
-  );
-  if (mongoConnected) {
-    const deducted = [];
-    for (const item of catalogItems) {
-      const updated = await Product.findOneAndUpdate(
-        { id: item.productId, stock: { $gte: item.qty } },
-        { $inc: { stock: -item.qty } },
-        { new: true }
-      );
-      if (!updated) {
-        for (const prev of deducted) {
-          await Product.updateOne({ id: prev.productId }, { $inc: { stock: prev.qty } });
-        }
-        throw new Error(`Insufficient stock for "${item.name}".`);
+// Atomic Stock Deduction & Restoration (Products + Combo Components + Bowl Ingredients + InventoryLog)
+export async function deductOrderStockAtomically(
+  lineItems,
+  { reason = 'order_deducted', orderId = '', actor = 'system' } = {}
+) {
+  const productDeductions = [];
+  const ingredientDeductions = [];
+
+  for (const item of lineItems || []) {
+    if (item.isCombo && Array.isArray(item.comboComponents) && item.comboComponents.length > 0) {
+      for (const comp of item.comboComponents) {
+        productDeductions.push({
+          productId: comp.productId,
+          qty: (Number(comp.qty) || 1) * (Number(item.qty) || 1),
+          name: `${item.name} (Combo component)`,
+          reason: reason === 'order_reserved' ? 'order_reserved' : 'combo_deducted',
+        });
       }
-      deducted.push(item);
+    } else if (item.isCustomBowl || String(item.productId || '').startsWith('custom-bowl')) {
+      for (const ingId of item.bowlIngredientIds || []) {
+        ingredientDeductions.push({
+          ingredientId: ingId,
+          qty: Number(item.qty) || 1,
+          reason: reason === 'order_reserved' ? 'order_reserved' : 'bowl_deducted',
+        });
+      }
+    } else {
+      const baseId = String(item.productId || '').split('::')[0];
+      if (baseId && !baseId.startsWith('sub-')) {
+        productDeductions.push({
+          productId: baseId,
+          qty: Number(item.qty) || 1,
+          name: item.name,
+          reason,
+        });
+      }
+    }
+  }
+
+  const rolledProducts = [];
+  const rolledIngredients = [];
+
+  try {
+    // 1. Deduct products atomically
+    for (const p of productDeductions) {
+      if (mongoConnected) {
+        const updated = await Product.findOneAndUpdate(
+          { id: p.productId, stock: { $gte: p.qty } },
+          { $inc: { stock: -p.qty } },
+          { new: true }
+        ).lean();
+        if (!updated) throw new Error(`Insufficient stock for "${p.name || p.productId}".`);
+        rolledProducts.push({ productId: p.productId, qty: p.qty });
+        await recordInventoryLog({
+          itemType: 'product',
+          itemId: p.productId,
+          itemName: updated.name,
+          change: -p.qty,
+          stockAfter: updated.stock,
+          reason: p.reason,
+          orderId,
+          actor,
+        });
+      } else {
+        const prod = mem.products.find((pr) => pr.id === p.productId);
+        if (!prod || prod.stock < p.qty) {
+          throw new Error(`Insufficient stock for "${p.name || p.productId}".`);
+        }
+        prod.stock -= p.qty;
+        rolledProducts.push({ productId: p.productId, qty: p.qty });
+        await recordInventoryLog({
+          itemType: 'product',
+          itemId: p.productId,
+          itemName: prod.name,
+          change: -p.qty,
+          stockAfter: prod.stock,
+          reason: p.reason,
+          orderId,
+          actor,
+        });
+      }
+    }
+
+    // 2. Deduct custom bowl ingredients atomically
+    for (const ingReq of ingredientDeductions) {
+      if (mongoConnected) {
+        const ingDoc = await Ingredient.findOne({ id: ingReq.ingredientId }).lean();
+        if (!ingDoc) continue;
+        const deductUnits = (Number(ingDoc.qtyPerBowl) || 1) * ingReq.qty;
+        const updated = await Ingredient.findOneAndUpdate(
+          { id: ingReq.ingredientId, stock: { $gte: deductUnits } },
+          { $inc: { stock: -deductUnits } },
+          { new: true }
+        ).lean();
+        if (!updated) throw new Error(`Insufficient ingredient stock for "${ingDoc.name}".`);
+        rolledIngredients.push({ ingredientId: ingReq.ingredientId, qty: deductUnits });
+        await recordInventoryLog({
+          itemType: 'ingredient',
+          itemId: ingReq.ingredientId,
+          itemName: updated.name,
+          change: -deductUnits,
+          stockAfter: updated.stock,
+          reason: ingReq.reason,
+          orderId,
+          actor,
+        });
+      } else {
+        const ing = mem.ingredients.find((x) => x.id === ingReq.ingredientId);
+        if (!ing) continue;
+        const deductUnits = (Number(ing.qtyPerBowl) || 1) * ingReq.qty;
+        if (ing.stock < deductUnits) {
+          throw new Error(`Insufficient ingredient stock for "${ing.name}".`);
+        }
+        ing.stock -= deductUnits;
+        rolledIngredients.push({ ingredientId: ingReq.ingredientId, qty: deductUnits });
+        await recordInventoryLog({
+          itemType: 'ingredient',
+          itemId: ingReq.ingredientId,
+          itemName: ing.name,
+          change: -deductUnits,
+          stockAfter: ing.stock,
+          reason: ingReq.reason,
+          orderId,
+          actor,
+        });
+      }
     }
     return true;
-  }
-
-  for (const item of catalogItems) {
-    const prod = mem.products.find((p) => p.id === item.productId);
-    if (!prod || prod.stock < item.qty) {
-      throw new Error(`Insufficient stock for "${item?.name || item.productId}".`);
+  } catch (err) {
+    // Roll back any partial deductions
+    for (const prev of rolledProducts) {
+      if (mongoConnected) {
+        await Product.updateOne({ id: prev.productId }, { $inc: { stock: prev.qty } });
+      } else {
+        const pr = mem.products.find((x) => x.id === prev.productId);
+        if (pr) pr.stock += prev.qty;
+      }
     }
+    for (const prev of rolledIngredients) {
+      if (mongoConnected) {
+        await Ingredient.updateOne({ id: prev.ingredientId }, { $inc: { stock: prev.qty } });
+      } else {
+        const ig = mem.ingredients.find((x) => x.id === prev.ingredientId);
+        if (ig) ig.stock += prev.qty;
+      }
+    }
+    throw err;
   }
-  for (const item of catalogItems) {
-    const prod = mem.products.find((p) => p.id === item.productId);
-    prod.stock -= item.qty;
-  }
-  return true;
 }
 
-export async function restoreOrderStock(lineItems) {
-  for (const item of lineItems) {
-    if (mongoConnected) {
-      await Product.updateOne({ id: item.productId }, { $inc: { stock: item.qty } });
+export async function restoreOrderStock(
+  lineItems,
+  { reason = 'order_cancelled', orderId = '', actor = 'system' } = {}
+) {
+  for (const item of lineItems || []) {
+    if (item.isCombo && Array.isArray(item.comboComponents) && item.comboComponents.length > 0) {
+      for (const comp of item.comboComponents) {
+        const addQty = (Number(comp.qty) || 1) * (Number(item.qty) || 1);
+        if (mongoConnected) {
+          const updated = await Product.findOneAndUpdate(
+            { id: comp.productId },
+            { $inc: { stock: addQty } },
+            { new: true }
+          ).lean();
+          if (updated) {
+            await recordInventoryLog({
+              itemType: 'product',
+              itemId: comp.productId,
+              itemName: updated.name,
+              change: addQty,
+              stockAfter: updated.stock,
+              reason,
+              orderId,
+              actor,
+            });
+          }
+        } else {
+          const prod = mem.products.find((p) => p.id === comp.productId);
+          if (prod) {
+            prod.stock += addQty;
+            await recordInventoryLog({
+              itemType: 'product',
+              itemId: prod.id,
+              itemName: prod.name,
+              change: addQty,
+              stockAfter: prod.stock,
+              reason,
+              orderId,
+              actor,
+            });
+          }
+        }
+      }
+    } else if (item.isCustomBowl || String(item.productId || '').startsWith('custom-bowl')) {
+      for (const ingId of item.bowlIngredientIds || []) {
+        if (mongoConnected) {
+          const ingDoc = await Ingredient.findOne({ id: ingId }).lean();
+          if (!ingDoc) continue;
+          const addUnits = (Number(ingDoc.qtyPerBowl) || 1) * (Number(item.qty) || 1);
+          const updated = await Ingredient.findOneAndUpdate(
+            { id: ingId },
+            { $inc: { stock: addUnits } },
+            { new: true }
+          ).lean();
+          if (updated) {
+            await recordInventoryLog({
+              itemType: 'ingredient',
+              itemId: ingId,
+              itemName: updated.name,
+              change: addUnits,
+              stockAfter: updated.stock,
+              reason,
+              orderId,
+              actor,
+            });
+          }
+        } else {
+          const ing = mem.ingredients.find((x) => x.id === ingId);
+          if (ing) {
+            const addUnits = (Number(ing.qtyPerBowl) || 1) * (Number(item.qty) || 1);
+            ing.stock += addUnits;
+            await recordInventoryLog({
+              itemType: 'ingredient',
+              itemId: ing.id,
+              itemName: ing.name,
+              change: addUnits,
+              stockAfter: ing.stock,
+              reason,
+              orderId,
+              actor,
+            });
+          }
+        }
+      }
     } else {
-      const prod = mem.products.find((p) => p.id === item.productId);
-      if (prod) prod.stock += item.qty;
+      const baseId = String(item.productId || '').split('::')[0];
+      if (!baseId || baseId.startsWith('sub-')) continue;
+      if (mongoConnected) {
+        const updated = await Product.findOneAndUpdate(
+          { id: baseId },
+          { $inc: { stock: item.qty } },
+          { new: true }
+        ).lean();
+        if (updated) {
+          await recordInventoryLog({
+            itemType: 'product',
+            itemId: baseId,
+            itemName: updated.name,
+            change: item.qty,
+            stockAfter: updated.stock,
+            reason,
+            orderId,
+            actor,
+          });
+        }
+      } else {
+        const prod = mem.products.find((p) => p.id === baseId);
+        if (prod) {
+          prod.stock += item.qty;
+          await recordInventoryLog({
+            itemType: 'product',
+            itemId: prod.id,
+            itemName: prod.name,
+            change: item.qty,
+            stockAfter: prod.stock,
+            reason,
+            orderId,
+            actor,
+          });
+        }
+      }
     }
   }
 }
@@ -810,12 +1279,17 @@ export async function confirmOrderPayment({ orderId, razorpayPaymentId, by = 'cu
   const order = await getOrderById(orderId);
   if (!order) throw new Error('Order not found.');
 
-  if (order.paymentStatus === 'paid' && order.stockDeducted) {
+  if (order.paymentStatus === 'paid' && order.stockDeducted && !order.stockReserved) {
     return order;
   }
 
-  if (!order.stockDeducted) {
-    await deductOrderStockAtomically(order.items);
+  // If stock wasn't already reserved at order creation, deduct it atomically now
+  if (!order.stockDeducted && !order.stockReserved) {
+    await deductOrderStockAtomically(order.items, {
+      reason: 'order_deducted',
+      orderId: order.id,
+      actor: by,
+    });
   }
 
   if (order.pricing?.rewardPointsUsed > 0) {
@@ -842,31 +1316,38 @@ export async function confirmOrderPayment({ orderId, razorpayPaymentId, by = 'cu
     paymentStatus: 'paid',
     razorpayPaymentId,
     stockDeducted: true,
+    stockReserved: false,
+    reservationExpiresAt: '',
     statusHistory: nextHistory,
     updatedAt: now,
   };
 
+  let confirmedOrder;
   if (mongoConnected) {
     await Payment.findOneAndUpdate(
       { orderId },
       { $set: { razorpayPaymentId, status: 'captured', updatedAt: now } }
     );
     const updated = await Order.findOneAndUpdate({ id: orderId }, { $set: patch }, { new: true }).lean();
-    return stripMongo(updated);
+    confirmedOrder = stripMongo(updated);
+  } else {
+    const payIdx = mem.payments.findIndex((p) => p.orderId === orderId);
+    if (payIdx >= 0) {
+      mem.payments[payIdx] = {
+        ...mem.payments[payIdx],
+        razorpayPaymentId,
+        status: 'captured',
+        updatedAt: now,
+      };
+    }
+    const ordIdx = mem.orders.findIndex((o) => o.id === orderId);
+    mem.orders[ordIdx] = { ...mem.orders[ordIdx], ...patch };
+    confirmedOrder = { ...mem.orders[ordIdx] };
   }
 
-  const payIdx = mem.payments.findIndex((p) => p.orderId === orderId);
-  if (payIdx >= 0) {
-    mem.payments[payIdx] = {
-      ...mem.payments[payIdx],
-      razorpayPaymentId,
-      status: 'captured',
-      updatedAt: now,
-    };
-  }
-  const ordIdx = mem.orders.findIndex((o) => o.id === orderId);
-  mem.orders[ordIdx] = { ...mem.orders[ordIdx], ...patch };
-  return { ...mem.orders[ordIdx] };
+  // Credit referral reward if this is the customer's first successful paid order
+  await processReferralRewardForOrder(confirmedOrder).catch(() => {});
+  return confirmedOrder;
 }
 
 export async function transitionOrderStatus({ orderId, status, note = '', by = 'admin' }) {
@@ -878,11 +1359,19 @@ export async function transitionOrderStatus({ orderId, status, note = '', by = '
 
   const now = new Date().toISOString();
   let stockDeducted = order.stockDeducted;
+  let stockReserved = Boolean(order.stockReserved);
+  let reservationExpiresAt = order.reservationExpiresAt || '';
   let paymentStatus = order.paymentStatus;
 
-  if (status === 'cancelled' && stockDeducted) {
-    await restoreOrderStock(order.items);
+  if (status === 'cancelled' && (stockDeducted || stockReserved)) {
+    await restoreOrderStock(order.items, {
+      reason: stockReserved ? 'order_released' : 'order_cancelled',
+      orderId: order.id,
+      actor: by,
+    });
     stockDeducted = false;
+    stockReserved = false;
+    reservationExpiresAt = '';
   }
 
   if (status === 'delivered' && order.paymentMethod === 'cod') {
@@ -909,10 +1398,13 @@ export async function transitionOrderStatus({ orderId, status, note = '', by = '
     status,
     paymentStatus,
     stockDeducted,
+    stockReserved,
+    reservationExpiresAt,
     statusHistory: nextHistory,
     updatedAt: now,
   };
 
+  let resultOrder;
   if (mongoConnected) {
     if (status === 'refund_initiated' || status === 'refunded') {
       await Payment.findOneAndUpdate(
@@ -928,24 +1420,29 @@ export async function transitionOrderStatus({ orderId, status, note = '', by = '
       );
     }
     const updated = await Order.findOneAndUpdate({ id: orderId }, { $set: patch }, { new: true }).lean();
-    return stripMongo(updated);
+    resultOrder = stripMongo(updated);
+  } else {
+    const payIdx = mem.payments.findIndex((p) => p.orderId === orderId);
+    if (payIdx >= 0 && (status === 'refund_initiated' || status === 'refunded' || paymentStatus === 'paid')) {
+      mem.payments[payIdx] = {
+        ...mem.payments[payIdx],
+        status: paymentStatus === 'paid' ? 'captured' : status,
+        refundId: status === 'refunded' ? `rfnd_${Date.now().toString(36)}` : mem.payments[payIdx].refundId,
+        refundReason: note || mem.payments[payIdx].refundReason,
+        refundedAt: status === 'refunded' ? now : mem.payments[payIdx].refundedAt,
+        updatedAt: now,
+      };
+    }
+
+    const ordIdx = mem.orders.findIndex((o) => o.id === orderId);
+    mem.orders[ordIdx] = { ...mem.orders[ordIdx], ...patch };
+    resultOrder = { ...mem.orders[ordIdx] };
   }
 
-  const payIdx = mem.payments.findIndex((p) => p.orderId === orderId);
-  if (payIdx >= 0 && (status === 'refund_initiated' || status === 'refunded' || paymentStatus === 'paid')) {
-    mem.payments[payIdx] = {
-      ...mem.payments[payIdx],
-      status: paymentStatus === 'paid' ? 'captured' : status,
-      refundId: status === 'refunded' ? `rfnd_${Date.now().toString(36)}` : mem.payments[payIdx].refundId,
-      refundReason: note || mem.payments[payIdx].refundReason,
-      refundedAt: status === 'refunded' ? now : mem.payments[payIdx].refundedAt,
-      updatedAt: now,
-    };
+  if (status === 'delivered' && paymentStatus === 'paid') {
+    await processReferralRewardForOrder(resultOrder).catch(() => {});
   }
-
-  const ordIdx = mem.orders.findIndex((o) => o.id === orderId);
-  mem.orders[ordIdx] = { ...mem.orders[ordIdx], ...patch };
-  return { ...mem.orders[ordIdx] };
+  return resultOrder;
 }
 
 // Users (with select('+password') support when needed for login / password verification)
@@ -1562,6 +2059,29 @@ export async function listReviews(productId = '') {
     .slice(0, 30);
 }
 
+export async function listAllReviews(limit = 60) {
+  if (mongoConnected) {
+    const docs = await Review.find().sort({ createdAt: -1 }).limit(limit).lean();
+    return docs.map(stripMongo);
+  }
+  return mem.reviews.slice(0, limit);
+}
+
+export async function moderateReview(reviewId, { visible, moderationNote = '' }) {
+  const patch = {
+    visible: Boolean(visible),
+    moderationNote: String(moderationNote || '').trim(),
+  };
+  if (mongoConnected) {
+    const updated = await Review.findOneAndUpdate({ id: reviewId }, { $set: patch }, { new: true }).lean();
+    return stripMongo(updated);
+  }
+  const idx = mem.reviews.findIndex((r) => r.id === reviewId);
+  if (idx === -1) return null;
+  mem.reviews[idx] = { ...mem.reviews[idx], ...patch };
+  return { ...mem.reviews[idx] };
+}
+
 export async function createReview(data) {
   const entry = {
     id: `rev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1573,6 +2093,7 @@ export async function createReview(data) {
     comment: data.comment,
     verifiedOrder: Boolean(data.verifiedOrder),
     visible: true,
+    moderationNote: '',
     createdAt: new Date().toISOString(),
   };
   if (mongoConnected) {
@@ -1583,7 +2104,7 @@ export async function createReview(data) {
   return { ...entry };
 }
 
-// Subscriptions Repository
+// Subscriptions Repository (with pause rules: cutoff hour + max pauses + pausedDates)
 export async function listSubscriptionsByUser(userId) {
   if (mongoConnected) {
     const docs = await Subscription.find({ userId }).sort({ createdAt: -1 }).lean();
@@ -1593,10 +2114,13 @@ export async function listSubscriptionsByUser(userId) {
 }
 
 export async function createSubscriptionRecord(data) {
+  const maxPauses = data.days >= 30 ? 8 : data.days >= 15 ? 5 : 3;
   const entry = {
     id: `SUB-${Date.now().toString(36).toUpperCase()}`,
     ...data,
     pauseCount: 0,
+    maxPauses,
+    pausedDates: [],
     createdAt: new Date().toISOString(),
   };
   if (mongoConnected) {
@@ -1608,24 +2132,105 @@ export async function createSubscriptionRecord(data) {
 }
 
 export async function toggleSubscriptionStatus(subId, userId) {
+  const settings = await getSettings();
+  const pauseCutoffHour = Number(settings.subscriptionPauseCutoffHour ?? 22);
+  const currentHour = new Date().getHours();
+  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
   if (mongoConnected) {
     const existing = await Subscription.findOne({ id: subId, userId });
     if (!existing) return null;
-    existing.status = existing.status === 'active' ? 'paused' : 'active';
-    if (existing.status === 'paused') existing.pauseCount = (existing.pauseCount || 0) + 1;
+
+    if (existing.status === 'active') {
+      const maxPauses = existing.maxPauses || 5;
+      if ((existing.pauseCount || 0) >= maxPauses) {
+        throw new Error(`Maximum pause limit (${maxPauses}) reached for this subscription.`);
+      }
+      if (currentHour >= pauseCutoffHour) {
+        throw new Error(
+          `Pauses for tomorrow's delivery must be requested before ${pauseCutoffHour}:00 (10 PM).`
+        );
+      }
+      existing.status = 'paused';
+      existing.pauseCount = (existing.pauseCount || 0) + 1;
+      const dates = Array.isArray(existing.pausedDates) ? existing.pausedDates : [];
+      if (!dates.includes(tomorrowStr)) dates.push(tomorrowStr);
+      existing.pausedDates = dates;
+    } else {
+      existing.status = 'active';
+    }
     await existing.save();
     return stripMongo(existing);
   }
+
   const idx = mem.subscriptions.findIndex((s) => s.id === subId && s.userId === userId);
   if (idx === -1) return null;
-  const nextStatus = mem.subscriptions[idx].status === 'active' ? 'paused' : 'active';
+  const existing = mem.subscriptions[idx];
+  if (existing.status === 'active') {
+    const maxPauses = existing.maxPauses || 5;
+    if ((existing.pauseCount || 0) >= maxPauses) {
+      throw new Error(`Maximum pause limit (${maxPauses}) reached for this subscription.`);
+    }
+    if (currentHour >= pauseCutoffHour) {
+      throw new Error(
+        `Pauses for tomorrow's delivery must be requested before ${pauseCutoffHour}:00 (10 PM).`
+      );
+    }
+    const dates = Array.isArray(existing.pausedDates) ? [...existing.pausedDates] : [];
+    if (!dates.includes(tomorrowStr)) dates.push(tomorrowStr);
+    mem.subscriptions[idx] = {
+      ...existing,
+      status: 'paused',
+      pauseCount: (existing.pauseCount || 0) + 1,
+      pausedDates: dates,
+    };
+  } else {
+    mem.subscriptions[idx] = { ...existing, status: 'active' };
+  }
+  return { ...mem.subscriptions[idx] };
+}
+
+export async function pauseSubscriptionForDate(subId, userId, dateStr) {
+  const settings = await getSettings();
+  const pauseCutoffHour = Number(settings.subscriptionPauseCutoffHour ?? 22);
+  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const targetDate = String(dateStr || tomorrowStr).slice(0, 10);
+  if (targetDate === tomorrowStr && new Date().getHours() >= pauseCutoffHour) {
+    throw new Error(
+      `Tomorrow's delivery can only be paused before ${pauseCutoffHour}:00 (10 PM).`
+    );
+  }
+
+  if (mongoConnected) {
+    const existing = await Subscription.findOne({ id: subId, userId });
+    if (!existing) return null;
+    const dates = Array.isArray(existing.pausedDates) ? existing.pausedDates : [];
+    if (dates.includes(targetDate)) return stripMongo(existing);
+    const maxPauses = existing.maxPauses || 5;
+    if ((existing.pauseCount || 0) >= maxPauses) {
+      throw new Error(`Maximum pause limit (${maxPauses}) reached for this subscription.`);
+    }
+    dates.push(targetDate);
+    existing.pausedDates = dates;
+    existing.pauseCount = (existing.pauseCount || 0) + 1;
+    await existing.save();
+    return stripMongo(existing);
+  }
+
+  const idx = mem.subscriptions.findIndex((s) => s.id === subId && s.userId === userId);
+  if (idx === -1) return null;
+  const existing = mem.subscriptions[idx];
+  const dates = Array.isArray(existing.pausedDates) ? [...existing.pausedDates] : [];
+  if (dates.includes(targetDate)) return { ...existing };
+  const maxPauses = existing.maxPauses || 5;
+  if ((existing.pauseCount || 0) >= maxPauses) {
+    throw new Error(`Maximum pause limit (${maxPauses}) reached for this subscription.`);
+  }
+  dates.push(targetDate);
   mem.subscriptions[idx] = {
-    ...mem.subscriptions[idx],
-    status: nextStatus,
-    pauseCount:
-      nextStatus === 'paused'
-        ? (mem.subscriptions[idx].pauseCount || 0) + 1
-        : mem.subscriptions[idx].pauseCount || 0,
+    ...existing,
+    pausedDates: dates,
+    pauseCount: (existing.pauseCount || 0) + 1,
   };
   return { ...mem.subscriptions[idx] };
 }
@@ -1740,6 +2345,491 @@ export async function listAutomationLogs(limit = 30) {
     return docs.map(stripMongo);
   }
   return mem.automationLogs.slice(0, limit);
+}
+
+// ============================================================
+// Bowl Ingredients & Inventory Logs Repository
+// ============================================================
+export async function listIngredients(includeInactive = false) {
+  if (mongoConnected) {
+    const query = includeInactive ? {} : { active: true };
+    const docs = await Ingredient.find(query).sort({ category: 1, name: 1 }).lean();
+    return docs.map(stripMongo);
+  }
+  return mem.ingredients
+    .filter((i) => includeInactive || i.active !== false)
+    .map((i) => ({ ...i }));
+}
+
+export async function getDynamicBowlOptions() {
+  const all = await listIngredients(false);
+  const available = all.filter((i) => (Number(i.stock) || 0) > 0);
+  return {
+    sizes: bowlOptions.sizes,
+    fruits: available.filter((i) => i.category === 'fruits'),
+    toppings: available.filter((i) => i.category === 'toppings'),
+    extras: available.filter((i) => i.category === 'extras'),
+  };
+}
+
+export async function upsertIngredient(data) {
+  const id = String(data.id || data.name || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-|-$/g, '');
+  if (!id || !data.name) throw new Error('Ingredient name is required.');
+
+  const payload = {
+    id,
+    name: String(data.name).trim(),
+    category: ['fruits', 'toppings', 'extras'].includes(data.category) ? data.category : 'fruits',
+    price: Math.max(0, Number(data.price) || 0),
+    included: Boolean(data.included),
+    stock: Math.max(0, Number(data.stock) || 0),
+    unit: String(data.unit || 'portions').trim(),
+    qtyPerBowl: Math.max(1, Number(data.qtyPerBowl) || 1),
+    lowStockThreshold: Math.max(1, Number(data.lowStockThreshold) || 8),
+    active: data.active !== undefined ? Boolean(data.active) : true,
+  };
+
+  if (mongoConnected) {
+    const doc = await Ingredient.findOneAndUpdate(
+      { id },
+      { $set: payload },
+      { new: true, upsert: true }
+    ).lean();
+    return stripMongo(doc);
+  }
+
+  const idx = mem.ingredients.findIndex((i) => i.id === id);
+  if (idx >= 0) {
+    mem.ingredients[idx] = { ...mem.ingredients[idx], ...payload };
+    return { ...mem.ingredients[idx] };
+  }
+  mem.ingredients.push(payload);
+  return { ...payload };
+}
+
+export async function recordInventoryLog({
+  itemType,
+  itemId,
+  itemName,
+  change,
+  stockAfter,
+  reason,
+  orderId = '',
+  actor = 'system',
+  note = '',
+}) {
+  const entry = {
+    id: `inv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    itemType,
+    itemId,
+    itemName,
+    change: Number(change),
+    stockAfter: Number(stockAfter),
+    reason,
+    orderId,
+    actor,
+    note,
+    createdAt: new Date().toISOString(),
+  };
+  if (mongoConnected) {
+    await InventoryLog.create(entry);
+    return entry;
+  }
+  mem.inventoryLogs.unshift(entry);
+  if (mem.inventoryLogs.length > 300) mem.inventoryLogs.length = 300;
+  return entry;
+}
+
+export async function listInventoryLogs(limit = 80) {
+  if (mongoConnected) {
+    const docs = await InventoryLog.find().sort({ createdAt: -1 }).limit(limit).lean();
+    return docs.map(stripMongo);
+  }
+  return mem.inventoryLogs.slice(0, limit);
+}
+
+export async function adjustProductStock({ productId, delta, reason = 'admin_adjustment', actor = 'admin', note = '' }) {
+  const change = Number(delta);
+  if (!Number.isFinite(change) || change === 0) throw new Error('Stock adjustment must be a non-zero number.');
+  const existing = await getProductById(productId);
+  if (!existing) throw new Error('Product not found.');
+  const nextStock = Math.max(0, (Number(existing.stock) || 0) + change);
+  const updated = await updateProduct(productId, { stock: nextStock });
+  await recordInventoryLog({
+    itemType: 'product',
+    itemId: existing.id,
+    itemName: existing.name,
+    change: nextStock - (Number(existing.stock) || 0),
+    stockAfter: nextStock,
+    reason: change > 0 && reason === 'admin_adjustment' ? 'restock' : reason,
+    actor,
+    note,
+  });
+  return updated;
+}
+
+export async function adjustIngredientStock({ ingredientId, delta, reason = 'admin_adjustment', actor = 'admin', note = '' }) {
+  const change = Number(delta);
+  if (!Number.isFinite(change) || change === 0) throw new Error('Stock adjustment must be a non-zero number.');
+
+  if (mongoConnected) {
+    const existing = await Ingredient.findOne({ id: ingredientId }).lean();
+    if (!existing) throw new Error('Ingredient not found.');
+    const nextStock = Math.max(0, (Number(existing.stock) || 0) + change);
+    const updated = await Ingredient.findOneAndUpdate(
+      { id: ingredientId },
+      { $set: { stock: nextStock } },
+      { new: true }
+    ).lean();
+    await recordInventoryLog({
+      itemType: 'ingredient',
+      itemId: existing.id,
+      itemName: existing.name,
+      change: nextStock - (Number(existing.stock) || 0),
+      stockAfter: nextStock,
+      reason: change > 0 && reason === 'admin_adjustment' ? 'restock' : reason,
+      actor,
+      note,
+    });
+    return stripMongo(updated);
+  }
+
+  const idx = mem.ingredients.findIndex((i) => i.id === ingredientId);
+  if (idx === -1) throw new Error('Ingredient not found.');
+  const existing = mem.ingredients[idx];
+  const nextStock = Math.max(0, (Number(existing.stock) || 0) + change);
+  mem.ingredients[idx] = { ...existing, stock: nextStock };
+  await recordInventoryLog({
+    itemType: 'ingredient',
+    itemId: existing.id,
+    itemName: existing.name,
+    change: nextStock - (Number(existing.stock) || 0),
+    stockAfter: nextStock,
+    reason: change > 0 && reason === 'admin_adjustment' ? 'restock' : reason,
+    actor,
+    note,
+  });
+  return { ...mem.ingredients[idx] };
+}
+
+// ============================================================
+// Dynamic Combo Builder Repository
+// ============================================================
+export function isComboWithinSchedule(combo, nowDate = new Date()) {
+  if (!combo) return false;
+  const start = String(combo.scheduleStart || '00:00');
+  const end = String(combo.scheduleEnd || '23:59');
+  const hh = String(nowDate.getHours()).padStart(2, '0');
+  const mm = String(nowDate.getMinutes()).padStart(2, '0');
+  const cur = `${hh}:${mm}`;
+  if (start <= end) return cur >= start && cur <= end;
+  return cur >= start || cur <= end;
+}
+
+export async function listCombos(includeInactive = false) {
+  let raw = [];
+  if (mongoConnected) {
+    const query = includeInactive ? {} : { active: true };
+    const docs = await Combo.find(query).sort({ featured: -1, createdAt: -1 }).lean();
+    raw = docs.map(stripMongo);
+  } else {
+    raw = mem.combos.filter((c) => includeInactive || c.active !== false).map((c) => ({ ...c }));
+  }
+
+  const allProducts = await listProducts({ includeInactive: true });
+  const prodMap = Object.fromEntries(allProducts.map((p) => [p.id, p]));
+
+  return raw.map((combo) => {
+    const componentDetails = (combo.items || []).map((it) => {
+      const p = prodMap[it.productId];
+      return {
+        productId: it.productId,
+        qty: Number(it.qty) || 1,
+        name: p ? p.name : it.productId,
+        stock: p ? p.stock : 0,
+        active: p ? p.active !== false : false,
+      };
+    });
+    const inStock =
+      componentDetails.length > 0 &&
+      componentDetails.every((c) => c.active && c.stock >= c.qty);
+    const inSchedule = isComboWithinSchedule(combo);
+    return {
+      ...combo,
+      componentDetails,
+      inStock,
+      inSchedule,
+      availableNow: combo.active !== false && inStock && inSchedule,
+    };
+  });
+}
+
+export async function getComboById(id) {
+  if (!id) return null;
+  if (mongoConnected) {
+    const doc = await Combo.findOne({ id }).lean();
+    return stripMongo(doc);
+  }
+  const found = mem.combos.find((c) => c.id === id);
+  return found ? { ...found } : null;
+}
+
+export async function upsertCombo(data) {
+  const id = String(data.id || `combo-${String(data.name || Date.now()).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`);
+  if (!data.name || !Number(data.price)) {
+    throw new Error('Combo name and price are required.');
+  }
+  const items = Array.isArray(data.items)
+    ? data.items
+        .filter((it) => it && it.productId)
+        .map((it) => ({ productId: String(it.productId), qty: Math.max(1, Number(it.qty) || 1) }))
+    : [];
+  if (items.length === 0) {
+    throw new Error('Select at least one component product for this combo.');
+  }
+
+  const payload = {
+    id,
+    name: String(data.name).trim(),
+    description: String(data.description || '').trim(),
+    image: String(data.image || '').trim(),
+    emoji: data.emoji || '🍱',
+    price: Math.max(1, Number(data.price)),
+    originalPrice: Math.max(Number(data.price), Number(data.originalPrice) || Number(data.price)),
+    items,
+    scheduleStart: String(data.scheduleStart || '06:00'),
+    scheduleEnd: String(data.scheduleEnd || '22:00'),
+    active: data.active !== undefined ? Boolean(data.active) : true,
+    featured: data.featured !== undefined ? Boolean(data.featured) : true,
+  };
+
+  if (mongoConnected) {
+    const doc = await Combo.findOneAndUpdate({ id }, { $set: payload }, { new: true, upsert: true }).lean();
+    return stripMongo(doc);
+  }
+  const idx = mem.combos.findIndex((c) => c.id === id);
+  if (idx >= 0) {
+    mem.combos[idx] = { ...mem.combos[idx], ...payload };
+    return { ...mem.combos[idx] };
+  }
+  mem.combos.unshift(payload);
+  return { ...payload };
+}
+
+export async function deleteCombo(id) {
+  if (mongoConnected) {
+    const res = await Combo.findOneAndDelete({ id }).lean();
+    return Boolean(res);
+  }
+  const idx = mem.combos.findIndex((c) => c.id === id);
+  if (idx === -1) return false;
+  mem.combos.splice(idx, 1);
+  return true;
+}
+
+// ============================================================
+// Referral Program & Fraud Checks Repository
+// ============================================================
+export async function findUserByReferralCode(code) {
+  const norm = String(code || '').toUpperCase().trim();
+  if (!norm) return null;
+  if (mongoConnected) {
+    const doc = await User.findOne({ referralCode: norm }).lean();
+    return stripMongo(doc);
+  }
+  const found = mem.users.find((u) => String(u.referralCode || '').toUpperCase() === norm);
+  return found ? { ...found } : null;
+}
+
+export async function createReferralRecord({ referrer, referredUser, referralCode }) {
+  if (!referrer || !referredUser) return null;
+  if (referrer.id === referredUser.id || referrer.email === referredUser.email) {
+    throw new Error('Self-referral is not allowed.');
+  }
+
+  const settings = await getSettings();
+  const rewardAmount = Math.max(10, Number(settings.referralRewardPoints ?? 50));
+  const fraudFlags = [];
+
+  if (
+    referrer.mobileNumber &&
+    referredUser.mobileNumber &&
+    referrer.mobileNumber === referredUser.mobileNumber
+  ) {
+    fraudFlags.push('Matching mobile number with referrer');
+  }
+
+  const entry = {
+    id: `ref-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
+    referrerUserId: referrer.id,
+    referrerEmail: referrer.email,
+    referredUserId: referredUser.id,
+    referredEmail: referredUser.email,
+    referralCode: String(referralCode).toUpperCase().trim(),
+    rewardAmount,
+    status: fraudFlags.length > 0 ? 'flagged' : 'pending',
+    fraudFlags,
+    orderId: '',
+    creditedAt: '',
+    createdAt: new Date().toISOString(),
+  };
+
+  if (mongoConnected) {
+    const existing = await Referral.findOne({ referredUserId: referredUser.id }).lean();
+    if (existing) return stripMongo(existing);
+    const created = await Referral.create(entry);
+    return stripMongo(created);
+  }
+
+  const existing = mem.referrals.find((r) => r.referredUserId === referredUser.id);
+  if (existing) return { ...existing };
+  mem.referrals.unshift(entry);
+  return { ...entry };
+}
+
+export async function processReferralRewardForOrder(order) {
+  if (!order || !order.userId) return null;
+  let ref = null;
+  if (mongoConnected) {
+    ref = await Referral.findOne({ referredUserId: order.userId, status: 'pending' }).lean();
+  } else {
+    ref = mem.referrals.find((r) => r.referredUserId === order.userId && r.status === 'pending');
+  }
+  if (!ref) return null;
+
+  // Fraud check: compare phone & shipping address with referrer
+  const referrer = await findUserById(ref.referrerUserId);
+  const referred = await findUserById(ref.referredUserId);
+  if (!referrer || !referred) return null;
+
+  const referrerAddresses = await listAddressesByUser(referrer.id);
+  const fraudFlags = [...(ref.fraudFlags || [])];
+
+  const cleanOrderPhone = String(order.customerPhone || order.address?.phone || '').replace(/\D/g, '').slice(-10);
+  const cleanRefPhone = String(referrer.mobileNumber || referrer.phone || '').replace(/\D/g, '').slice(-10);
+  if (cleanOrderPhone && cleanRefPhone && cleanOrderPhone === cleanRefPhone) {
+    fraudFlags.push('Same delivery phone number as referrer');
+  }
+
+  const orderLine = String(order.address?.line1 || '').toLowerCase().trim();
+  const orderPin = String(order.address?.pincode || '').trim();
+  const sharesAddress = referrerAddresses.some((a) => {
+    const refLine = [a.doorNumber, a.apartmentName, a.street, a.locality].filter(Boolean).join(', ').toLowerCase().trim();
+    return a.pincode === orderPin && refLine && orderLine && (refLine.includes(orderLine) || orderLine.includes(refLine));
+  });
+  if (sharesAddress) {
+    fraudFlags.push('Same delivery address as referrer');
+  }
+
+  const now = new Date().toISOString();
+  if (fraudFlags.length > 0) {
+    if (mongoConnected) {
+      await Referral.updateOne(
+        { id: ref.id },
+        { $set: { status: 'flagged', fraudFlags, orderId: order.id } }
+      );
+    } else {
+      const idx = mem.referrals.findIndex((r) => r.id === ref.id);
+      if (idx >= 0) mem.referrals[idx] = { ...mem.referrals[idx], status: 'flagged', fraudFlags, orderId: order.id };
+    }
+    return { ...ref, status: 'flagged', fraudFlags };
+  }
+
+  // Clean first paid order -> credit BOTH referrer & referred user!
+  const pts = Number(ref.rewardAmount) || 50;
+  await updateUser(referrer.id, { rewardPoints: (referrer.rewardPoints || 0) + pts });
+  await updateUser(referred.id, { rewardPoints: (referred.rewardPoints || 0) + pts });
+
+  if (mongoConnected) {
+    await Referral.updateOne(
+      { id: ref.id },
+      { $set: { status: 'credited', orderId: order.id, creditedAt: now } }
+    );
+  } else {
+    const idx = mem.referrals.findIndex((r) => r.id === ref.id);
+    if (idx >= 0) {
+      mem.referrals[idx] = { ...mem.referrals[idx], status: 'credited', orderId: order.id, creditedAt: now };
+    }
+  }
+
+  await createNotification({
+    userId: referrer.id,
+    type: 'offer',
+    title: `Referral Reward Credited (+${pts} pts)!`,
+    message: `Your friend ${referred.fullName || referred.email} completed their first order. You earned ${pts} reward points!`,
+  });
+  await createNotification({
+    userId: referred.id,
+    type: 'offer',
+    title: `Welcome Referral Bonus (+${pts} pts)!`,
+    message: `Thanks for completing your first order via referral code ${ref.referralCode}. ${pts} reward points have been added to your account!`,
+  });
+
+  return { ...ref, status: 'credited', orderId: order.id, creditedAt: now };
+}
+
+export async function listReferrals() {
+  if (mongoConnected) {
+    const docs = await Referral.find().sort({ createdAt: -1 }).limit(100).lean();
+    return docs.map(stripMongo);
+  }
+  return mem.referrals.slice(0, 100);
+}
+
+export async function listReferralsByUser(userId) {
+  if (mongoConnected) {
+    const docs = await Referral.find({ referrerUserId: userId }).sort({ createdAt: -1 }).lean();
+    return docs.map(stripMongo);
+  }
+  return mem.referrals.filter((r) => r.referrerUserId === userId);
+}
+
+export async function resolveReferral(referralId, action) {
+  let ref = null;
+  if (mongoConnected) {
+    ref = await Referral.findOne({ id: referralId }).lean();
+  } else {
+    ref = mem.referrals.find((r) => r.id === referralId);
+  }
+  if (!ref) throw new Error('Referral record not found.');
+  if (ref.status === 'credited') return ref;
+
+  const now = new Date().toISOString();
+  if (action === 'approve') {
+    const referrer = await findUserById(ref.referrerUserId);
+    const referred = await findUserById(ref.referredUserId);
+    const pts = Number(ref.rewardAmount) || 50;
+    if (referrer) await updateUser(referrer.id, { rewardPoints: (referrer.rewardPoints || 0) + pts });
+    if (referred) await updateUser(referred.id, { rewardPoints: (referred.rewardPoints || 0) + pts });
+
+    if (mongoConnected) {
+      const updated = await Referral.findOneAndUpdate(
+        { id: referralId },
+        { $set: { status: 'credited', creditedAt: now } },
+        { new: true }
+      ).lean();
+      return stripMongo(updated);
+    }
+    const idx = mem.referrals.findIndex((r) => r.id === referralId);
+    mem.referrals[idx] = { ...mem.referrals[idx], status: 'credited', creditedAt: now };
+    return { ...mem.referrals[idx] };
+  }
+
+  if (mongoConnected) {
+    const updated = await Referral.findOneAndUpdate(
+      { id: referralId },
+      { $set: { status: 'rejected' } },
+      { new: true }
+    ).lean();
+    return stripMongo(updated);
+  }
+  const idx = mem.referrals.findIndex((r) => r.id === referralId);
+  mem.referrals[idx] = { ...mem.referrals[idx], status: 'rejected' };
+  return { ...mem.referrals[idx] };
 }
 
 

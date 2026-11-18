@@ -10,22 +10,25 @@ const CatalogContext = createContext(null);
 export function CatalogProvider({ children }) {
   const [categories, setCategories] = useState(fallbackCategories);
   const [products, setProducts] = useState(fallbackProducts);
+  const [combos, setCombos] = useState([]);
   const [plans, setPlans] = useState(fallbackPlans);
   const [settings, setSettings] = useState(fallbackBrand);
   const [loading, setLoading] = useState(true);
 
   const refreshCatalog = useCallback(async () => {
     try {
-      const [catRes, prodRes, planRes, setRes] = await Promise.all([
+      const [catRes, prodRes, planRes, setRes, comboRes] = await Promise.all([
         apiRequest('/api/categories'),
         apiRequest('/api/products'),
         apiRequest('/api/plans'),
         apiRequest('/api/settings'),
+        apiRequest('/api/combos').catch(() => ({ combos: [] })),
       ]);
       if (catRes.categories?.length) setCategories(catRes.categories);
       if (prodRes.products?.length) setProducts(prodRes.products);
       if (planRes.plans?.length) setPlans(planRes.plans);
       if (setRes.settings) setSettings((prev) => ({ ...prev, ...setRes.settings }));
+      if (Array.isArray(comboRes.combos)) setCombos(comboRes.combos);
     } catch {
       // Fallback to local static data if backend is offline
     } finally {
@@ -47,6 +50,11 @@ export function CatalogProvider({ children }) {
     [products]
   );
 
+  const comboById = useMemo(
+    () => Object.fromEntries(combos.map((c) => [c.id, c])),
+    [combos]
+  );
+
   return (
     <CatalogContext.Provider
       value={{
@@ -54,6 +62,8 @@ export function CatalogProvider({ children }) {
         categoryBySlug,
         products,
         productById,
+        combos,
+        comboById,
         plans,
         settings,
         loading,

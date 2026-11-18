@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import {
   listAllSubscriptions,
   listProducts,
+  listIngredients,
   listAllOrders,
   findUserById,
   createOrderRecord,
@@ -15,7 +16,11 @@ export async function runDailySubscriptionGenerator() {
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   const subs = await listAllSubscriptions();
   const activeSubs = subs.filter(
-    (s) => s.status === 'active' && s.remainingDeliveries > 0 && s.startDate <= tomorrow
+    (s) =>
+      s.status === 'active' &&
+      s.remainingDeliveries > 0 &&
+      s.startDate <= tomorrow &&
+      !(Array.isArray(s.pausedDates) && s.pausedDates.includes(tomorrow))
   );
 
   let createdCount = 0;
@@ -105,41 +110,51 @@ export async function runDailySubscriptionGenerator() {
 }
 
 export async function runLowStockCheck() {
-  const products = await listProducts({ includeInactive: true });
+  const [products, ingredients] = await Promise.all([
+    listProducts({ includeInactive: true }),
+    listIngredients(true),
+  ]);
   const lowItems = products.filter((p) => p.stock <= 5);
+  const lowIngs = ingredients.filter((i) => i.stock <= (i.lowStockThreshold || 8));
 
-  if (lowItems.length > 0) {
+  if (lowItems.length > 0 || lowIngs.length > 0) {
     const adminEmail = process.env.ADMIN_EMAIL || 'admin@hruvita.com';
-    const summaryList = lowItems.map((p) => `${p.name} (Stock: ${p.stock})`).join(', ');
+    const parts = [
+      ...lowItems.map((p) => `${p.name} (Stock: ${p.stock})`),
+      ...lowIngs.map((i) => `Ingredient: ${i.name} (Stock: ${i.stock})`),
+    ];
     await sendUserNotification({
       userId: 'u-admin',
       email: adminEmail,
       type: 'order',
-      title: `Low Stock Alert (${lowItems.length} items)`,
-      message: `The following menu items need restocking: ${summaryList}`,
+      title: `Low Stock Alert (${parts.length} items)`,
+      message: `The following items/ingredients need restocking: ${parts.join(', ')}`,
     });
   }
 
   return recordAutomationLog({
     jobName: 'daily_low_stock_alert',
     status: 'success',
-    summary: `Checked ${products.length} items — found ${lowItems.length} low/out-of-stock item(s).`,
-    details: { lowStockIds: lowItems.map((p) => p.id) },
+    summary: `Checked ${products.length} products & ${ingredients.length} ingredients — found ${lowItems.length} low products and ${lowIngs.length} low ingredients.`,
+    details: { lowStockIds: lowItems.map((p) => p.id), lowIngredientIds: lowIngs.map((i) => i.id) },
   });
 }
 
 export async function runAbandonedPaymentCleanup() {
   const orders = await listAllOrders('payment_pending');
-  const cutoffMs = Date.now() - 20 * 60 * 1000;
+  const nowMs = Date.now();
+  const fallbackCutoffMs = nowMs - 10 * 60 * 1000; // 10-minute stock reservation window
   let cancelledCount = 0;
 
   for (const ord of orders) {
+    const expiresMs = ord.reservationExpiresAt ? new Date(ord.reservationExpiresAt).getTime() : NaN;
     const createdMs = new Date(ord.createdAt).getTime();
-    if (Number.isFinite(createdMs) && createdMs < cutoffMs) {
+    const expired = Number.isFinite(expiresMs) ? nowMs >= expiresMs : Number.isFinite(createdMs) && createdMs < fallbackCutoffMs;
+    if (expired) {
       await transitionOrderStatus({
         orderId: ord.id,
         status: 'cancelled',
-        note: 'Auto-cancelled after 20 minutes without payment confirmation',
+        note: 'Auto-cancelled after 10-minute checkout reservation expired (stock released)',
         by: 'cron-scheduler',
       });
       cancelledCount += 1;
@@ -149,7 +164,7 @@ export async function runAbandonedPaymentCleanup() {
   return recordAutomationLog({
     jobName: 'abandoned_payment_cleanup',
     status: 'success',
-    summary: `Scanned ${orders.length} payment_pending order(s); auto-cancelled ${cancelledCount}.`,
+    summary: `Scanned ${orders.length} payment_pending order(s); auto-cancelled & released stock for ${cancelledCount}.`,
     details: { scanned: orders.length, cancelledCount },
   });
 }

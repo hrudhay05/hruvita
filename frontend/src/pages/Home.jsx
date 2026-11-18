@@ -7,9 +7,11 @@ import ProductCard from '../components/ProductCard.jsx';
 import PlanCard from '../components/PlanCard.jsx';
 import BowlBuilderSection from '../components/BowlBuilderSection.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
+import { useCart } from '../context/CartContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { apiRequest } from '../lib/api.js';
+import { money } from '../lib/format.js';
 import './Home.css';
 
 const FEATURED_CATEGORIES = [
@@ -71,7 +73,8 @@ const WHY_ITEMS = [
 ];
 
 export default function Home() {
-  const { products, plans, settings, loading } = useCatalog();
+  const { products, combos, plans, settings, loading } = useCatalog();
+  const { add } = useCart();
   const { user } = useAuth();
   const { showToast } = useToast();
 
@@ -226,6 +229,74 @@ export default function Home() {
           <BowlBuilderSection />
         </div>
       </section>
+
+      {/* Dynamic Scheduled Combos */}
+      {combos.length > 0 && (
+        <section className="container home-section">
+          <SectionHeader
+            title="Fresh Value Combos"
+            subtitle="Curated pairings with live kitchen availability & serving hours"
+          />
+          <div className="home-plans">
+            {combos.map((combo) => (
+              <article key={combo.id} className="plan-card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {combo.image && (
+                  <img
+                    src={combo.image}
+                    alt={combo.name}
+                    loading="lazy"
+                    style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 'var(--radius-sm)' }}
+                  />
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                  <span className="home-eyebrow" style={{ margin: 0 }}>
+                    {combo.scheduleStart} – {combo.scheduleEnd}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '0.76rem',
+                      fontWeight: 700,
+                      color: combo.availableNow ? 'var(--primary)' : 'var(--muted)',
+                    }}
+                  >
+                    {combo.availableNow
+                      ? 'Available Now'
+                      : !combo.inStock
+                        ? 'Out of Stock'
+                        : 'Scheduled Hours'}
+                  </span>
+                </div>
+                <h3 style={{ margin: 0, fontSize: '1.15rem' }}>{combo.name}</h3>
+                <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.88rem', flex: 1 }}>
+                  {combo.description}
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div>
+                    <strong style={{ fontSize: '1.2rem', color: 'var(--primary)' }}>
+                      {money(combo.price)}
+                    </strong>{' '}
+                    {combo.originalPrice > combo.price && (
+                      <del style={{ color: 'var(--muted)', fontSize: '0.88rem' }}>
+                        {money(combo.originalPrice)}
+                      </del>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    disabled={!combo.availableNow}
+                    onClick={() => {
+                      add(`combo:${combo.id}`, 1);
+                      showToast(`${combo.name} added to cart.`);
+                    }}
+                  >
+                    {combo.availableNow ? 'Add Combo' : 'Unavailable'}
+                  </Button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Daily Subscriptions */}
       <section className="container home-section">

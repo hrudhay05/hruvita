@@ -39,10 +39,11 @@ export default function ProductDetail() {
 
   const out = product.stock <= 0;
   const off = discountPercent(product);
-  const inCart = items[product.id] || 0;
   const cat = categoryBySlug[product.category];
   const sizes = product.sizes?.length ? product.sizes : [{ name: 'Regular', priceDelta: 0 }];
   const activeSize = sizes[selectedSizeIdx] || sizes[0];
+  const sizeKey = sizes.length > 1 && activeSize?.name ? `${product.id}::${activeSize.name}` : product.id;
+  const inCart = items[sizeKey] || 0;
   const displayPrice = unitPrice(product) + (activeSize?.priceDelta || 0);
   const wished = user ? Boolean(user.wishlist?.includes(product.id)) : guestLiked;
   const related = products
@@ -59,8 +60,11 @@ export default function ProductDetail() {
   };
 
   const handleAddToCart = () => {
-    add(product.id, qty);
-    showToast(`${qty} × ${product.name} added to cart.`);
+    const selectedLabel = sizes.length > 1 && activeSize?.name ? activeSize.name : '';
+    add(product.id, qty, selectedLabel);
+    showToast(
+      `${qty} × ${product.name}${selectedLabel ? ` (${selectedLabel})` : ''} added to cart.`
+    );
   };
 
   return (

@@ -78,7 +78,10 @@ export function CartProvider({ children }) {
       items: state.items,
       customBowls: state.customBowls,
       count: itemCount + bowlCount,
-      add: (id, qty = 1) => dispatch({ type: 'add', id, qty }),
+      add: (id, qty = 1, sizeLabel = '') => {
+        const key = sizeLabel ? `${id}::${sizeLabel}` : id;
+        dispatch({ type: 'add', id: key, qty });
+      },
       setQty: (id, qty) => dispatch({ type: 'set', id, qty }),
       addCustomBowl: (bowl) => dispatch({ type: 'addBowl', bowl }),
       setCustomBowlQty: (id, qty) => dispatch({ type: 'setBowlQty', id, qty }),

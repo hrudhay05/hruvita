@@ -1,26 +1,36 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
-import { bowlOptions } from '../data/bowlOptions.js';
 import {
+  getDynamicBowlOptions,
+  listCombos,
   listReviews,
   createReview,
   listSubscriptionsByUser,
   createSubscriptionRecord,
   toggleSubscriptionStatus,
+  pauseSubscriptionForDate,
   listPlans,
   listSlots,
   listOrdersByUser,
+  listReferralsByUser,
 } from '../store/repository.js';
 import { sendUserNotification } from '../utils/emailService.js';
 
 const router = Router();
 
-// Bowl builder options (server-authoritative pricing)
-router.get('/bowl-options', (_req, res) => {
+// Bowl builder options (dynamic DB-backed ingredients & stock)
+router.get('/bowl-options', async (_req, res) => {
+  const bowlOptions = await getDynamicBowlOptions();
   res.json({ bowlOptions });
 });
 
-// Genuine database reviews only
+// Dynamic scheduled combos (with live component stock & time-window status)
+router.get('/combos', async (_req, res) => {
+  const combos = await listCombos(false);
+  res.json({ combos });
+});
+
+// Genuine database reviews only (hides moderated reviews)
 router.get('/reviews', async (req, res) => {
   const productId = req.query.productId || '';
   const reviews = await listReviews(productId);
@@ -39,7 +49,12 @@ router.post('/reviews', requireAuth, async (req, res) => {
     }
 
     const userOrders = await listOrdersByUser(req.user.id);
-    const hasDelivered = userOrders.some((o) => o.status === 'delivered' || o.status === 'confirmed');
+    const hasDelivered = userOrders.some((o) => o.status === 'delivered');
+    if (!hasDelivered && req.user.role !== 'admin') {
+      return res.status(403).json({
+        error: 'Only customers with a delivered order can submit a review.',
+      });
+    }
 
     const review = await createReview({
       userId: req.user.id,
@@ -57,7 +72,7 @@ router.post('/reviews', requireAuth, async (req, res) => {
   }
 });
 
-// Subscriptions
+// Subscriptions (with pause cutoff + max pauses + per-date pause)
 router.get('/subscriptions/my', requireAuth, async (req, res) => {
   const subscriptions = await listSubscriptionsByUser(req.user.id);
   res.json({ subscriptions });
@@ -118,6 +133,36 @@ router.patch('/subscriptions/:id/toggle', requireAuth, async (req, res) => {
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Could not update subscription.' });
   }
+});
+
+router.post('/subscriptions/:id/pause-date', requireAuth, async (req, res) => {
+  try {
+    const updated = await pauseSubscriptionForDate(req.params.id, req.user.id, req.body?.date);
+    if (!updated) {
+      return res.status(404).json({ error: 'Subscription not found.' });
+    }
+    return res.json({ subscription: updated });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Could not pause delivery date.' });
+  }
+});
+
+// Customer Referrals Summary
+router.get('/referrals/my', requireAuth, async (req, res) => {
+  const referrals = await listReferralsByUser(req.user.id);
+  const credited = referrals.filter((r) => r.status === 'credited');
+  const pending = referrals.filter((r) => r.status === 'pending');
+  const flagged = referrals.filter((r) => r.status === 'flagged');
+  res.json({
+    referrals,
+    summary: {
+      totalReferred: referrals.length,
+      creditedCount: credited.length,
+      pendingCount: pending.length,
+      flaggedCount: flagged.length,
+      totalEarnedPoints: credited.reduce((s, r) => s + (r.rewardAmount || 0), 0),
+    },
+  });
 });
 
 export default router;

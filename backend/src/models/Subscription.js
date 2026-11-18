@@ -19,6 +19,8 @@ const subscriptionSchema = new mongoose.Schema(
       default: 'active',
     },
     pauseCount: { type: Number, default: 0 },
+    maxPauses: { type: Number, default: 5 },
+    pausedDates: { type: [String], default: [] },
   },
   { timestamps: true }
 );

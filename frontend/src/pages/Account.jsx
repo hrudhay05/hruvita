@@ -66,6 +66,14 @@ export default function Account() {
 
   const [myOrders, setMyOrders] = useState([]);
   const [mySubscriptions, setMySubscriptions] = useState([]);
+  const [myReferrals, setMyReferrals] = useState([]);
+  const [referralSummary, setReferralSummary] = useState({
+    totalReferred: 0,
+    creditedCount: 0,
+    pendingCount: 0,
+    flaggedCount: 0,
+    totalEarnedPoints: 0,
+  });
 
   const [profileForm, setProfileForm] = useState({
     fullName: '',
@@ -87,12 +95,15 @@ export default function Account() {
   const loadDashboardData = useCallback(async () => {
     if (!user) return;
     try {
-      const [ordRes, subRes] = await Promise.all([
+      const [ordRes, subRes, refRes] = await Promise.all([
         apiRequest('/api/orders/my'),
         apiRequest('/api/subscriptions/my'),
+        apiRequest('/api/referrals/my').catch(() => ({ referrals: [], summary: null })),
       ]);
       setMyOrders(ordRes.orders || []);
       setMySubscriptions(subRes.subscriptions || []);
+      setMyReferrals(refRes.referrals || []);
+      if (refRes.summary) setReferralSummary(refRes.summary);
     } catch {
       // ignore if offline
     }
@@ -210,6 +221,22 @@ export default function Account() {
     }
   };
 
+  const handlePauseTomorrow = async (subId) => {
+    try {
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      const res = await apiRequest(`/api/subscriptions/${subId}/pause-date`, {
+        method: 'POST',
+        body: JSON.stringify({ date: tomorrow }),
+      });
+      setMySubscriptions((prev) =>
+        prev.map((s) => (s.id === subId ? res.subscription : s))
+      );
+      showToast(`Paused tomorrow's delivery (${tomorrow}).`);
+    } catch (err) {
+      showToast(err.message || 'Could not pause tomorrow.', 'error');
+    }
+  };
+
   const wishedProducts = (user.wishlist || [])
     .map((id) => productById[id])
     .filter(Boolean);
@@ -277,6 +304,13 @@ export default function Account() {
           onClick={() => setSection('likes')}
         >
           <FiHeart size={15} /> Favorites ({wishedProducts.length})
+        </button>
+        <button
+          type="button"
+          className={`account-nav-pill ${section === 'referrals' ? 'account-nav-pill-active' : ''}`.trim()}
+          onClick={() => setSection('referrals')}
+        >
+          Referrals &amp; Rewards ({user.rewardPoints || 0} pts)
         </button>
         <button
           type="button"
@@ -391,23 +425,124 @@ export default function Account() {
                   <div className="account-order-top" style={{ fontSize: '0.86rem', color: 'var(--muted)' }}>
                     <span>
                       Starts: <strong>{sub.startDate}</strong> &bull; Remaining:{' '}
-                      <strong>{sub.remainingDeliveries} deliveries</strong> &bull; {money(sub.price)}
-                    </span>
-                    <button
-                      type="button"
-                      className="admin-mini-btn"
-                      onClick={() => handleToggleSubscription(sub.id)}
-                    >
-                      {sub.status === 'active' ? (
-                        <>
-                          <FiPauseCircle size={13} /> Pause Plan
-                        </>
-                      ) : (
-                        <>
-                          <FiPlayCircle size={13} /> Resume Plan
-                        </>
+                      <strong>{sub.remainingDeliveries} deliveries</strong> &bull; Pauses used:{' '}
+                      <strong>
+                        {sub.pauseCount || 0}/{sub.maxPauses || 5}
+                      </strong>{' '}
+                      &bull; {money(sub.price)}
+                      {sub.pausedDates?.length > 0 && (
+                        <> &bull; Skipped: {sub.pausedDates.join(', ')}</>
                       )}
-                    </button>
+                    </span>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {sub.status === 'active' && (
+                        <button
+                          type="button"
+                          className="admin-mini-btn"
+                          onClick={() => handlePauseTomorrow(sub.id)}
+                        >
+                          Skip Tomorrow
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="admin-mini-btn"
+                        onClick={() => handleToggleSubscription(sub.id)}
+                      >
+                        {sub.status === 'active' ? (
+                          <>
+                            <FiPauseCircle size={13} /> Pause Plan
+                          </>
+                        ) : (
+                          <>
+                            <FiPlayCircle size={13} /> Resume Plan
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {section === 'referrals' && (
+        <section className="account-card">
+          <h2>Refer Friends &amp; Earn Rewards</h2>
+          <p style={{ color: 'var(--muted)', marginBottom: 16 }}>
+            Share your unique referral code. When a friend signs up and completes their first paid
+            order, both of you receive reward points automatically!
+          </p>
+          <div className="account-order-card" style={{ marginBottom: 18 }}>
+            <div className="account-order-top">
+              <div>
+                <div style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>Your Referral Code</div>
+                <strong style={{ fontSize: '1.35rem', color: 'var(--primary)', letterSpacing: '0.06em' }}>
+                  {user.referralCode || 'HRUVITA'}
+                </strong>
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const link = `${window.location.origin}/signup?ref=${encodeURIComponent(
+                      user.referralCode || ''
+                    )}`;
+                    navigator.clipboard?.writeText(link);
+                    showToast('Referral signup link copied!');
+                  }}
+                >
+                  Copy Invite Link
+                </Button>
+                <a
+                  href={`https://wa.me/?text=${encodeURIComponent(
+                    `Order fresh fruit bowls & healthy breakfasts from HRUVITA! Use my referral code ${
+                      user.referralCode || ''
+                    } at ${window.location.origin}/signup?ref=${encodeURIComponent(
+                      user.referralCode || ''
+                    )} to earn reward points on your first order.`
+                  )}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-primary btn-sm"
+                >
+                  Share on WhatsApp
+                </a>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: '0.88rem', marginTop: 10 }}>
+              <span>
+                Reward Balance: <strong>{user.rewardPoints || 0} pts</strong>
+              </span>
+              <span>
+                Friends Invited: <strong>{referralSummary.totalReferred}</strong>
+              </span>
+              <span>
+                Credited: <strong>{referralSummary.creditedCount}</strong>
+              </span>
+              <span>
+                Pending First Order: <strong>{referralSummary.pendingCount}</strong>
+              </span>
+            </div>
+          </div>
+
+          {myReferrals.length === 0 ? (
+            <p style={{ color: 'var(--muted)' }}>No referrals yet — share your code to start earning!</p>
+          ) : (
+            <div className="account-orders-list">
+              {myReferrals.map((ref) => (
+                <div key={ref.id} className="account-order-card">
+                  <div className="account-order-top">
+                    <div>
+                      <strong>{ref.referredEmail}</strong>
+                      <div style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>
+                        Code: {ref.referralCode} &bull; Reward: {ref.rewardAmount} pts
+                      </div>
+                    </div>
+                    <span className="account-status-badge">{ref.status}</span>
                   </div>
                 </div>
               ))}

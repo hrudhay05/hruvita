@@ -23,6 +23,19 @@ const orderItemSchema = new mongoose.Schema(
     mrp: { type: Number, required: true },
     qty: { type: Number, required: true, min: 1 },
     lineTotal: { type: Number, required: true },
+    sizeLabel: { type: String, default: '' },
+    isCustomBowl: { type: Boolean, default: false },
+    bowlIngredientIds: { type: [String], default: [] },
+    isCombo: { type: Boolean, default: false },
+    comboComponents: {
+      type: [
+        {
+          productId: { type: String, required: true },
+          qty: { type: Number, default: 1 },
+        },
+      ],
+      default: [],
+    },
   },
   { _id: false }
 );
@@ -84,6 +97,8 @@ const orderSchema = new mongoose.Schema(
     },
     statusHistory: { type: [statusHistorySchema], default: [] },
     stockDeducted: { type: Boolean, default: false },
+    stockReserved: { type: Boolean, default: false },
+    reservationExpiresAt: { type: String, default: '' },
   },
   { timestamps: true }
 );

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { FiCheck, FiEye, FiEyeOff, FiUserPlus } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -17,6 +17,7 @@ function getPasswordChecks(pwd = '') {
 
 export default function Signup() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { signup } = useAuth();
 
   const [form, setForm] = useState({
@@ -24,6 +25,7 @@ export default function Signup() {
     email: '',
     password: '',
     confirmPassword: '',
+    referralCode: (searchParams.get('ref') || '').toUpperCase(),
     termsAccepted: false,
   });
   const [showPwd, setShowPwd] = useState(false);
@@ -70,6 +72,7 @@ export default function Signup() {
         email: form.email.trim().toLowerCase(),
         password: form.password,
         confirmPassword: form.confirmPassword,
+        referralCode: form.referralCode.trim().toUpperCase(),
         termsAccepted: form.termsAccepted,
       });
       navigate(`/verify-email?email=${encodeURIComponent(res.email || form.email.trim().toLowerCase())}`);
@@ -187,6 +190,18 @@ export default function Signup() {
                 {showConfirmPwd ? <FiEyeOff size={17} /> : <FiEye size={17} />}
               </button>
             </div>
+          </div>
+
+          <div className="auth-field">
+            <label htmlFor="signup-referral">Referral Code (Optional)</label>
+            <input
+              id="signup-referral"
+              name="referralCode"
+              type="text"
+              value={form.referralCode}
+              onChange={(e) => setForm({ ...form, referralCode: e.target.value.toUpperCase() })}
+              placeholder="Have a friend's code? e.g. RAJU50"
+            />
           </div>
 
           <label className="auth-checkbox-label">
