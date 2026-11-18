@@ -83,6 +83,9 @@ export default function Admin() {
   const [orderDateFilter, setOrderDateFilter] = useState('');
   const [orderProductFilter, setOrderProductFilter] = useState('');
   const [prodSearch, setProdSearch] = useState('');
+  const [ordersPage, setOrdersPage] = useState(1);
+  const [productsPage, setProductsPage] = useState(1);
+  const PAGE_SIZE = 8;
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [kitchenSlipOrder, setKitchenSlipOrder] = useState(null);
   const [prodForm, setProdForm] = useState(emptyProductForm);
@@ -1001,7 +1004,28 @@ export default function Admin() {
             </div>
           )}
 
-          {(activeTab === 'overview' || activeTab === 'orders') && (
+          {activeTab === 'overview' && (
+            <section className="admin-panel" style={{ padding: '16px 20px', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <h2 style={{ fontSize: '1.05rem', marginBottom: 4 }}>Quick Operations</h2>
+                  <p style={{ fontSize: '0.84rem', color: 'var(--muted)' }}>
+                    Jump directly to Orders Queue or Catalog Inventory.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <Button type="button" size="sm" onClick={() => setActiveTab('orders')}>
+                    Open Orders Queue ({filteredOrders.length})
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setActiveTab('products')}>
+                    Open Catalog Inventory ({filteredProducts.length})
+                  </Button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'orders' && (
             <section className="admin-panel">
               <div className="admin-panel-head">
                 <h2>Orders Queue ({filteredOrders.length})</h2>
@@ -1059,7 +1083,9 @@ export default function Admin() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredOrders.map((ord) => {
+                      {filteredOrders
+                        .slice((ordersPage - 1) * PAGE_SIZE, ordersPage * PAGE_SIZE)
+                        .map((ord) => {
                         const cleanDigits = String(ord.customerPhone || '').replace(/[^0-9]/g, '');
                         const waUrl = `https://wa.me/${cleanDigits}?text=${encodeURIComponent(
                           `Hello ${ord.customerName}, update on your HRUVITA order ${ord.id}: status is now ${ord.status.replace(/_/g, ' ')}.`
@@ -1142,10 +1168,33 @@ export default function Admin() {
                   </table>
                 </div>
               )}
+              {filteredOrders.length > PAGE_SIZE && (
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'flex-end', marginTop: 14 }}>
+                  <button
+                    type="button"
+                    className="admin-mini-btn"
+                    disabled={ordersPage <= 1}
+                    onClick={() => setOrdersPage((p) => Math.max(1, p - 1))}
+                  >
+                    Prev
+                  </button>
+                  <span style={{ fontSize: '0.84rem', color: 'var(--muted)' }}>
+                    Page {ordersPage} of {Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE))}
+                  </span>
+                  <button
+                    type="button"
+                    className="admin-mini-btn"
+                    disabled={ordersPage >= Math.ceil(filteredOrders.length / PAGE_SIZE)}
+                    onClick={() => setOrdersPage((p) => p + 1)}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
             </section>
           )}
 
-          {(activeTab === 'overview' || activeTab === 'products') && (
+          {activeTab === 'products' && (
             <section className="admin-panel">
               <div className="admin-panel-head">
                 <h2>Catalog Inventory ({filteredProducts.length} items)</h2>
@@ -1185,7 +1234,9 @@ export default function Admin() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredProducts.map((p) => (
+                    {filteredProducts
+                      .slice((productsPage - 1) * PAGE_SIZE, productsPage * PAGE_SIZE)
+                      .map((p) => (
                       <tr key={p.id}>
                         <td>
                           <div className="admin-prod-cell">
@@ -1256,6 +1307,29 @@ export default function Admin() {
                   </tbody>
                 </table>
               </div>
+              {filteredProducts.length > PAGE_SIZE && (
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'flex-end', marginTop: 14 }}>
+                  <button
+                    type="button"
+                    className="admin-mini-btn"
+                    disabled={productsPage <= 1}
+                    onClick={() => setProductsPage((p) => Math.max(1, p - 1))}
+                  >
+                    Prev
+                  </button>
+                  <span style={{ fontSize: '0.84rem', color: 'var(--muted)' }}>
+                    Page {productsPage} of {Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE))}
+                  </span>
+                  <button
+                    type="button"
+                    className="admin-mini-btn"
+                    disabled={productsPage >= Math.ceil(filteredProducts.length / PAGE_SIZE)}
+                    onClick={() => setProductsPage((p) => p + 1)}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
             </section>
           )}
 
