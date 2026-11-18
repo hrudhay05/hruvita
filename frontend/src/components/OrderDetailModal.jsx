@@ -6,10 +6,13 @@ import {
   FiFileText,
   FiHeadphones,
   FiMapPin,
+  FiMessageCircle,
   FiPackage,
+  FiPhone,
   FiRefreshCw,
   FiShield,
   FiStar,
+  FiTruck,
   FiX,
 } from 'react-icons/fi';
 import { apiRequest } from '../lib/api.js';
@@ -443,7 +446,58 @@ export default function OrderDetailModal({
                     .join(', ')}
                 </strong>
               </div>
-              <div><span>Delivery Status</span><strong>{order.status.replace(/_/g, ' ')}</strong></div>
+              <div><span>Delivery Status</span><strong>{(order.deliveryStatus && order.deliveryStatus !== 'unassigned' ? order.deliveryStatus : order.status).replace(/_/g, ' ')}</strong></div>
+            </div>
+
+            <div
+              style={{
+                marginTop: 8,
+                padding: '12px 14px',
+                borderRadius: 12,
+                background: 'var(--green-50)',
+                border: '1px solid #d5e6d7',
+                display: 'grid',
+                gap: 6,
+              }}
+            >
+              <strong style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--green-900)', fontSize: '0.9rem' }}>
+                <FiTruck size={15} /> Delivery Partner
+              </strong>
+              {order.deliveryAssignment?.deliveryBoyId ? (
+                <>
+                  <p style={{ fontSize: '0.84rem', color: 'var(--primary)', fontWeight: 600 }}>
+                    Your delivery partner has been assigned.
+                  </p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                    <div style={{ fontSize: '0.86rem' }}>
+                      <strong>{order.deliveryAssignment.deliveryBoyName}</strong> &bull;{' '}
+                      <span>{order.deliveryAssignment.deliveryBoyPhone}</span>
+                    </div>
+                    {order.deliveryAssignment.deliveryBoyPhone && (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <a href={`tel:${order.deliveryAssignment.deliveryBoyPhone}`} className="odm-tool-btn odm-tool-primary">
+                          <FiPhone size={13} /> Call
+                        </a>
+                        <a
+                          href={`https://wa.me/${(() => {
+                            const d = String(order.deliveryAssignment.deliveryBoyPhone).replace(/\D/g, '');
+                            return d.length === 10 ? `91${d}` : d;
+                          })()}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="odm-tool-btn"
+                        >
+                          <FiMessageCircle size={13} /> WhatsApp
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p style={{ fontSize: '0.84rem', color: 'var(--muted)' }}>
+                  Your delivery partner will be assigned soon.
+                </p>
+              )}
             </div>
           </section>
         </div>

@@ -411,6 +411,7 @@ router.post('/login', async (req, res) => {
         user.email === 'admin@hruvita.com' ||
         user.email === 'analyst@hruvita.com' ||
         user.role === 'admin_analyser' ||
+        user.role === 'delivery_boy' ||
         user.email === configuredAdminEmail)
     ) {
       const session = await issueSessionAndCookies(req, res, user, Boolean(rememberMe));

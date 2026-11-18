@@ -27,6 +27,10 @@ export default function AdminAnalystPage() {
       setError(err.message || 'Sign-in failed.');
     }
   };
+  const handleLogout = async () => {
+    await logout();
+    navigate('/', { replace: true }); // use your actual route path
+  };
 
   if (!allowed) {
     return (
@@ -85,5 +89,5 @@ export default function AdminAnalystPage() {
     );
   }
 
-  return <AdminAnalystDashboard user={user} onLogout={logout} />;
+  return <AdminAnalystDashboard user={user} onLogout={handleLogout} />;
 }

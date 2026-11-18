@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import { requireAuth, requireRole } from '../middleware/auth.js';
-import { ORDER_STATUSES } from '../models/Order.js';
+import { ORDER_STATUSES, Order } from '../models/Order.js';
 import { sendUserNotification } from '../utils/emailService.js';
+import { notifyAdmins } from '../utils/adminNotifier.js';
 import { createRazorpayClient } from '../utils/razorpayClient.js';
 import {
   runDailySubscriptionGenerator,
@@ -117,6 +118,16 @@ router.get('/overview', async (_req, res) => {
       totalRevenue,
     },
     popularProducts,
+    deliveryBoys: users
+      .filter((u) => u.role === 'delivery_boy')
+      .map((u) => ({
+        id: u.id,
+        fullName: u.fullName || u.name,
+        phone: u.mobileNumber || u.phone || '',
+        email: u.email,
+        availability: u.deliveryAvailability || 'available',
+        active: !u.blocked,
+      })),
     lowStock,
     outOfStock,
     customers,
@@ -810,6 +821,237 @@ router.patch('/team/:id/status', requireRole('admin'), async (req, res) => {
     details: { email: target.email, role: target.role, blocked },
   });
   res.json({ member: { id: updated.id, email: updated.email, role: updated.role, blocked: Boolean(updated.blocked) } });
+});
+
+// Delivery Boy Management & Order Assignment
+router.get('/delivery-boys', async (_req, res) => {
+  const [users, orders] = await Promise.all([listUsers(), listAllOrders()]);
+  const boys = users
+    .filter((u) => u.role === 'delivery_boy')
+    .map((u) => {
+      const assignedOrders = orders.filter((o) => o.deliveryAssignment?.deliveryBoyId === u.id);
+      const completed = assignedOrders.filter((o) => o.deliveryStatus === 'delivered').length;
+      const failed = assignedOrders.filter((o) =>
+        ['delivery_failed', 'customer_unavailable', 'address_not_found', 'customer_cancelled'].includes(o.deliveryStatus)
+      ).length;
+      const active = assignedOrders.filter((o) =>
+        ['assigned', 'picked_up', 'out_for_delivery'].includes(o.deliveryStatus)
+      ).length;
+      return {
+        id: u.id,
+        fullName: u.fullName || u.name,
+        phone: u.mobileNumber || u.phone || '',
+        email: u.email,
+        username: u.username || '',
+        active: !u.blocked,
+        availability: u.deliveryAvailability || 'available',
+        stats: {
+          totalAssigned: assignedOrders.length,
+          active,
+          completed,
+          failed,
+          completionRate:
+            completed + failed > 0 ? Math.round((completed / (completed + failed)) * 100) : 100,
+        },
+        createdAt: u.createdAt,
+      };
+    });
+  res.json({ deliveryBoys: boys });
+});
+
+router.post('/delivery-boys', requireRole('admin'), async (req, res) => {
+  try {
+    const { fullName, phone, email, password, availability = 'available' } = req.body || {};
+    if (!fullName || !phone || !email || !password || String(password).length < 8) {
+      return res
+        .status(400)
+        .json({ error: 'Full name, phone number, email, and password (8+ chars) are required.' });
+    }
+    const normEmail = String(email).trim().toLowerCase();
+    const existing = await findUserByEmail(normEmail);
+    if (existing) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+    const passwordHash = await bcrypt.hash(String(password), 12);
+    const created = await createUser({
+      id: `u-del-${Date.now().toString(36)}`,
+      fullName: String(fullName).trim(),
+      name: String(fullName).trim(),
+      email: normEmail,
+      mobileNumber: String(phone).trim(),
+      phone: String(phone).trim(),
+      password: passwordHash,
+      role: 'delivery_boy',
+      deliveryAvailability: ['available', 'busy', 'offline'].includes(availability)
+        ? availability
+        : 'available',
+      isEmailVerified: true,
+      isProfileCompleted: true,
+      termsAccepted: true,
+      blocked: false,
+    });
+    await recordAudit({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'DELIVERY_BOY_CREATED',
+      entity: 'user',
+      entityId: created.id,
+      newValue: { email: normEmail, phone: created.phone },
+      details: { email: normEmail, phone: created.phone },
+    });
+    return res.status(201).json({
+      deliveryBoy: {
+        id: created.id,
+        fullName: created.fullName,
+        phone: created.phone,
+        email: created.email,
+        availability: created.deliveryAvailability,
+        active: true,
+      },
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Could not create delivery boy.' });
+  }
+});
+
+router.patch('/delivery-boys/:id', requireRole('admin'), async (req, res) => {
+  const target = await findUserById(req.params.id);
+  if (!target || target.role !== 'delivery_boy') {
+    return res.status(404).json({ error: 'Delivery partner not found.' });
+  }
+  const { fullName, phone, availability, active, password } = req.body || {};
+  const patch = {};
+  if (fullName !== undefined) {
+    patch.fullName = String(fullName).trim();
+    patch.name = String(fullName).trim();
+  }
+  if (phone !== undefined) {
+    patch.mobileNumber = String(phone).trim();
+    patch.phone = String(phone).trim();
+  }
+  if (['available', 'busy', 'offline'].includes(availability)) {
+    patch.deliveryAvailability = availability;
+  }
+  if (active !== undefined) {
+    patch.blocked = !active;
+  }
+  if (password && String(password).length >= 8) {
+    patch.password = await bcrypt.hash(String(password), 12);
+  }
+  const updated = await updateUser(target.id, patch);
+  await recordAudit({
+    actorId: req.user.id,
+    actorEmail: req.user.email,
+    action: 'DELIVERY_BOY_UPDATED',
+    entity: 'user',
+    entityId: target.id,
+    details: { fullName: updated.fullName, blocked: updated.blocked, availability: updated.deliveryAvailability },
+  });
+  res.json({ deliveryBoy: updated });
+});
+
+router.post('/orders/:id/assign-delivery', async (req, res) => {
+  try {
+    const { deliveryBoyId, note = '' } = req.body || {};
+    if (!deliveryBoyId) {
+      return res.status(400).json({ error: 'Please select a delivery partner.' });
+    }
+    const [order, boy] = await Promise.all([
+      getOrderById(req.params.id),
+      findUserById(deliveryBoyId),
+    ]);
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
+    if (!boy || boy.role !== 'delivery_boy') {
+      return res.status(404).json({ error: 'Delivery partner not found.' });
+    }
+    if (boy.blocked) {
+      return res.status(400).json({ error: 'Cannot assign an inactive delivery partner.' });
+    }
+    if (['cancelled', 'refunded', 'delivered'].includes(order.status)) {
+      return res.status(400).json({ error: `Cannot assign delivery to a ${order.status} order.` });
+    }
+    if (
+      order.deliveryAssignment?.deliveryBoyId === boy.id &&
+      ['assigned', 'picked_up', 'out_for_delivery'].includes(order.deliveryStatus)
+    ) {
+      return res.status(409).json({ error: 'This delivery partner is already assigned to this order.' });
+    }
+
+    const isReassign = Boolean(order.deliveryAssignment?.deliveryBoyId);
+    const nowIso = new Date().toISOString();
+    const assignment = {
+      deliveryBoyId: boy.id,
+      deliveryBoyName: boy.fullName || boy.name,
+      deliveryBoyPhone: boy.mobileNumber || boy.phone || '',
+      assignedAt: nowIso,
+      assignedBy: req.user.email,
+      pickedUpAt: '',
+      outForDeliveryAt: '',
+      deliveredAt: '',
+      failedAt: '',
+      failureReason: '',
+      codCollected: Boolean(order.deliveryAssignment?.codCollected),
+      codCollectedAt: order.deliveryAssignment?.codCollectedAt || '',
+    };
+
+    const historyItem = {
+      deliveryBoyId: boy.id,
+      deliveryBoyName: assignment.deliveryBoyName,
+      deliveryBoyPhone: assignment.deliveryBoyPhone,
+      assignedBy: req.user.email,
+      assignedAt: nowIso,
+      action: isReassign ? 'reassigned' : 'assigned',
+      note: String(note || ''),
+    };
+
+    const updated = await Order.findOneAndUpdate(
+      { id: order.id },
+      {
+        $set: {
+          deliveryStatus: 'assigned',
+          deliveryAssignment: assignment,
+        },
+        $push: { assignmentHistory: historyItem },
+      },
+      { new: true }
+    ).lean();
+
+    await recordAudit({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: isReassign ? 'DELIVERY_BOY_REASSIGNED' : 'DELIVERY_BOY_ASSIGNED',
+      entity: 'order',
+      entityId: order.id,
+      previousValue: order.deliveryAssignment?.deliveryBoyId
+        ? { deliveryBoyId: order.deliveryAssignment.deliveryBoyId, name: order.deliveryAssignment.deliveryBoyName }
+        : null,
+      newValue: { deliveryBoyId: boy.id, name: assignment.deliveryBoyName },
+      details: { deliveryBoyId: boy.id, name: assignment.deliveryBoyName },
+    });
+
+    sendUserNotification({
+      userId: order.userId,
+      email: order.customerEmail,
+      type: 'order',
+      title: isReassign
+        ? `Delivery Partner Updated (${order.id})`
+        : `Delivery Partner Assigned (${order.id})`,
+      message: `${assignment.deliveryBoyName} (${assignment.deliveryBoyPhone}) will deliver your HRUVITA order.`,
+    }).catch(() => {});
+
+    notifyAdmins({
+      dedupKey: `assign-${order.id}-${boy.id}-${nowIso.slice(0, 16)}`,
+      category: 'order',
+      title: `${isReassign ? 'Reassigned' : 'Assigned'}: ${order.id}`,
+      description: `Assigned to ${assignment.deliveryBoyName} (${assignment.deliveryBoyPhone}).`,
+      entityType: 'order',
+      entityId: order.id,
+    }).catch(() => {});
+
+    return res.json({ order: updated || order });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Could not assign delivery partner.' });
+  }
 });
 
 export default router;

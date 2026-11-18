@@ -16,6 +16,7 @@ import extrasRoutes from './routes/extras.js';
 import assistantRoutes from './routes/assistant.js';
 import adminRoutes from './routes/admin.js';
 import analystRoutes from './routes/analyst.js';
+import deliveryRoutes from './routes/delivery.js';
 
 dotenv.config();
 if (!process.env.MONGODB_URI) {
@@ -90,6 +91,7 @@ app.use('/api', extrasRoutes);
 app.use('/api/assistant', assistantRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/analyst', analystRoutes);
+app.use('/api/delivery', deliveryRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'API route not found' });

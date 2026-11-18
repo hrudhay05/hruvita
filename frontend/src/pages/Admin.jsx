@@ -20,6 +20,7 @@ import {
   FiStar,
   FiTag,
   FiTrash2,
+  FiTruck,
   FiUsers,
   FiGift,
   FiPackage,
@@ -210,6 +211,86 @@ export default function Admin() {
 
   const [team, setTeam] = useState([]);
   const [teamForm, setTeamForm] = useState({ fullName: '', email: '', password: '', role: 'admin_analyser' });
+  const [deliveryBoysList, setDeliveryBoysList] = useState([]);
+  const [deliveryBoyForm, setDeliveryBoyForm] = useState({
+    id: '',
+    fullName: '',
+    phone: '',
+    email: '',
+    password: '',
+    availability: 'available',
+  });
+
+  const loadDeliveryBoys = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      const res = await apiRequest('/api/admin/delivery-boys');
+      setDeliveryBoysList(res.deliveryBoys || []);
+    } catch {
+      /* ignore */
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (isAdmin && activeTab === 'delivery') loadDeliveryBoys();
+  }, [isAdmin, activeTab, loadDeliveryBoys]);
+
+  const handleSaveDeliveryBoy = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      if (deliveryBoyForm.id) {
+        await apiRequest(`/api/admin/delivery-boys/${deliveryBoyForm.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            fullName: deliveryBoyForm.fullName,
+            phone: deliveryBoyForm.phone,
+            availability: deliveryBoyForm.availability,
+            ...(deliveryBoyForm.password ? { password: deliveryBoyForm.password } : {}),
+          }),
+        });
+        showToast('Delivery partner updated.');
+      } else {
+        await apiRequest('/api/admin/delivery-boys', {
+          method: 'POST',
+          body: JSON.stringify(deliveryBoyForm),
+        });
+        showToast(`Created delivery partner ${deliveryBoyForm.fullName}.`);
+      }
+      setDeliveryBoyForm({ id: '', fullName: '', phone: '', email: '', password: '', availability: 'available' });
+      await Promise.all([loadDeliveryBoys(), loadOverview()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleToggleDeliveryBoy = async (boy) => {
+    try {
+      await apiRequest(`/api/admin/delivery-boys/${boy.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ active: !boy.active }),
+      });
+      showToast(`${boy.fullName} ${boy.active ? 'deactivated' : 'activated'}.`);
+      await Promise.all([loadDeliveryBoys(), loadOverview()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleAssignDeliveryBoy = async (orderId, deliveryBoyId) => {
+    if (!deliveryBoyId) return;
+    setError('');
+    try {
+      await apiRequest(`/api/admin/orders/${orderId}/assign-delivery`, {
+        method: 'POST',
+        body: JSON.stringify({ deliveryBoyId }),
+      });
+      showToast(`Delivery partner assigned to ${orderId}.`);
+      await Promise.all([loadOverview(), loadDeliveryBoys()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   const loadTeam = useCallback(async () => {
     if (user?.role !== 'admin') return;
@@ -748,6 +829,7 @@ export default function Admin() {
     { id: 'overview', label: 'Overview', icon: FiGrid },
     { id: 'kitchen', label: 'Kitchen Prep View', icon: FiCoffee },
     { id: 'orders', label: `Orders (${allOrders.length})`, icon: FiShoppingBag },
+    { id: 'delivery', label: `Delivery Team (${overview?.deliveryBoys?.length || 0})`, icon: FiTruck },
     { id: 'products', label: `Products (${products.length})`, icon: FiBox },
     { id: 'inventory', label: `Inventory & Bowl (${inventoryData.ingredients?.length || 0})`, icon: FiSliders },
     { id: 'combos', label: `Combos (${combos.length})`, icon: FiPackage },
@@ -1141,6 +1223,29 @@ export default function Admin() {
                                   </option>
                                 ))}
                               </select>
+                              <div style={{ marginTop: 6 }}>
+                                <select
+                                  aria-label={`Assign delivery boy for ${ord.id}`}
+                                  className="menu-select"
+                                  style={{ padding: '5px 8px', fontSize: '0.78rem', width: '100%' }}
+                                  value={ord.deliveryAssignment?.deliveryBoyId || ''}
+                                  onChange={(e) => handleAssignDeliveryBoy(ord.id, e.target.value)}
+                                >
+                                  <option value="">Assign Delivery Partner...</option>
+                                  {(overview?.deliveryBoys || [])
+                                    .filter((b) => b.active)
+                                    .map((b) => (
+                                      <option key={b.id} value={b.id}>
+                                        {b.fullName} ({b.phone}) [{b.availability}]
+                                      </option>
+                                    ))}
+                                </select>
+                                {ord.deliveryAssignment?.deliveryBoyName && (
+                                  <div style={{ fontSize: '0.73rem', color: 'var(--primary)', marginTop: 2 }}>
+                                    Partner: {ord.deliveryAssignment.deliveryBoyName} ({ord.deliveryStatus?.replace(/_/g, ' ') || 'assigned'})
+                                  </div>
+                                )}
+                              </div>
                             </td>
                             <td>
                               <div className="admin-row-actions">
@@ -2477,6 +2582,149 @@ export default function Admin() {
                         </tr>
                       ))
                     )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'delivery' && (
+            <section className="admin-panel">
+              <div className="admin-panel-head">
+                <h2>Delivery Partner Management ({deliveryBoysList.length})</h2>
+              </div>
+              <form className="admin-form" onSubmit={handleSaveDeliveryBoy} style={{ marginBottom: 20 }}>
+                <div className="admin-form-row">
+                  <div className="admin-field">
+                    <label htmlFor="db-name">Full Name</label>
+                    <input
+                      id="db-name"
+                      required
+                      value={deliveryBoyForm.fullName}
+                      onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, fullName: e.target.value })}
+                      placeholder="Delivery Partner Name"
+                    />
+                  </div>
+                  <div className="admin-field">
+                    <label htmlFor="db-phone">Phone Number</label>
+                    <input
+                      id="db-phone"
+                      required
+                      value={deliveryBoyForm.phone}
+                      onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, phone: e.target.value })}
+                      placeholder="9876543210"
+                    />
+                  </div>
+                </div>
+                <div className="admin-form-row">
+                  <div className="admin-field">
+                    <label htmlFor="db-email">Email</label>
+                    <input
+                      id="db-email"
+                      type="email"
+                      required={!deliveryBoyForm.id}
+                      disabled={Boolean(deliveryBoyForm.id)}
+                      value={deliveryBoyForm.email}
+                      onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, email: e.target.value })}
+                      placeholder="partner@hruvita.com"
+                    />
+                  </div>
+                  <div className="admin-field">
+                    <label htmlFor="db-pass">{deliveryBoyForm.id ? 'New Password (optional)' : 'Password (8+ chars)'}</label>
+                    <input
+                      id="db-pass"
+                      type="password"
+                      required={!deliveryBoyForm.id}
+                      minLength={8}
+                      value={deliveryBoyForm.password}
+                      onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, password: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <select
+                    className="menu-select"
+                    value={deliveryBoyForm.availability}
+                    onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, availability: e.target.value })}
+                  >
+                    <option value="available">Available</option>
+                    <option value="busy">Busy</option>
+                    <option value="offline">Offline</option>
+                  </select>
+                  <Button type="submit" size="sm">
+                    {deliveryBoyForm.id ? 'Update Partner' : 'Add Delivery Partner'}
+                  </Button>
+                  {deliveryBoyForm.id && (
+                    <button
+                      type="button"
+                      className="admin-mini-btn"
+                      onClick={() =>
+                        setDeliveryBoyForm({ id: '', fullName: '', phone: '', email: '', password: '', availability: 'available' })
+                      }
+                    >
+                      Cancel Edit
+                    </button>
+                  )}
+                </div>
+              </form>
+
+              <div className="admin-table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Partner</th>
+                      <th>Phone</th>
+                      <th>Availability</th>
+                      <th>Performance</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deliveryBoysList.map((b) => (
+                      <tr key={b.id}>
+                        <td>
+                          <strong>{b.fullName}</strong>
+                          <div style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>{b.email}</div>
+                        </td>
+                        <td>{b.phone}</td>
+                        <td style={{ textTransform: 'capitalize' }}>{b.availability}</td>
+                        <td style={{ fontSize: '0.8rem' }}>
+                          Assigned: <strong>{b.stats?.totalAssigned || 0}</strong> &bull; Active:{' '}
+                          <strong>{b.stats?.active || 0}</strong> &bull; Done:{' '}
+                          <strong>{b.stats?.completed || 0}</strong> &bull; Failed:{' '}
+                          <strong>{b.stats?.failed || 0}</strong> ({b.stats?.completionRate ?? 100}%)
+                        </td>
+                        <td>{b.active ? 'Active' : 'Inactive'}</td>
+                        <td>
+                          <div className="admin-row-actions">
+                            <button
+                              type="button"
+                              className="admin-mini-btn"
+                              onClick={() =>
+                                setDeliveryBoyForm({
+                                  id: b.id,
+                                  fullName: b.fullName,
+                                  phone: b.phone,
+                                  email: b.email,
+                                  password: '',
+                                  availability: b.availability,
+                                })
+                              }
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className={`admin-mini-btn ${b.active ? 'admin-mini-danger' : ''}`}
+                              onClick={() => handleToggleDeliveryBoy(b)}
+                            >
+                              {b.active ? 'Deactivate' : 'Activate'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>

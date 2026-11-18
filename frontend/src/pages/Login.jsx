@@ -22,6 +22,10 @@ export default function Login() {
       navigate('/admin-analyst');
       return;
     }
+    if (loggedUser.role === 'delivery_boy') {
+      navigate('/delivery');
+      return;
+    }
     if (loggedUser.role === 'admin' || loggedUser.role === 'staff') {
       navigate('/admin');
       return;

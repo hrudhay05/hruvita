@@ -20,14 +20,16 @@ import SavedAddresses from './pages/SavedAddresses.jsx';
 import Account from './pages/Account.jsx';
 import Admin from './pages/Admin.jsx';
 import AdminAnalystPage from './pages/AdminAnalystPage.jsx';
+import DeliveryDashboard from './pages/DeliveryDashboard.jsx';
 import NotFound from './pages/NotFound.jsx';
 
 export default function App() {
   return (
     <Routes>
-      {/* Dedicated Admin Workspaces */}
+      {/* Dedicated Admin & Delivery Workspaces */}
       <Route path="admin" element={<Admin />} />
       <Route path="admin-analyst" element={<AdminAnalystPage />} />
+      <Route path="delivery" element={<DeliveryDashboard />} />
 
       {/* Customer Brand Website */}
       <Route element={<Layout />}>

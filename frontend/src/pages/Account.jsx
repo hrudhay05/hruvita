@@ -151,6 +151,9 @@ export default function Account() {
   if (user.role === 'admin_analyser') {
     return <Navigate to="/admin-analyst" replace />;
   }
+  if (user.role === 'delivery_boy') {
+    return <Navigate to="/delivery" replace />;
+  }
 
   const handleProfileSave = async (e) => {
     e.preventDefault();
@@ -510,6 +513,29 @@ export default function Account() {
                           </ul>
                         </div>
                       </div>
+
+                          <div className="account-order-foot">
+                            <div style={{ width: '100%', fontSize: '0.8rem', color: ord.deliveryAssignment?.deliveryBoyId ? 'var(--primary)' : 'var(--muted)', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                              {ord.deliveryAssignment?.deliveryBoyId ? (
+                                <>
+                                  <span>
+                                    Delivery Partner: <strong>{ord.deliveryAssignment.deliveryBoyName}</strong> ({ord.deliveryAssignment.deliveryBoyPhone})
+                                  </span>
+                                  {ord.deliveryAssignment.deliveryBoyPhone && (
+                                    <a
+                                      href={`tel:${ord.deliveryAssignment.deliveryBoyPhone}`}
+                                      onClick={(e) => e.stopPropagation()}
+                                      style={{ color: 'var(--primary)', fontWeight: 700 }}
+                                    >
+                                      Call Partner
+                                    </a>
+                                  )}
+                                </>
+                              ) : (
+                                <span>Your delivery partner will be assigned soon.</span>
+                              )}
+                            </div>
+                          </div>
 
                       <div className="account-order-foot">
                         <div className="account-order-pay">
