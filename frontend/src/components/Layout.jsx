@@ -10,18 +10,20 @@ export default function Layout() {
   const { pathname } = useLocation();
 
   useEffect(() => {
-    window.scrollTo(0, 0);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [pathname]);
 
   return (
-    <div className="layout-shell">
-      <Navbar />
-      <main className="layout-main fade-in">
-        <Outlet />
-      </main>
-      <Footer />
-      <BottomNav />
+    <>
+      <div className="layout-shell">
+        <Navbar />
+        <main className="layout-main">
+          <Outlet />
+        </main>
+        <Footer />
+        <BottomNav />
+      </div>
       <VoiceButton />
-    </div>
+    </>
   );
 }

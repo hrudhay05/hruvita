@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 const BASE = (process.env.API_URL || 'http://127.0.0.1:5060').trim();
 
 async function api(path, opts = {}) {
+  if (path === '/api/assistant/chat') {
+    await new Promise((r) => setTimeout(r, 1200));
+  }
   const res = await fetch(`${BASE}${path}`, {
     ...opts,
     headers: {
@@ -130,6 +133,28 @@ async function run() {
   assert.equal(ttsTe.status, 200);
   assert.equal(ttsEn.status, 200);
   console.log(`9. Female TTS OK (Telugu ${ttsTe.ttsMs}ms, English ${ttsEn.ttsMs}ms)`);
+
+  // 10. Open specific product details page ("ఈ ఇడ్లీ ఓపెన్ చేయండి")
+  const t10 = await api('/api/assistant/chat', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ message: 'ఈ ఇడ్లీ ఓపెన్ చేయండి', language: 'te-IN' }),
+  });
+  assert.ok(
+    t10.data.actions.some((a) => a.type === 'NAVIGATE' && a.to.startsWith('/product/')),
+    `Expected NAVIGATE /product/:id, got ${JSON.stringify(t10.data.actions)}`
+  );
+  console.log(`10. Product page navigation ("ఈ ఇడ్లీ ఓపెన్ చేయండి") OK -> ${t10.data.actions.find((a) => a.type === 'NAVIGATE')?.to}`);
+
+  // 11. Online Payment security policy & COD selection
+  const t11 = await api('/api/assistant/chat', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ message: 'I want to pay using Online Payment UPI', language: 'en-IN', cartItems: { p1: 2 } }),
+  });
+  assert.ok(t11.data.toolsUsed.includes('select_payment_method'));
+  assert.ok(t11.data.actions.some((a) => a.type === 'SET_PAYMENT_METHOD' && a.method === 'razorpay'));
+  console.log(`11. Online Payment security response OK -> "${t11.data.reply}"`);
 
   console.log('\nALL LIVE REAL-LLM TOOL-CALLING TESTS PASSED 100%!');
 }

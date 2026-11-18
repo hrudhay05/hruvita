@@ -11,7 +11,6 @@ import {
   FiShoppingBag,
   FiSliders,
   FiSquare,
-  FiTerminal,
   FiVolume2,
   FiVolumeX,
   FiX,
@@ -33,34 +32,24 @@ const FEMALE_VOICE_HINTS =
   /(shruti|neerja|heera|veena|lekha|aditi|raveena|kanya|samantha|zira|female|google.*తెలుగు|google.*हिन्दी|google uk english female)/i;
 const MALE_VOICE_HINTS = /(mohan|prabhat|ravi|hemant|david|mark|daniel|george|rishi|\bmale\b)/i;
 
+const devLog = (tag, msg, data = null) => {
+  if (import.meta.env.DEV) {
+    if (data !== null) console.log(`[${tag}] ${msg}`, data);
+    else console.log(`[${tag}] ${msg}`);
+  }
+};
+
 export default function VoiceButton() {
   const navigate = useNavigate();
   const { items, customBowls, add, setQty, addCustomBowl, clear } = useCart();
   const { settings } = useCatalog();
-  const { user, isAdmin, selectedAddressId, setSelectedAddressId } = useAuth();
+  const { user, selectedAddressId, setSelectedAddressId } = useAuth();
   const { showToast } = useToast();
-
-  const canSeeDebug = import.meta.env.DEV || Boolean(isAdmin);
-  const [debugOpen, setDebugOpen] = useState(false);
-  const [debugInfo, setDebugInfo] = useState({
-    aiStatus: 'ready',
-    provider: '-',
-    model: '-',
-    sttStatus: typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition) ? 'WebSpeech Ready' : 'Fallback',
-    ttsStatus: 'ShrutiNeural / NeerjaNeural',
-    detectedLanguage: 'en-IN',
-    aiDurationMs: 0,
-    ttsDurationMs: 0,
-    totalDurationMs: 0,
-    latestTool: '-',
-    apiStatus: '200',
-    latestError: '-',
-  });
 
   const [open, setOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [lang, setLang] = useState('en-IN');
-  const [mode, setMode] = useState('handsfree'); // 'text' | 'ptt' | 'handsfree' (auto-listen after reply)
+  const [mode, setMode] = useState('handsfree'); // 'text' | 'ptt' | 'handsfree'
   const [personalization, setPersonalization] = useState(() => {
     try {
       return localStorage.getItem('hruvita_ai_personalize') !== '0';
@@ -70,6 +59,7 @@ export default function VoiceButton() {
   });
   const [muted, setMuted] = useState(false);
   const [listening, setListening] = useState(false);
+  const [interimText, setInterimText] = useState('');
   const [speaking, setSpeaking] = useState(false);
   const [pausedAudio, setPausedAudio] = useState(false);
   const [lastSpoken, setLastSpoken] = useState({ text: '', lang: 'en-IN' });
@@ -86,13 +76,18 @@ export default function VoiceButton() {
     },
   ]);
 
+  // Lifecycle & concurrency refs (prevent duplicate sessions or stale closures)
   const recognitionRef = useRef(null);
   const audioRef = useRef(null);
   const audioUrlRef = useRef('');
   const messagesEndRef = useRef(null);
-  const handsFreeRef = useRef(false);
+  const handsFreeRef = useRef(true);
   const openRef = useRef(false);
   const voiceActiveRef = useRef(false);
+  const speakingRef = useRef(false);
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
 
   useEffect(() => {
     handsFreeRef.current = mode === 'handsfree';
@@ -106,8 +101,16 @@ export default function VoiceButton() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, busy, open]);
 
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
+
   const stopAllSpeech = useCallback(() => {
     if (audioRef.current) {
+      audioRef.current.onended = null;
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
@@ -118,28 +121,53 @@ export default function VoiceButton() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
+    speakingRef.current = false;
     setSpeaking(false);
     setPausedAudio(false);
   }, []);
 
   const stopListening = useCallback(() => {
+    clearRetryTimer();
     if (recognitionRef.current) {
       try {
-        recognitionRef.current.stop();
+        recognitionRef.current.onstart = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
+        recognitionRef.current.abort();
+      } catch {
+        /* ignore */
+      }
+      recognitionRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try {
+        mediaRecorderRef.current.stop();
       } catch {
         /* ignore */
       }
     }
     setListening(false);
-  }, []);
+    setInterimText('');
+  }, [clearRetryTimer]);
 
+  // Cleanup on unmount or drawer close/minimize
   useEffect(() => {
     if (!open || minimized) {
       voiceActiveRef.current = false;
+      retryCountRef.current = 0;
       stopListening();
       if (!open) stopAllSpeech();
     }
   }, [open, minimized, stopListening, stopAllSpeech]);
+
+  useEffect(() => {
+    return () => {
+      voiceActiveRef.current = false;
+      stopListening();
+      stopAllSpeech();
+    };
+  }, [stopListening, stopAllSpeech]);
 
   // Fetch personalized greeting when user opens drawer or switches language
   useEffect(() => {
@@ -162,85 +190,214 @@ export default function VoiceButton() {
       .catch(() => {});
   }, [open, lang, personalization, user?.id]);
 
-  if (settings?.aiEnabled === false) {
-    return null;
-  }
+  // Fallback Server-side Audio Capture + Groq Whisper STT (for Firefox/Safari)
+  const startServerWhisperCapture = useCallback(
+    async (forceLang) => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        showToast('Microphone is unavailable in this browser. Please type below.', 'error');
+        setMode('text');
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const chunks = [];
+        const recorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = recorder;
+        setListening(true);
+        devLog('HRUVITA-VOICE', 'Server Whisper STT capture started');
+
+        recorder.ondataavailable = (ev) => {
+          if (ev.data.size > 0) chunks.push(ev.data);
+        };
+        recorder.onstop = async () => {
+          stream.getTracks().forEach((t) => t.stop());
+          setListening(false);
+          if (chunks.length === 0) return;
+          const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const base64 = String(reader.result || '').split(',')[1] || '';
+            if (!base64) return;
+            try {
+              const sttRes = await apiRequest('/api/assistant/stt', {
+                method: 'POST',
+                body: JSON.stringify({
+                  audioBase64: base64,
+                  mimeType: blob.type,
+                  language: forceLang || lang,
+                }),
+              });
+              if (sttRes.text?.trim()) {
+                devLog('HRUVITA-STT', `Whisper transcript: ${sttRes.text}`);
+                sendMessageRef.current(sttRes.text.trim());
+              }
+            } catch (err) {
+              devLog('HRUVITA-ERROR', `Server STT failed: ${err.message}`);
+              showToast('Could not transcribe audio. Please type below.', 'error');
+            }
+          };
+          reader.readAsDataURL(blob);
+        };
+
+        recorder.start();
+        setTimeout(() => {
+          if (recorder.state === 'recording') recorder.stop();
+        }, 6000);
+      } catch {
+        setListening(false);
+        voiceActiveRef.current = false;
+        showToast('Microphone permission denied. Please type your request.', 'error');
+        setMode('text');
+      }
+    },
+    [lang, showToast]
+  );
 
   const beginListening = useCallback(
     (forceLang) => {
-      if (typeof window === 'undefined' || !openRef.current) return;
-      stopAllSpeech();
+      if (typeof window === 'undefined' || !openRef.current || speakingRef.current) return;
+      clearRetryTimer();
 
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
-        showToast('Voice recognition works best in Chrome. Please type your message below.', 'error');
+        startServerWhisperCapture(forceLang);
         return;
       }
 
+      // Guarantee single active session (prevent duplicate listeners)
       if (recognitionRef.current) {
         try {
-          recognitionRef.current.onend = null;
+          recognitionRef.current.onstart = null;
+          recognitionRef.current.onresult = null;
           recognitionRef.current.onerror = null;
+          recognitionRef.current.onend = null;
           recognitionRef.current.abort();
         } catch {
           /* ignore */
         }
+        recognitionRef.current = null;
       }
 
+      const targetLang = forceLang || lang;
       const rec = new SpeechRecognition();
-      rec.lang = forceLang || lang;
-      rec.interimResults = false;
+      rec.lang = targetLang;
+      rec.interimResults = true;
+      rec.continuous = false;
       rec.maxAlternatives = 1;
 
-      rec.onstart = () => setListening(true);
-      rec.onend = () => setListening(false);
-      rec.onerror = (ev) => {
-        setListening(false);
-        if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
-          showToast('Microphone permission denied. You can type your request anytime.', 'error');
-          setMode('text');
-        } else if (ev.error === 'no-speech' && handsFreeRef.current && openRef.current) {
-          setTimeout(() => beginListeningRef.current(forceLang || lang), 300);
-        } else if (ev.error !== 'aborted' && ev.error !== 'no-speech') {
-          showToast('Could not hear clearly. Please repeat or type below.', 'error');
+      let finalTranscript = '';
+
+      rec.onstart = () => {
+        setListening(true);
+        setInterimText('');
+        devLog('HRUVITA-VOICE', `Microphone active (${targetLang})`);
+      };
+
+      rec.onresult = (event) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          const piece = event.results[i][0]?.transcript || '';
+          if (event.results[i].isFinal) {
+            finalTranscript += ` ${piece}`;
+          } else {
+            interim += piece;
+          }
+        }
+        setInterimText(interim.trim());
+
+        if (finalTranscript.trim()) {
+          const cleanTranscript = finalTranscript.trim();
+          retryCountRef.current = 0;
+          setInterimText('');
+          devLog('HRUVITA-STT', `Transcript: "${cleanTranscript}"`);
+          stopListening();
+          sendMessageRef.current(cleanTranscript);
         }
       };
-      rec.onresult = (event) => {
-        const transcript = event.results?.[0]?.[0]?.transcript || '';
-        if (transcript.trim()) {
-          voiceActiveRef.current = true;
-          setListening(false);
-          sendMessageRef.current(transcript);
+
+      rec.onerror = (ev) => {
+        setListening(false);
+        setInterimText('');
+        const errCode = ev.error || 'unknown';
+        devLog('HRUVITA-ERROR', `Speech recognition error: ${errCode}`);
+
+        if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+          voiceActiveRef.current = false;
+          retryCountRef.current = 0;
+          showToast('Microphone permission denied. You can type your request below.', 'error');
+          setMode('text');
+          return;
+        }
+
+        if (errCode === 'aborted') return;
+
+        // Bounded automatic recovery for temporary no-speech / network / audio-capture hiccups
+        if (voiceActiveRef.current && handsFreeRef.current && openRef.current && !speakingRef.current) {
+          retryCountRef.current += 1;
+          if (retryCountRef.current <= 3) {
+            devLog('HRUVITA-VOICE', `Recovering microphone (attempt ${retryCountRef.current}/3)...`);
+            retryTimerRef.current = setTimeout(() => {
+              beginListeningRef.current(targetLang);
+            }, 450);
+          } else {
+            voiceActiveRef.current = false;
+            retryCountRef.current = 0;
+            showToast('Voice paused after silence. Tap the mic anytime or type below.');
+          }
+        }
+      };
+
+      rec.onend = () => {
+        setListening(false);
+        setInterimText('');
+        if (
+          !finalTranscript.trim() &&
+          voiceActiveRef.current &&
+          handsFreeRef.current &&
+          openRef.current &&
+          !speakingRef.current &&
+          retryCountRef.current < 3
+        ) {
+          retryCountRef.current += 1;
+          retryTimerRef.current = setTimeout(() => {
+            beginListeningRef.current(targetLang);
+          }, 350);
         }
       };
 
       recognitionRef.current = rec;
       try {
         rec.start();
-      } catch {
+      } catch (err) {
         setListening(false);
+        devLog('HRUVITA-ERROR', `Failed to start SpeechRecognition: ${err.message}`);
       }
     },
-    [lang, showToast, stopAllSpeech]
+    [lang, showToast, stopListening, clearRetryTimer, startServerWhisperCapture]
   );
 
   const beginListeningRef = useRef(beginListening);
   beginListeningRef.current = beginListening;
 
   const toggleMicManual = () => {
+    stopAllSpeech();
     if (listening) {
       voiceActiveRef.current = false;
+      retryCountRef.current = 0;
       stopListening();
+      devLog('HRUVITA-VOICE', 'Microphone stopped by user');
     } else {
       voiceActiveRef.current = true;
+      retryCountRef.current = 0;
       beginListening(lang);
     }
   };
 
   const speakFemaleBrowserFallback = (text, speechLang) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      if (handsFreeRef.current && openRef.current) {
-        setTimeout(() => beginListeningRef.current(speechLang), 250);
+      speakingRef.current = false;
+      if (handsFreeRef.current && voiceActiveRef.current && openRef.current) {
+        setTimeout(() => beginListeningRef.current(speechLang), 300);
       }
       return;
     }
@@ -258,10 +415,10 @@ export default function VoiceButton() {
         (v) => FEMALE_VOICE_HINTS.test(v.name) && !MALE_VOICE_HINTS.test(v.name) && v.lang.includes('IN')
       );
 
-    // Never silently switch to a male voice — still continue hands-free listening
     if (!chosen) {
-      if (handsFreeRef.current && openRef.current) {
-        setTimeout(() => beginListeningRef.current(speechLang), 250);
+      speakingRef.current = false;
+      if (handsFreeRef.current && voiceActiveRef.current && openRef.current) {
+        setTimeout(() => beginListeningRef.current(speechLang), 300);
       }
       return;
     }
@@ -271,11 +428,15 @@ export default function VoiceButton() {
     utter.lang = speechLang;
     utter.rate = 0.96;
     utter.pitch = 1.06;
-    utter.onstart = () => setSpeaking(true);
+    utter.onstart = () => {
+      speakingRef.current = true;
+      setSpeaking(true);
+    };
     utter.onend = () => {
+      speakingRef.current = false;
       setSpeaking(false);
-      if (handsFreeRef.current && openRef.current) {
-        setTimeout(() => beginListeningRef.current(speechLang), 250);
+      if (handsFreeRef.current && voiceActiveRef.current && openRef.current) {
+        setTimeout(() => beginListeningRef.current(speechLang), 300);
       }
     };
     window.speechSynthesis.speak(utter);
@@ -284,16 +445,20 @@ export default function VoiceButton() {
   const speakFemaleVoice = async (text, speechLang) => {
     setLastSpoken({ text, lang: speechLang });
     if (muted || !text) {
-      if (handsFreeRef.current && openRef.current) {
+      speakingRef.current = false;
+      if (handsFreeRef.current && voiceActiveRef.current && openRef.current) {
         setTimeout(() => beginListeningRef.current(speechLang), 300);
       }
       return;
     }
+
+    stopListening();
     stopAllSpeech();
+    speakingRef.current = true;
 
     try {
       const tts0 = Date.now();
-      if (canSeeDebug) console.log('[HRUVITA-TTS] Requesting female voice:', speechLang);
+      devLog('HRUVITA-TTS', `Requesting female voice (${speechLang})`);
       const resp = await fetch(`${API_BASE}/api/assistant/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -301,14 +466,7 @@ export default function VoiceButton() {
       });
 
       if (!resp.ok) throw new Error('Neural TTS unavailable');
-      const ttsDur = Date.now() - tts0;
-      const voiceProvider = resp.headers.get('x-voice-provider') || 'edge-neural';
-      setDebugInfo((prev) => ({
-        ...prev,
-        ttsStatus: `${voiceProvider} (${resp.headers.get('x-voice-id') || speechLang})`,
-        ttsDurationMs: ttsDur,
-      }));
-      if (canSeeDebug) console.log(`[HRUVITA-TTS] Audio ready in ${ttsDur}ms`);
+      devLog('HRUVITA-TTS', `Female voice ready in ${Date.now() - tts0}ms`);
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       audioUrlRef.current = url;
@@ -316,6 +474,7 @@ export default function VoiceButton() {
       const audio = new Audio(url);
       audioRef.current = audio;
       audio.onplay = () => {
+        speakingRef.current = true;
         setSpeaking(true);
         setPausedAudio(false);
       };
@@ -323,10 +482,11 @@ export default function VoiceButton() {
         if (!audio.ended && audio.currentTime > 0) setPausedAudio(true);
       };
       audio.onended = () => {
+        speakingRef.current = false;
         setSpeaking(false);
         setPausedAudio(false);
         if (handsFreeRef.current && voiceActiveRef.current && openRef.current) {
-          setTimeout(() => beginListeningRef.current(speechLang), 250);
+          setTimeout(() => beginListeningRef.current(speechLang), 300);
         }
       };
       await audio.play();
@@ -339,10 +499,12 @@ export default function VoiceButton() {
     if (audioRef.current) {
       if (audioRef.current.paused) {
         audioRef.current.play().catch(() => {});
+        speakingRef.current = true;
         setPausedAudio(false);
         setSpeaking(true);
       } else {
         audioRef.current.pause();
+        speakingRef.current = false;
         setPausedAudio(true);
         setSpeaking(false);
       }
@@ -351,10 +513,12 @@ export default function VoiceButton() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       if (window.speechSynthesis.paused) {
         window.speechSynthesis.resume();
+        speakingRef.current = true;
         setPausedAudio(false);
         setSpeaking(true);
       } else {
         window.speechSynthesis.pause();
+        speakingRef.current = false;
         setPausedAudio(true);
         setSpeaking(false);
       }
@@ -366,7 +530,7 @@ export default function VoiceButton() {
     if (!clean || busy) return;
 
     const turn0 = Date.now();
-    if (canSeeDebug) console.log('[HRUVITA-AI] Sending customer message:', clean);
+    devLog('HRUVITA-AI', `Sending customer message: "${clean}"`);
     setInput('');
     setMessages((prev) => [...prev, { role: 'user', text: clean, actions: [], products: [] }]);
     setBusy(true);
@@ -387,55 +551,46 @@ export default function VoiceButton() {
 
       if (data.conversationId) setConversationId(data.conversationId);
 
-      // Execute safe structured website & cart actions
+      // Execute safe structured website, cart, payment & navigation actions
       for (const act of data.actions || []) {
         if (act.type === 'ADD_TO_CART' && act.productId) {
-          if (canSeeDebug) console.log('[HRUVITA-CART] Adding product:', act.productId, 'x', act.qty || 1);
+          devLog('HRUVITA-CART', `Adding product ${act.productId} x ${act.qty || 1}`);
           add(act.productId, act.qty || 1);
           showToast(`Added ${act.qty || 1} × ${act.productName} to cart.`);
         } else if (act.type === 'UPDATE_CART_QTY' && act.productId) {
-          if (canSeeDebug) console.log('[HRUVITA-CART] Updating qty:', act.productId, '->', act.qty);
+          devLog('HRUVITA-CART', `Updating quantity ${act.productId} -> ${act.qty}`);
           setQty(act.productId, act.qty ?? 0);
           showToast(`Updated ${act.productName} quantity to ${act.qty}.`);
         } else if (act.type === 'ADD_CUSTOM_BOWL' && act.bowl) {
-          if (canSeeDebug) console.log('[HRUVITA-CART] Adding custom bowl:', act.bowl.name);
+          devLog('HRUVITA-CART', `Adding custom bowl: ${act.bowl.name}`);
           addCustomBowl(act.bowl);
           showToast(`Added ${act.bowl.name} to cart.`);
         } else if (act.type === 'SELECT_ADDRESS' && act.addressId) {
           setSelectedAddressId(act.addressId);
           showToast('Delivery address selected.');
+        } else if (act.type === 'SET_PAYMENT_METHOD' && act.method) {
+          devLog('HRUVITA-PAYMENT', `Payment method selected: ${act.method}`);
+          window.dispatchEvent(new CustomEvent('hruvita:set-payment', { detail: act.method }));
+          navigate(`/cart?pay=${act.method}`);
         } else if (act.type === 'CLEAR_CART') {
-          if (canSeeDebug) console.log('[HRUVITA-CART] Clearing cart');
+          devLog('HRUVITA-CART', 'Cart cleared');
           clear();
         } else if (act.type === 'NAVIGATE' && act.to) {
-          if (canSeeDebug) console.log('[HRUVITA-CHECKOUT] Navigating to:', act.to);
-          navigate(act.to);
+          const hasPayOverride = (data.actions || []).some((x) => x.type === 'SET_PAYMENT_METHOD');
+          if (!(hasPayOverride && act.to === '/cart')) {
+            devLog('HRUVITA-NAVIGATION', `Navigating to ${act.to}`);
+            navigate(act.to);
+          }
         } else if (act.type === 'OPEN_RAZORPAY_CHECKOUT') {
-          if (canSeeDebug) console.log('[HRUVITA-CHECKOUT] Opening Razorpay checkout page');
-          navigate('/cart');
+          devLog('HRUVITA-PAYMENT', 'Opening secure Razorpay checkout');
+          navigate('/cart?pay=razorpay');
         }
       }
 
-      if (data.debug) {
-        setDebugInfo((prev) => ({
-          ...prev,
-          aiStatus: data.debug.errorCode ? `Degraded (${data.debug.errorCode})` : 'Connected',
-          provider: data.debug.provider,
-          model: data.debug.model,
-          detectedLanguage: data.debug.detectedLanguage,
-          aiDurationMs: data.debug.aiDurationMs,
-          totalDurationMs: data.debug.totalDurationMs,
-          latestTool: (data.debug.toolsCalled || []).join(', ') || 'none',
-          apiStatus: '200 OK',
-          latestError: data.debug.errorMessage || '-',
-        }));
-      }
-      if (canSeeDebug) {
-        console.log(`[HRUVITA-PERFORMANCE] Total roundtrip: ${Date.now() - turn0} ms`, {
-          tools: data.toolsUsed,
-          language: data.language,
-        });
-      }
+      devLog('HRUVITA-PERFORMANCE', `Total roundtrip: ${Date.now() - turn0}ms`, {
+        toolsUsed: data.toolsUsed,
+        language: data.language,
+      });
 
       const replyLang = data.language || lang;
       setMessages((prev) => [
@@ -451,13 +606,7 @@ export default function VoiceButton() {
 
       await speakFemaleVoice(data.reply, replyLang);
     } catch (err) {
-      if (canSeeDebug) console.error('[HRUVITA-ERROR] Chat error:', err.message);
-      setDebugInfo((prev) => ({
-        ...prev,
-        aiStatus: 'Error',
-        apiStatus: 'Error',
-        latestError: err.message || 'Request failed',
-      }));
+      devLog('HRUVITA-ERROR', `Assistant request failed: ${err.message}`);
       setMessages((prev) => [
         ...prev,
         {
@@ -476,10 +625,14 @@ export default function VoiceButton() {
   const sendMessageRef = useRef(sendMessage);
   sendMessageRef.current = sendMessage;
 
+  if (settings?.aiEnabled === false) {
+    return null;
+  }
+
   const quickPrompts =
     lang === 'te-IN'
-      ? ['నాకు టిఫిన్స్ కావాలి', '2 ఇడ్లీ యాడ్ చేయండి', 'ఆఫర్లు ఏంటి?', 'ఆర్డర్ స్టేటస్']
-      : ['I want breakfast', 'Build my own bowl', 'Active Offers', 'Where is my order?'];
+      ? ['నాకు ఇడ్లీ చూపించండి', '2 ఇడ్లీ యాడ్ చేయండి', 'ఆఫర్లు ఏంటి?', 'చెక్ అవుట్ ఓపెన్ చేయండి']
+      : ['Show breakfast', 'Build my own bowl', 'Active Offers', 'Open checkout'];
 
   const handleLanguageSwitch = (nextLang) => {
     setLang(nextLang);
@@ -496,17 +649,22 @@ export default function VoiceButton() {
       {open && !minimized && (
         <div className="voice-drawer" role="dialog" aria-label="HRUVITA AI Voice Assistant">
           <div className="voice-head">
-            <div className="voice-head-title">
-              <strong>{settings?.aiName || 'HRUVITA AI'}</strong>
-              <span>
-                {speaking
-                  ? 'Speaking (Female Voice)...'
-                  : listening
-                  ? 'Listening...'
-                  : busy
-                  ? 'Thinking...'
-                  : 'Bilingual Telugu & English'}
-              </span>
+            <div className="voice-head-left">
+              <div className="voice-avatar" aria-hidden="true">
+                👩🏽‍🍳
+              </div>
+              <div className="voice-head-title">
+                <strong>{settings?.aiName || 'HRUVITA AI'}</strong>
+                <span>
+                  {speaking
+                    ? 'Speaking...'
+                    : listening
+                    ? 'Listening...'
+                    : busy
+                    ? 'Thinking...'
+                    : 'Telugu & English Assistant'}
+                </span>
+              </div>
             </div>
             <div className="voice-head-controls">
               <button
@@ -535,17 +693,6 @@ export default function VoiceButton() {
               >
                 {muted ? <FiVolumeX size={14} /> : <FiVolume2 size={14} />}
               </button>
-              {canSeeDebug && (
-                <button
-                  type="button"
-                  className={`voice-icon-small ${debugOpen ? 'voice-lang-active' : ''}`.trim()}
-                  onClick={() => setDebugOpen((d) => !d)}
-                  aria-label="Toggle AI Debug Panel"
-                  title="Developer AI Debug Panel"
-                >
-                  <FiTerminal size={13} />
-                </button>
-              )}
               <button
                 type="button"
                 className="voice-icon-small"
@@ -567,7 +714,6 @@ export default function VoiceButton() {
             </div>
           </div>
 
-          {/* Conversation Mode & Personalization Bar */}
           <div className="voice-mode-bar">
             <div className="voice-mode-pills" role="group" aria-label="Conversation mode">
               {[
@@ -581,8 +727,13 @@ export default function VoiceButton() {
                   className={`voice-mode-pill ${mode === m.id ? 'voice-mode-active' : ''}`.trim()}
                   onClick={() => {
                     setMode(m.id);
-                    if (m.id === 'handsfree') beginListening(lang);
-                    else if (m.id === 'text') stopListening();
+                    if (m.id === 'handsfree') {
+                      voiceActiveRef.current = true;
+                      beginListening(lang);
+                    } else if (m.id === 'text') {
+                      voiceActiveRef.current = false;
+                      stopListening();
+                    }
                   }}
                 >
                   {m.label}
@@ -608,18 +759,6 @@ export default function VoiceButton() {
             </button>
           </div>
 
-          {/* Developer / Admin-Only AI Debug Panel */}
-          {canSeeDebug && debugOpen && (
-            <div className="voice-debug-panel" aria-label="AI Debug Panel">
-              <div><strong>AI:</strong> {debugInfo.aiStatus} ({debugInfo.provider}/{debugInfo.model})</div>
-              <div><strong>STT / TTS:</strong> {debugInfo.sttStatus} &bull; {debugInfo.ttsStatus}</div>
-              <div><strong>Lang / Tools:</strong> {debugInfo.detectedLanguage} &bull; {debugInfo.latestTool}</div>
-              <div><strong>Latency:</strong> AI {debugInfo.aiDurationMs}ms | TTS {debugInfo.ttsDurationMs}ms | Total {debugInfo.totalDurationMs}ms</div>
-              <div><strong>Status / Err:</strong> {debugInfo.apiStatus} | {debugInfo.latestError}</div>
-            </div>
-          )}
-
-          {/* Animated Audio Waveform & Playback Controls */}
           {(speaking || pausedAudio || lastSpoken.text) && (
             <div className="voice-player-bar">
               <div className={`voice-wave ${speaking ? 'voice-wave-active' : ''}`} aria-hidden="true">
@@ -656,7 +795,6 @@ export default function VoiceButton() {
                     className="voice-ctrl-btn"
                     onClick={() => speakFemaleVoice(lastSpoken.text, lastSpoken.lang)}
                     aria-label="Replay last response"
-                    title="Replay"
                   >
                     <FiRefreshCw size={12} /> Replay
                   </button>
@@ -675,14 +813,15 @@ export default function VoiceButton() {
               >
                 <div>{m.text}</div>
 
-                {/* Live MongoDB Product Cards inside Chat */}
                 {m.products?.length > 0 && (
                   <div className="voice-prod-cards">
                     {m.products.map((p) => (
                       <div key={p.id} className="voice-prod-card">
                         {p.image && <img src={p.image} alt={p.name} loading="lazy" />}
                         <div className="voice-prod-info">
-                          <strong>{p.name}</strong>
+                          <Link to={`/product/${p.id}`}>
+                            <strong>{p.name}</strong>
+                          </Link>
                           <span>{money(p.price)}</span>
                         </div>
                         <button
@@ -702,7 +841,10 @@ export default function VoiceButton() {
                 )}
 
                 {m.actions?.some(
-                  (a) => a.type === 'ADD_TO_CART' || a.type === 'ADD_CUSTOM_BOWL' || a.type === 'OPEN_CART_SUGGESTION'
+                  (a) =>
+                    a.type === 'ADD_TO_CART' ||
+                    a.type === 'ADD_CUSTOM_BOWL' ||
+                    a.type === 'OPEN_CART_SUGGESTION'
                 ) && (
                   <div className="voice-action-cta">
                     <Link to="/cart" className="voice-action-pill" onClick={() => setMinimized(true)}>
@@ -742,7 +884,10 @@ export default function VoiceButton() {
                 key={chip}
                 type="button"
                 className="voice-chip"
-                onClick={() => sendMessage(chip)}
+                onClick={() => {
+                  voiceActiveRef.current = false;
+                  sendMessage(chip);
+                }}
                 disabled={busy}
               >
                 {chip}
@@ -772,14 +917,17 @@ export default function VoiceButton() {
             <input
               id="voice-chat-input"
               type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
+              value={interimText || input}
+              onChange={(e) => {
+                setInterimText('');
+                setInput(e.target.value);
+              }}
               placeholder={
                 listening
-                  ? 'Listening...'
+                  ? 'Listening... speak now'
                   : lang === 'te-IN'
                   ? 'తెలుగు లేదా ఇంగ్లీష్‌లో మాట్లాడండి లేదా టైప్ చేయండి...'
-                  : 'Ask or order (e.g. Add 2 Idli)...'
+                  : 'Ask or order (e.g. Open Idli)...'
               }
             />
             <button
@@ -803,14 +951,8 @@ export default function VoiceButton() {
           if (!open) {
             setOpen(true);
             setMinimized(false);
-            if (mode === 'handsfree') {
-              setTimeout(() => beginListeningRef.current(lang), 350);
-            }
           } else if (minimized) {
             setMinimized(false);
-            if (mode === 'handsfree') {
-              setTimeout(() => beginListeningRef.current(lang), 350);
-            }
           } else {
             setOpen(false);
           }

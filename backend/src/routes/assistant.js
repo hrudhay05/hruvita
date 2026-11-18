@@ -153,8 +153,7 @@ router.post('/chat', async (req, res) => {
       sessionState: result.sessionState,
     });
 
-    const allowDebug = process.env.NODE_ENV !== 'production' || user?.role === 'admin';
-    logAI('HRUVITA-API', `200 OK [${requestId}] total=${Date.now() - reqStart}ms`);
+    logAI('HRUVITA-API', `200 OK [${requestId}] total=${Date.now() - reqStart}ms`, result.debug);
 
     return res.json({
       requestId,
@@ -164,7 +163,6 @@ router.post('/chat', async (req, res) => {
       toolsUsed: result.toolsUsed,
       actions: result.actions,
       recommendedProducts: result.recommendedProducts || [],
-      ...(allowDebug ? { debug: result.debug } : {}),
     });
   } catch (err) {
     logAIError(`POST /api/assistant/chat [${requestId}] failed`, err);

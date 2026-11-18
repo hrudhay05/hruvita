@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { FiCheckCircle, FiCrosshair, FiMinus, FiPlus, FiShield, FiTrash2 } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
 import { useCart } from '../context/CartContext.jsx';
@@ -39,9 +39,29 @@ export default function Cart() {
             ` (${iso})`;
     return { iso, label };
   });
+  const [searchParams] = useSearchParams();
   const [scheduledDate, setScheduledDate] = useState(todayStr);
   const [slotId, setSlotId] = useState('morning');
-  const [paymentMethod, setPaymentMethod] = useState('cod');
+  const [paymentMethod, setPaymentMethod] = useState(() =>
+    searchParams.get('pay') === 'razorpay' ? 'razorpay' : 'cod'
+  );
+
+  useEffect(() => {
+    const payParam = searchParams.get('pay');
+    if (payParam === 'razorpay' || payParam === 'cod') {
+      setPaymentMethod(payParam);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    const onVoicePay = (ev) => {
+      if (ev.detail === 'razorpay' || ev.detail === 'cod') {
+        setPaymentMethod(ev.detail);
+      }
+    };
+    window.addEventListener('hruvita:set-payment', onVoicePay);
+    return () => window.removeEventListener('hruvita:set-payment', onVoicePay);
+  }, []);
   const [localAddressChoice, setLocalAddressChoice] = useState('');
   const [customAddr, setCustomAddr] = useState({
     label: 'Home',

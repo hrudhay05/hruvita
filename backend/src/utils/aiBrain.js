@@ -223,6 +223,18 @@ const TOOL_DEFINITIONS = [
     parameters: { type: 'object', properties: {} },
   },
   {
+    name: 'select_payment_method',
+    description:
+      'Select payment method during checkout: "cod" for Cash on Delivery, or "razorpay" for Online Payment (UPI/Card/NetBanking/PhonePe/GPay).',
+    parameters: {
+      type: 'object',
+      properties: {
+        method: { type: 'string', enum: ['cod', 'razorpay'] },
+      },
+      required: ['method'],
+    },
+  },
+  {
     name: 'place_cod_order',
     description:
       'Place a real Cash-on-Delivery order ONLY after customer explicitly confirmed the order summary and total. For online Razorpay payment, call initiate_online_checkout instead.',
@@ -281,6 +293,7 @@ async function executeToolCall(
           : (await listProducts()).filter((p) => p.active !== false && p.stock > 0).slice(0, 6);
 
       stateAcc.recommendedProducts = finalPool.slice(0, 4).map(formatProductCard);
+      logAI('HRUVITA-PRODUCT', `${finalPool.length} matching products found`);
       result = {
         count: finalPool.length,
         products: finalPool.map((p) => ({
@@ -302,6 +315,8 @@ async function executeToolCall(
       );
       stateAcc.dbDurationMs += Date.now() - db0;
       stateAcc.recommendedProducts = items.slice(0, 4).map(formatProductCard);
+      logAI('HRUVITA-PRODUCT', `${items.length} category products found in ${slug}`);
+      logAI('HRUVITA-NAVIGATION', `Opening product category: /menu?category=${slug}`);
       stateAcc.actions.push({ type: 'NAVIGATE', to: `/menu?category=${slug}`, label: `Browse ${slug}` });
       result = {
         navigatedTo: `/menu?category=${slug}`,
@@ -321,9 +336,12 @@ async function executeToolCall(
       stateAcc.dbDurationMs += Date.now() - db0;
       const prod = all.find((p) => p.id === args.productId);
       if (!prod) {
+        logAIError('Product not found', new Error(`productId=${args.productId}`));
         result = { error: 'Product not found.' };
       } else {
         stateAcc.recommendedProducts = [formatProductCard(prod)];
+        logAI('HRUVITA-PRODUCT', `Opening product details: ${prod.name} (${prod.id})`);
+        logAI('HRUVITA-NAVIGATION', `Navigating to /product/${prod.id}`);
         stateAcc.actions.push({ type: 'NAVIGATE', to: `/product/${prod.id}`, label: `View ${prod.name}` });
         result = {
           navigatedTo: `/product/${prod.id}`,
@@ -426,6 +444,7 @@ async function executeToolCall(
           userId: user?.id || null,
         });
         logAI('HRUVITA-CHECKOUT', `Opening ${toolName === 'open_checkout' ? 'checkout' : 'cart'} page`, quote.pricing);
+        logAI('HRUVITA-NAVIGATION', 'Navigating to /cart');
         stateAcc.actions.push({ type: 'NAVIGATE', to: '/cart', label: 'Open Cart & Checkout' });
         stateAcc.actions.push({ type: 'OPEN_CART_SUGGESTION' });
         result = {
@@ -433,6 +452,7 @@ async function executeToolCall(
           navigatedTo: '/cart',
           items: quote.items.map((i) => ({ name: i.name, qty: i.qty, lineTotal: i.lineTotal })),
           pricing: quote.pricing,
+          nextStep: 'Ask customer: Cash on Delivery or Online Payment?',
         };
       }
       break;
@@ -570,6 +590,57 @@ async function executeToolCall(
         activeCoupons: coupons.map((c) => ({ code: c.code, title: c.title })),
         todaySlots: slots.filter((s) => s.available).map((s) => ({ id: s.id, name: s.name, window: s.window })),
       };
+      break;
+    }
+
+    case 'select_payment_method': {
+      const method = args.method === 'razorpay' ? 'razorpay' : 'cod';
+      const hasCatalog = Object.values(cartItems || {}).some((q) => Number(q) > 0);
+      const hasBowls = Array.isArray(customBowls) && customBowls.length > 0;
+      if (!hasCatalog && !hasBowls) {
+        result = { success: false, error: 'Cart is empty. Customer must add items first.' };
+        break;
+      }
+      const { settings } = await getCachedStaticInfo();
+      const quote = await calculateCheckoutQuote({
+        items: cartItems,
+        customBowls,
+        userId: user?.id || null,
+      });
+
+      if (method === 'cod') {
+        if (settings.codEnabled === false) {
+          logAI('HRUVITA-PAYMENT', 'COD requested but currently disabled by admin');
+          result = { success: false, codAvailable: false, error: 'Cash on Delivery is currently disabled.' };
+          break;
+        }
+        logAI('HRUVITA-PAYMENT', 'Payment method selected: cod');
+        logAI('HRUVITA-NAVIGATION', 'Navigating to /cart with COD selected');
+        stateAcc.actions.push({ type: 'SET_PAYMENT_METHOD', method: 'cod' });
+        stateAcc.actions.push({ type: 'NAVIGATE', to: '/cart', label: 'Review COD Order' });
+        result = {
+          success: true,
+          method: 'cod',
+          codAvailable: true,
+          summary: quote.items.map((i) => `${i.qty}x ${i.name} (₹${i.lineTotal})`).join(', '),
+          grandTotal: quote.pricing.grandTotal,
+          instruction: 'Show order summary and ask for explicit final confirmation before calling place_cod_order.',
+        };
+      } else {
+        logAI('HRUVITA-PAYMENT', 'Payment method selected: online (razorpay)');
+        logAI('HRUVITA-PAYMENT', 'Opening secure payment flow — awaiting gateway confirmation');
+        logAI('HRUVITA-NAVIGATION', 'Navigating to /cart for online payment');
+        stateAcc.actions.push({ type: 'SET_PAYMENT_METHOD', method: 'razorpay' });
+        stateAcc.actions.push({ type: 'NAVIGATE', to: '/cart', label: 'Complete Online Payment' });
+        result = {
+          success: true,
+          method: 'razorpay',
+          grandTotal: quote.pricing.grandTotal,
+          securityNoticeRequired: true,
+          instruction:
+            'Tell the customer politely that for security reasons we cannot guide them through the online payment process, and ask them to complete payment securely using the payment options displayed on our website. Never claim order is confirmed yet.',
+        };
+      }
       break;
     }
 
@@ -864,9 +935,10 @@ export async function processAssistantTurn({
     `Current Cart: ${cartSummary}${customBowls?.length ? ` + ${customBowls.length} custom bowl(s)` : ''}`,
     `Customer Auth: ${user ? `Signed in as ${user.fullName || user.name}` : 'Guest (not signed in)'}`,
     `CRITICAL RULES:`,
-    `1. You do NOT know product IDs, prices, or stock from memory. Whenever a customer asks for, wants, or orders food (e.g. "నాకు రెండు ఇడ్లీ ప్లేట్లు కావాలి", "I want juices", "under ₹100"), you MUST call search_products or show_category FIRST to look up real MongoDB products, then call add_to_cart with the exact productId returned by search_products if they asked to order/add.`,
-    `2. Always call open_checkout for checkout requests, view_cart for cart requests, build_custom_bowl for custom bowls, get_subscription_plans for subscriptions, get_business_info_and_offers for coupons/slots/delivery charges, and get_my_orders/track_order for order tracking.`,
-    `3. Never invent products, prices, stock, offers, or delivery slots. Never make medical claims. Never place a final order (place_cod_order / initiate_online_checkout) without explicit confirmation after reading the total.`,
+    `1. You do NOT know product IDs, prices, or stock from memory. Whenever a customer asks for food, call search_products or show_category FIRST. Whenever they ask to open/view a specific product (e.g. "ఈ ఇడ్లీ ఓపెన్ చేయండి", "open idli", "open masala dosa"), call search_products AND then IMMEDIATELY call open_product_details on the best matching single productId (preferring the main dish over combos) so the website navigates to /product/:id right away without asking first.`,
+    `2. Always call open_checkout for checkout requests, view_cart for cart requests, build_custom_bowl for ANY custom fruit bowl request or question, get_subscription_plans for subscription questions, get_business_info_and_offers for coupons/slots/delivery charges, and get_my_orders/track_order for order tracking. When proceeding to checkout/payment, ask: "${isTelugu ? 'మీరు ఏ పద్ధతిలో చెల్లించాలనుకుంటున్నారు? క్యాష్ ఆన్ డెలివరీనా లేదా ఆన్లైన్ పేమెంటా?' : 'Which payment method would you prefer: Cash on Delivery or Online Payment?'}"`,
+    `3. When customer chooses COD/Cash, call select_payment_method({ method: "cod" }), show the summary, and ask confirmation before calling place_cod_order({ confirmed: true }). When customer chooses Online/UPI/GPay/PhonePe, call select_payment_method({ method: "razorpay" }) and reply politely that for security reasons we cannot guide through online payment and they should complete payment using the secure options on our website.`,
+    `4. Never invent products, prices, stock, offers, or slots. Never collect UPI PIN, OTP, CVV, or card PIN. Never claim payment succeeded without backend gateway verification.`,
     settings.aiInstructions || '',
   ]
     .filter(Boolean)
