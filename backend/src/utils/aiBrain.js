@@ -651,30 +651,87 @@ export async function processAssistantTurn({
   }
 
   // ------------------------------------------------------------------
-  // 2. ORDER TRACKING (Authenticated Only)
+  // 2. ORDER TRACKING & ORDERS PAGE NAVIGATION (Authenticated Only)
   // ------------------------------------------------------------------
-  if (/(where is my order|order status|my order|track|delivered|ఎక్కడ ఉంది|ఆర్డర్ స్టేటస్|naa order|డెలివరీ అయిందా)/i.test(cleanMsg)) {
+  if (/(where is my order|order status|my order|my orders|order history|orders page|order page|go to orders|open orders|track|delivered|ఎక్కడ ఉంది|ఆర్డర్ స్టేటస్|naa order|నా ఆర్డర్లు|ఆర్డర్ పేజీ|డెలివరీ అయిందా)/i.test(cleanMsg)) {
     toolsUsed.push('get_order_status');
     preserveExactReply = true;
     if (!user) {
       actions.push({ type: 'NAVIGATE', to: '/login', label: 'Sign In' });
       fallbackReply = isTelugu
-        ? 'మీ ఆర్డర్ స్టేటస్ చూడటానికి దయచేసి ముందుగా మీ అకౌంట్‌లో లాగిన్ అవ్వండి.'
-        : 'Please sign in to your HRUVITA account so I can check your order status safely.';
+        ? 'మీ ఆర్డర్ల పేజీ చూడటానికి దయచేసి ముందుగా మీ అకౌంట్‌లో లాగిన్ అవ్వండి.'
+        : 'Please sign in to your HRUVITA account so I can open your orders page and check your order status.';
     } else {
       const orders = await listOrdersByUser(user.id);
+      actions.push({ type: 'NAVIGATE', to: '/dashboard', label: 'Open Orders Page' });
       if (orders.length === 0) {
         fallbackReply = isTelugu
-          ? 'మీరు ఇంకా ఏ ఆర్డర్ చేయలేదు. ఈరోజు తాజా ఫ్రూట్ బౌల్ లేదా ఇడ్లీ ఆర్డర్ చేయాలా?'
-          : 'You have not placed any orders yet. Would you like to order a fresh fruit bowl or tiffin?';
+          ? 'మీ ఆర్డర్ల పేజీ ఓపెన్ చేశాను. మీరు ఇంకా ఏ ఆర్డర్ చేయలేదు — ఈరోజు తాజా ఫ్రూట్ బౌల్ లేదా ఇడ్లీ ఆర్డర్ చేయాలా?'
+          : 'I opened your Orders page. You have not placed any orders yet — would you like to order a fresh fruit bowl or tiffin?';
       } else {
         const latest = orders[0];
-        actions.push({ type: 'NAVIGATE', to: '/dashboard', label: `View Order ${latest.id}` });
         fallbackReply = isTelugu
-          ? `మీ తాజా ఆర్డర్ ${latest.id} ప్రస్తుతం "${latest.status.replace(/_/g, ' ')}" స్థితిలో ఉంది. మొత్తం ₹${latest.pricing?.grandTotal}, డెలివరీ ${latest.scheduledDate} (${latest.slotLabel}).`
-          : `Your latest order ${latest.id} is currently ${latest.status.replace(/_/g, ' ')} for ₹${latest.pricing?.grandTotal}, scheduled on ${latest.scheduledDate} (${latest.slotLabel}).`;
+          ? `మీ ఆర్డర్ల పేజీ ఓపెన్ చేశాను. మీ తాజా ఆర్డర్ ${latest.id} ప్రస్తుతం "${latest.status.replace(/_/g, ' ')}" స్థితిలో ఉంది (₹${latest.pricing?.grandTotal}).`
+          : `I opened your Orders page. Your latest order ${latest.id} is currently ${latest.status.replace(/_/g, ' ')} for ₹${latest.pricing?.grandTotal}, scheduled on ${latest.scheduledDate} (${latest.slotLabel}).`;
       }
     }
+    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
+  }
+
+  // ------------------------------------------------------------------
+  // 2B. EXPLICIT CART / CHECKOUT PAGE NAVIGATION
+  // ------------------------------------------------------------------
+  if (/(go to cart|open cart|cart page|take me to cart|go to checkout|open checkout|checkout page|proceed to checkout|pay now|కార్ట్ ఓపెన్|చెకౌట్|కార్ట్ పేజీ)/i.test(cleanMsg)) {
+    toolsUsed.push('navigate_cart_checkout');
+    preserveExactReply = true;
+    actions.push({ type: 'NAVIGATE', to: '/cart', label: 'Open Cart & Checkout' });
+    actions.push({ type: 'OPEN_CART_SUGGESTION' });
+    const hasCatalog = Object.values(cartItems || {}).some((q) => Number(q) > 0);
+    const hasBowls = Array.isArray(customBowls) && customBowls.length > 0;
+    if (!hasCatalog && !hasBowls) {
+      fallbackReply = isTelugu
+        ? 'మీ కోసం కార్ట్ & చెకౌట్ పేజీ ఓపెన్ చేశాను! ప్రస్తుతం మీ కార్ట్ ఖాళీగా ఉంది.'
+        : 'I opened the Cart & Checkout page for you! Your cart is currently empty.';
+    } else {
+      const quote = await calculateCheckoutQuote({ items: cartItems, customBowls, userId: user?.id || null });
+      fallbackReply = isTelugu
+        ? `మీ కోసం కార్ట్ & చెకౌట్ పేజీ ఓపెన్ చేశాను. మొత్తం చెల్లించాల్సినది ₹${quote.pricing.grandTotal}.`
+        : `I opened your Cart & Checkout page! Your total is ₹${quote.pricing.grandTotal}.`;
+    }
+    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
+  }
+
+  // ------------------------------------------------------------------
+  // 2C. CLEAR CART COMMAND
+  // ------------------------------------------------------------------
+  if (/(clear cart|empty cart|remove everything|కార్ట్ ఖాళీ)/i.test(cleanMsg)) {
+    toolsUsed.push('clear_cart');
+    preserveExactReply = true;
+    actions.push({ type: 'CLEAR_CART' });
+    fallbackReply = isTelugu
+      ? 'మీ కార్ట్‌ను ఖాళీ చేశాను. కొత్తగా ఏదైనా యాడ్ చేయాలా?'
+      : 'I have cleared your cart. What would you like to add next?';
+    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
+  }
+
+  // ------------------------------------------------------------------
+  // 2D. GENERAL PAGE NAVIGATION (Menu, Home, Account, Contact, About)
+  // ------------------------------------------------------------------
+  if (/(show menu|open menu|explore menu|full menu|go to menu|menu page|what do you have|మెనూ)/i.test(cleanMsg)) {
+    toolsUsed.push('navigate_menu');
+    const picks = availableProducts.filter((p) => p.bestseller && p.stock > 0).slice(0, 4);
+    recommendedProducts = picks.map(formatProductCard);
+    actions.push({ type: 'NAVIGATE', to: '/menu', label: 'Explore Full Menu' });
+    fallbackReply = isTelugu
+      ? 'ఇదిగో మా పూర్తి మెనూ! ఇందులో టిఫిన్స్, ఫ్రూట్ బౌల్స్, జ్యూస్‌లు మరియు కాంబోలు ఉన్నాయి.'
+      : 'Here is our full menu! I also highlighted our top best sellers below.';
+    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
+  }
+
+  if (/(go home|home page|main page|హోమ్ పేజీ)/i.test(cleanMsg)) {
+    toolsUsed.push('navigate_home');
+    actions.push({ type: 'NAVIGATE', to: '/', label: 'Go to Home' });
+    fallbackReply = isTelugu ? 'హోమ్ పేజీ ఓపెన్ చేశాను.' : 'Taking you back to the HRUVITA home page.';
     return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
   }
 
@@ -843,7 +900,7 @@ export async function processAssistantTurn({
       const primary = matchedProducts[0];
       const unitP = primary.discountPrice || primary.price;
       const qty = extractQuantity(cleanMsg);
-      const directAddVerb = /(add|order|buy|cart|pettu|యాడ్|పెట్టు)/i.test(cleanMsg);
+      const directAddVerb = /(add|order|buy|cart|give me|get me|pettu|యాడ్|పెట్టు)/i.test(cleanMsg);
 
       recommendedProducts = matchedProducts.slice(0, 3).map(formatProductCard);
 
@@ -891,13 +948,28 @@ export async function processAssistantTurn({
       fallbackReply = isTelugu
         ? `తప్పకుండా! ఇవిగో ఈరోజు అందుబాటులో ఉన్న ${matchedCat.label} ఐటమ్స్.`
         : `Sure! Here are our available ${matchedCat.label} options right now.`;
+    } else if (/(delivery fee|delivery charge|free delivery|డెలివరీ ఛార్జ్|ఉచిత డెలివరీ|timing|hours|open)/i.test(cleanMsg)) {
+      toolsUsed.push('get_business_info_and_faqs');
+      fallbackReply = isTelugu
+        ? `₹${settings.freeDeliveryAbove || 199} పైన ఆర్డర్లకు డెలివరీ ఉచితం (లేదా ₹${settings.deliveryCharge || 25}). మా వేళలు: ${settings.hours}.`
+        : `Delivery is free on orders above ₹${settings.freeDeliveryAbove || 199} (otherwise ₹${settings.deliveryCharge || 25}). Our kitchen hours are ${settings.hours}.`;
+    } else if (/^(hi|hello|hey|namaste|namaskaram|good morning|good afternoon|good evening|నమస్కారం|హలో|హాయ్)(?=$|[\s.,!?])/i.test(cleanMsg)) {
+      toolsUsed.push('greeting');
+      fallbackReply = isTelugu
+        ? 'నమస్కారం! HRUVITA కి స్వాగతం. ఈరోజు మీకు టిఫిన్స్, ఫ్రూట్ బౌల్స్ లేదా ఫ్రెష్ జ్యూస్‌లలో ఏమి కావాలి?'
+        : 'Hello! Welcome to HRUVITA. What would you like to eat today — fresh fruit bowls, tiffins, or cold-pressed juices?';
+    } else if (/^(thanks|thank you|dhanyavadalu|ధన్యవాదాలు|థాంక్స్)/i.test(cleanMsg)) {
+      toolsUsed.push('courtesy');
+      fallbackReply = isTelugu
+        ? 'మీకు ధన్యవాదాలు! మీకు ఇంకేమైనా కావాలంటే నన్ను అడగండి.'
+        : "You're very welcome! Let me know anytime if you'd like to add more items or checkout.";
     } else {
       toolsUsed.push('get_business_info_and_faqs');
       const faqs = Array.isArray(settings.aiFaqs) && settings.aiFaqs.length ? settings.aiFaqs : DEFAULT_FAQS;
       toolFacts.push(`Hours: ${settings.hours}, City: ${settings.city}, FAQs: ${faqs.map((f) => `${f.q} ${f.a}`).join(' ')}`);
       fallbackReply = isTelugu
         ? `నమస్కారం! నేను HRUVITA AI. టిఫిన్స్, ఫ్రూట్ బౌల్స్, జ్యూస్‌లు వెతకడానికి, మీ సొంత బౌల్ తయారు చేయడానికి లేదా ఆర్డర్ చేయడానికి నన్ను అడగండి.`
-        : `Hello! I'm HRUVITA AI. Ask me to browse tiffins, fruit bowls, fresh juices, build a custom bowl, or track your order!`;
+        : `Hello! I'm HRUVITA AI. Ask me to browse tiffins, fruit bowls, fresh juices, build a custom bowl, open cart, or track your order!`;
     }
   }
 

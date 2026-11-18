@@ -146,7 +146,7 @@ export default function VoiceButton() {
     return null;
   }
 
-  const startListening = useCallback(
+  const beginListening = useCallback(
     (forceLang) => {
       if (typeof window === 'undefined' || !openRef.current) return;
       stopAllSpeech();
@@ -157,9 +157,14 @@ export default function VoiceButton() {
         return;
       }
 
-      if (listening && recognitionRef.current) {
-        stopListening();
-        return;
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.onend = null;
+          recognitionRef.current.onerror = null;
+          recognitionRef.current.abort();
+        } catch {
+          /* ignore */
+        }
       }
 
       const rec = new SpeechRecognition();
@@ -174,13 +179,16 @@ export default function VoiceButton() {
         if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
           showToast('Microphone permission denied. You can type your request anytime.', 'error');
           setMode('text');
-        } else if (ev.error !== 'aborted') {
+        } else if (ev.error === 'no-speech' && handsFreeRef.current && openRef.current) {
+          setTimeout(() => beginListeningRef.current(forceLang || lang), 300);
+        } else if (ev.error !== 'aborted' && ev.error !== 'no-speech') {
           showToast('Could not hear clearly. Please repeat or type below.', 'error');
         }
       };
       rec.onresult = (event) => {
         const transcript = event.results?.[0]?.[0]?.transcript || '';
         if (transcript.trim()) {
+          setListening(false);
           sendMessageRef.current(transcript);
         }
       };
@@ -192,11 +200,27 @@ export default function VoiceButton() {
         setListening(false);
       }
     },
-    [lang, listening, showToast, stopAllSpeech, stopListening]
+    [lang, showToast, stopAllSpeech]
   );
 
+  const beginListeningRef = useRef(beginListening);
+  beginListeningRef.current = beginListening;
+
+  const toggleMicManual = () => {
+    if (listening) {
+      stopListening();
+    } else {
+      beginListening(lang);
+    }
+  };
+
   const speakFemaleBrowserFallback = (text, speechLang) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      if (handsFreeRef.current && openRef.current) {
+        setTimeout(() => beginListeningRef.current(speechLang), 250);
+      }
+      return;
+    }
     const voices = window.speechSynthesis.getVoices();
     const prefix = speechLang.slice(0, 2).toLowerCase();
     const femaleMatches = voices.filter(
@@ -214,7 +238,7 @@ export default function VoiceButton() {
     // Never silently switch to a male voice — still continue hands-free listening
     if (!chosen) {
       if (handsFreeRef.current && openRef.current) {
-        setTimeout(() => startListening(speechLang), 250);
+        setTimeout(() => beginListeningRef.current(speechLang), 250);
       }
       return;
     }
@@ -227,14 +251,21 @@ export default function VoiceButton() {
     utter.onstart = () => setSpeaking(true);
     utter.onend = () => {
       setSpeaking(false);
-      if (handsFreeRef.current && openRef.current) startListening(speechLang);
+      if (handsFreeRef.current && openRef.current) {
+        setTimeout(() => beginListeningRef.current(speechLang), 250);
+      }
     };
     window.speechSynthesis.speak(utter);
   };
 
   const speakFemaleVoice = async (text, speechLang) => {
     setLastSpoken({ text, lang: speechLang });
-    if (muted || !text) return;
+    if (muted || !text) {
+      if (handsFreeRef.current && openRef.current) {
+        setTimeout(() => beginListeningRef.current(speechLang), 300);
+      }
+      return;
+    }
     stopAllSpeech();
 
     try {
@@ -262,7 +293,7 @@ export default function VoiceButton() {
         setSpeaking(false);
         setPausedAudio(false);
         if (handsFreeRef.current && openRef.current) {
-          setTimeout(() => startListening(speechLang), 250);
+          setTimeout(() => beginListeningRef.current(speechLang), 250);
         }
       };
       await audio.play();
@@ -467,7 +498,7 @@ export default function VoiceButton() {
                   className={`voice-mode-pill ${mode === m.id ? 'voice-mode-active' : ''}`.trim()}
                   onClick={() => {
                     setMode(m.id);
-                    if (m.id === 'handsfree') startListening(lang);
+                    if (m.id === 'handsfree') beginListening(lang);
                     else if (m.id === 'text') stopListening();
                   }}
                 >
@@ -636,7 +667,7 @@ export default function VoiceButton() {
               <button
                 type="button"
                 className={`voice-mic-btn ${listening ? 'voice-mic-listening' : ''}`.trim()}
-                onClick={() => startListening(lang)}
+                onClick={toggleMicManual}
                 aria-label={listening ? 'Stop listening' : 'Speak in Telugu or English'}
                 title={listening ? 'Listening... tap to stop' : 'Tap to speak'}
               >
@@ -677,8 +708,14 @@ export default function VoiceButton() {
           if (!open) {
             setOpen(true);
             setMinimized(false);
+            if (mode === 'handsfree') {
+              setTimeout(() => beginListeningRef.current(lang), 350);
+            }
           } else if (minimized) {
             setMinimized(false);
+            if (mode === 'handsfree') {
+              setTimeout(() => beginListeningRef.current(lang), 350);
+            }
           } else {
             setOpen(false);
           }
