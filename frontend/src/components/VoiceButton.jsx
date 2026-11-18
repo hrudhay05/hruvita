@@ -11,6 +11,7 @@ import {
   FiShoppingBag,
   FiSliders,
   FiSquare,
+  FiTerminal,
   FiVolume2,
   FiVolumeX,
   FiX,
@@ -36,8 +37,25 @@ export default function VoiceButton() {
   const navigate = useNavigate();
   const { items, customBowls, add, setQty, addCustomBowl, clear } = useCart();
   const { settings } = useCatalog();
-  const { user, selectedAddressId } = useAuth();
+  const { user, isAdmin, selectedAddressId, setSelectedAddressId } = useAuth();
   const { showToast } = useToast();
+
+  const canSeeDebug = import.meta.env.DEV || Boolean(isAdmin);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugInfo, setDebugInfo] = useState({
+    aiStatus: 'ready',
+    provider: '-',
+    model: '-',
+    sttStatus: typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition) ? 'WebSpeech Ready' : 'Fallback',
+    ttsStatus: 'ShrutiNeural / NeerjaNeural',
+    detectedLanguage: 'en-IN',
+    aiDurationMs: 0,
+    ttsDurationMs: 0,
+    totalDurationMs: 0,
+    latestTool: '-',
+    apiStatus: '200',
+    latestError: '-',
+  });
 
   const [open, setOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
@@ -74,6 +92,7 @@ export default function VoiceButton() {
   const messagesEndRef = useRef(null);
   const handsFreeRef = useRef(false);
   const openRef = useRef(false);
+  const voiceActiveRef = useRef(false);
 
   useEffect(() => {
     handsFreeRef.current = mode === 'handsfree';
@@ -116,6 +135,7 @@ export default function VoiceButton() {
 
   useEffect(() => {
     if (!open || minimized) {
+      voiceActiveRef.current = false;
       stopListening();
       if (!open) stopAllSpeech();
     }
@@ -188,6 +208,7 @@ export default function VoiceButton() {
       rec.onresult = (event) => {
         const transcript = event.results?.[0]?.[0]?.transcript || '';
         if (transcript.trim()) {
+          voiceActiveRef.current = true;
           setListening(false);
           sendMessageRef.current(transcript);
         }
@@ -208,8 +229,10 @@ export default function VoiceButton() {
 
   const toggleMicManual = () => {
     if (listening) {
+      voiceActiveRef.current = false;
       stopListening();
     } else {
+      voiceActiveRef.current = true;
       beginListening(lang);
     }
   };
@@ -269,6 +292,8 @@ export default function VoiceButton() {
     stopAllSpeech();
 
     try {
+      const tts0 = Date.now();
+      if (canSeeDebug) console.log('[HRUVITA-TTS] Requesting female voice:', speechLang);
       const resp = await fetch(`${API_BASE}/api/assistant/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -276,6 +301,14 @@ export default function VoiceButton() {
       });
 
       if (!resp.ok) throw new Error('Neural TTS unavailable');
+      const ttsDur = Date.now() - tts0;
+      const voiceProvider = resp.headers.get('x-voice-provider') || 'edge-neural';
+      setDebugInfo((prev) => ({
+        ...prev,
+        ttsStatus: `${voiceProvider} (${resp.headers.get('x-voice-id') || speechLang})`,
+        ttsDurationMs: ttsDur,
+      }));
+      if (canSeeDebug) console.log(`[HRUVITA-TTS] Audio ready in ${ttsDur}ms`);
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       audioUrlRef.current = url;
@@ -292,7 +325,7 @@ export default function VoiceButton() {
       audio.onended = () => {
         setSpeaking(false);
         setPausedAudio(false);
-        if (handsFreeRef.current && openRef.current) {
+        if (handsFreeRef.current && voiceActiveRef.current && openRef.current) {
           setTimeout(() => beginListeningRef.current(speechLang), 250);
         }
       };
@@ -332,6 +365,8 @@ export default function VoiceButton() {
     const clean = String(textToSend || '').trim();
     if (!clean || busy) return;
 
+    const turn0 = Date.now();
+    if (canSeeDebug) console.log('[HRUVITA-AI] Sending customer message:', clean);
     setInput('');
     setMessages((prev) => [...prev, { role: 'user', text: clean, actions: [], products: [] }]);
     setBusy(true);
@@ -355,21 +390,51 @@ export default function VoiceButton() {
       // Execute safe structured website & cart actions
       for (const act of data.actions || []) {
         if (act.type === 'ADD_TO_CART' && act.productId) {
+          if (canSeeDebug) console.log('[HRUVITA-CART] Adding product:', act.productId, 'x', act.qty || 1);
           add(act.productId, act.qty || 1);
           showToast(`Added ${act.qty || 1} × ${act.productName} to cart.`);
         } else if (act.type === 'UPDATE_CART_QTY' && act.productId) {
+          if (canSeeDebug) console.log('[HRUVITA-CART] Updating qty:', act.productId, '->', act.qty);
           setQty(act.productId, act.qty ?? 0);
           showToast(`Updated ${act.productName} quantity to ${act.qty}.`);
         } else if (act.type === 'ADD_CUSTOM_BOWL' && act.bowl) {
+          if (canSeeDebug) console.log('[HRUVITA-CART] Adding custom bowl:', act.bowl.name);
           addCustomBowl(act.bowl);
           showToast(`Added ${act.bowl.name} to cart.`);
+        } else if (act.type === 'SELECT_ADDRESS' && act.addressId) {
+          setSelectedAddressId(act.addressId);
+          showToast('Delivery address selected.');
         } else if (act.type === 'CLEAR_CART') {
+          if (canSeeDebug) console.log('[HRUVITA-CART] Clearing cart');
           clear();
         } else if (act.type === 'NAVIGATE' && act.to) {
+          if (canSeeDebug) console.log('[HRUVITA-CHECKOUT] Navigating to:', act.to);
           navigate(act.to);
         } else if (act.type === 'OPEN_RAZORPAY_CHECKOUT') {
+          if (canSeeDebug) console.log('[HRUVITA-CHECKOUT] Opening Razorpay checkout page');
           navigate('/cart');
         }
+      }
+
+      if (data.debug) {
+        setDebugInfo((prev) => ({
+          ...prev,
+          aiStatus: data.debug.errorCode ? `Degraded (${data.debug.errorCode})` : 'Connected',
+          provider: data.debug.provider,
+          model: data.debug.model,
+          detectedLanguage: data.debug.detectedLanguage,
+          aiDurationMs: data.debug.aiDurationMs,
+          totalDurationMs: data.debug.totalDurationMs,
+          latestTool: (data.debug.toolsCalled || []).join(', ') || 'none',
+          apiStatus: '200 OK',
+          latestError: data.debug.errorMessage || '-',
+        }));
+      }
+      if (canSeeDebug) {
+        console.log(`[HRUVITA-PERFORMANCE] Total roundtrip: ${Date.now() - turn0} ms`, {
+          tools: data.toolsUsed,
+          language: data.language,
+        });
       }
 
       const replyLang = data.language || lang;
@@ -386,6 +451,13 @@ export default function VoiceButton() {
 
       await speakFemaleVoice(data.reply, replyLang);
     } catch (err) {
+      if (canSeeDebug) console.error('[HRUVITA-ERROR] Chat error:', err.message);
+      setDebugInfo((prev) => ({
+        ...prev,
+        aiStatus: 'Error',
+        apiStatus: 'Error',
+        latestError: err.message || 'Request failed',
+      }));
       setMessages((prev) => [
         ...prev,
         {
@@ -463,6 +535,17 @@ export default function VoiceButton() {
               >
                 {muted ? <FiVolumeX size={14} /> : <FiVolume2 size={14} />}
               </button>
+              {canSeeDebug && (
+                <button
+                  type="button"
+                  className={`voice-icon-small ${debugOpen ? 'voice-lang-active' : ''}`.trim()}
+                  onClick={() => setDebugOpen((d) => !d)}
+                  aria-label="Toggle AI Debug Panel"
+                  title="Developer AI Debug Panel"
+                >
+                  <FiTerminal size={13} />
+                </button>
+              )}
               <button
                 type="button"
                 className="voice-icon-small"
@@ -524,6 +607,17 @@ export default function VoiceButton() {
               <FiSliders size={11} /> {personalization ? 'Personal' : 'Guest'}
             </button>
           </div>
+
+          {/* Developer / Admin-Only AI Debug Panel */}
+          {canSeeDebug && debugOpen && (
+            <div className="voice-debug-panel" aria-label="AI Debug Panel">
+              <div><strong>AI:</strong> {debugInfo.aiStatus} ({debugInfo.provider}/{debugInfo.model})</div>
+              <div><strong>STT / TTS:</strong> {debugInfo.sttStatus} &bull; {debugInfo.ttsStatus}</div>
+              <div><strong>Lang / Tools:</strong> {debugInfo.detectedLanguage} &bull; {debugInfo.latestTool}</div>
+              <div><strong>Latency:</strong> AI {debugInfo.aiDurationMs}ms | TTS {debugInfo.ttsDurationMs}ms | Total {debugInfo.totalDurationMs}ms</div>
+              <div><strong>Status / Err:</strong> {debugInfo.apiStatus} | {debugInfo.latestError}</div>
+            </div>
+          )}
 
           {/* Animated Audio Waveform & Playback Controls */}
           {(speaking || pausedAudio || lastSpoken.text) && (
@@ -660,6 +754,7 @@ export default function VoiceButton() {
             className="voice-input-bar"
             onSubmit={(e) => {
               e.preventDefault();
+              voiceActiveRef.current = false;
               sendMessage(input);
             }}
           >

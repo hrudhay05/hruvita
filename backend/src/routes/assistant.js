@@ -12,6 +12,7 @@ import {
 import { ACCESS_COOKIE_NAME, requireAuth, requireRole } from '../middleware/auth.js';
 import { processAssistantTurn, DEFAULT_FAQS } from '../utils/aiBrain.js';
 import { synthesizeFemaleSpeech, FEMALE_VOICE_CONFIG } from '../utils/ttsService.js';
+import { createRequestId, logAI, logAIError } from '../utils/aiLogger.js';
 
 const router = Router();
 
@@ -47,7 +48,24 @@ router.get('/config', async (_req, res) => {
   });
 });
 
-// Personalized welcome greeting (respects personalization=0 opt-out)
+// Developer / Admin-only AI Debug Status
+router.get('/debug', async (req, res) => {
+  const user = await getOptionalUser(req);
+  if (process.env.NODE_ENV === 'production' && user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Debug status is restricted to admins in production.' });
+  }
+  return res.json({
+    aiConnected: Boolean(process.env.GROQ_API_KEY?.trim() || process.env.GEMINI_API_KEY?.trim()),
+    primaryProvider: process.env.GROQ_API_KEY?.trim() ? 'groq' : process.env.GEMINI_API_KEY?.trim() ? 'gemini' : 'none',
+    aiModel: process.env.AI_MODEL?.trim() || 'openai/gpt-oss-20b',
+    fallbackModel: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
+    sttConfigured: Boolean(process.env.GROQ_API_KEY?.trim()),
+    ttsProvider: process.env.ELEVENLABS_API_KEY?.trim() ? 'elevenlabs+edge-neural' : 'edge-neural',
+    voices: FEMALE_VOICE_CONFIG,
+  });
+});
+
+// Personalized welcome greeting
 router.get('/greeting', async (req, res) => {
   const lang = req.query.lang === 'te-IN' ? 'te-IN' : 'en-IN';
   const personalization = req.query.personalization !== '0';
@@ -82,6 +100,8 @@ router.get('/greeting', async (req, res) => {
 });
 
 router.post('/chat', async (req, res) => {
+  const requestId = createRequestId();
+  const reqStart = Date.now();
   try {
     const settings = await getSettings();
     if (settings.aiEnabled === false) {
@@ -96,7 +116,6 @@ router.post('/chat', async (req, res) => {
       customBowls = [],
       selectedAddressId = '',
       slotId = 'morning',
-      paymentMethod = 'cod',
       personalizationEnabled = true,
     } = req.body || {};
 
@@ -105,8 +124,9 @@ router.post('/chat', async (req, res) => {
     }
 
     const user = await getOptionalUser(req);
+    logAI('HRUVITA-API', `POST /api/assistant/chat [${requestId}] user=${user ? user.id : 'guest'}`);
+
     const existingConv = conversationId ? await getConversationById(conversationId) : null;
-    const sessionState = existingConv?.sessionState || { pendingIntent: null, customBowlDraft: null };
     const history = existingConv?.messages || [];
 
     const result = await processAssistantTurn({
@@ -117,9 +137,7 @@ router.post('/chat', async (req, res) => {
       customBowls,
       selectedAddressId,
       slotId,
-      paymentMethod,
       personalizationEnabled,
-      sessionState,
       history,
     });
 
@@ -135,39 +153,51 @@ router.post('/chat', async (req, res) => {
       sessionState: result.sessionState,
     });
 
+    const allowDebug = process.env.NODE_ENV !== 'production' || user?.role === 'admin';
+    logAI('HRUVITA-API', `200 OK [${requestId}] total=${Date.now() - reqStart}ms`);
+
     return res.json({
+      requestId,
       conversationId: conv.id,
       reply: result.reply,
       language: result.language,
       toolsUsed: result.toolsUsed,
       actions: result.actions,
       recommendedProducts: result.recommendedProducts || [],
+      ...(allowDebug ? { debug: result.debug } : {}),
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message || 'Assistant could not process request.' });
+    logAIError(`POST /api/assistant/chat [${requestId}] failed`, err);
+    return res.status(500).json({ error: 'Assistant could not process request.', requestId });
   }
 });
 
-// Natural Female Voice TTS Endpoint (te-IN-ShrutiNeural / en-IN-NeerjaNeural)
+// Natural Female Voice TTS Endpoint
 router.post('/tts', async (req, res) => {
+  const t0 = Date.now();
   try {
     const { text, language = 'en-IN' } = req.body || {};
     if (!text || !String(text).trim()) {
       return res.status(400).json({ error: 'Text is required for TTS.' });
     }
     const audio = await synthesizeFemaleSpeech({ text: String(text), language });
+    const dur = Date.now() - t0;
+    logAI('HRUVITA-TTS', `Synthesized ${language} female audio (${audio.voiceId}, ${audio.provider}) in ${dur}ms`);
     res.setHeader('Content-Type', audio.contentType);
     res.setHeader('X-Voice-Id', audio.voiceId);
     res.setHeader('X-Voice-Provider', audio.provider);
+    res.setHeader('X-TTS-Duration-Ms', String(dur));
     res.setHeader('Cache-Control', 'no-store');
     return res.send(audio.buffer);
   } catch (err) {
+    logAIError('TTS synthesis failed', err);
     return res.status(502).json({ error: err.message || 'Could not synthesize voice.' });
   }
 });
 
-// Optional Whisper STT fallback for browsers without Web Speech API (requires GROQ_API_KEY)
+// Whisper STT fallback endpoint (requires GROQ_API_KEY)
 router.post('/stt', async (req, res) => {
+  const t0 = Date.now();
   try {
     const groqKey = process.env.GROQ_API_KEY?.trim();
     if (!groqKey) {
@@ -190,17 +220,20 @@ router.post('/stt', async (req, res) => {
       headers: { Authorization: `Bearer ${groqKey}` },
       body: formData,
     });
+    const dur = Date.now() - t0;
     if (!resp.ok) {
+      logAIError(`STT HTTP ${resp.status}`, new Error('Groq Whisper failed'));
       return res.status(502).json({ error: 'Speech-to-text transcription failed.' });
     }
     const data = await resp.json();
-    return res.json({ text: data.text || '' });
+    logAI('HRUVITA-STT', `Whisper transcribed in ${dur}ms`);
+    return res.json({ text: data.text || '', durationMs: dur });
   } catch (err) {
+    logAIError('STT endpoint error', err);
     return res.status(500).json({ error: err.message || 'STT error.' });
   }
 });
 
-// Admin conversation history view
 router.get('/conversations', requireAuth, requireRole('admin', 'staff'), async (_req, res) => {
   const conversations = await listConversations(40);
   res.json({ conversations });

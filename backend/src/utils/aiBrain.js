@@ -5,7 +5,9 @@ import {
   listSlotsForDate,
   listPlans,
   listOrdersByUser,
+  getOrderById,
   listAddressesByUser,
+  getAddressByIdForUser,
   getDynamicBowlOptions,
   calculateCheckoutQuote,
   deductOrderStockAtomically,
@@ -17,154 +19,49 @@ import {
 } from '../store/repository.js';
 import { computeCustomBowlPrice } from '../data/bowlOptions.js';
 import { sendUserNotification } from './emailService.js';
+import { logAI, logAIError } from './aiLogger.js';
 
 export const DEFAULT_FAQS = [
   {
     q: 'What are your delivery slots?',
-    a: 'We deliver in Morning (6:30–9:00 AM), Afternoon (12:30–2:30 PM), and Evening (6:30–8:30 PM) slots.',
+    a: 'Morning (6:30–9:00 AM), Afternoon (12:30–2:30 PM), and Evening (6:30–8:30 PM).',
   },
   {
     q: 'Is delivery free?',
-    a: 'Yes! Delivery is free on all orders above ₹199. Below ₹199, a ₹25 delivery fee applies.',
+    a: 'Yes! Delivery is free above ₹199; otherwise ₹25 delivery fee applies.',
   },
   {
     q: 'Can I pause my breakfast subscription?',
-    a: 'Yes, you can pause or resume your 7, 15, or 30-day breakfast subscription anytime before 10 PM the previous day.',
-  },
-  {
-    q: 'Are your fruit bowls and juices preservative-free?',
-    a: 'Every fruit bowl and cold-pressed juice is prepared fresh daily with zero preservatives.',
+    a: 'Yes, pause or resume anytime before 10 PM the previous day.',
   },
 ];
 
-// Telugu / Tenglish / English keyword mapping to English search terms
-const TELUGU_ALIASES = [
-  [/ఇడ్లీలు|ఇడ్లీ|idlis|idlys|idly|idli/i, 'idli'],
-  [/దోసెలు|దోసలు|దోస|దోశ|dosas|dosa/i, 'dosa'],
-  [/పొంగల్|pongal/i, 'pongal'],
-  [/ఉప్మా|upma/i, 'upma'],
-  [/మిక్స్‌డ్ ఫ్రూట్|mixed fruit/i, 'mixed fruit bowl'],
-  [/ఎక్సోటిక్|exotic/i, 'exotic seasonal fruit bowl'],
-  [/ఫ్రూట్ బౌల్స్|ఫ్రూట్ బౌల్|పండ్ల|fruit bowls|fruit bowl|bowls|bowl/i, 'fruit bowl'],
-  [/ఆరెంజ్|నారింజ|orange/i, 'orange'],
-  [/పుచ్చకాయ|watermelon/i, 'watermelon'],
-  [/దానిమ్మ|pomegranate/i, 'pomegranate'],
-  [/అరటి|banana/i, 'banana'],
-  [/మామిడి|mango/i, 'mango'],
-  [/పాలు|milk/i, 'milk'],
-  [/పెరుగు|curd/i, 'curd'],
-  [/పనీర్|paneer/i, 'paneer'],
-  [/రాగి|ragi/i, 'ragi'],
-  [/కాంబో|combos|combo/i, 'combo'],
-  [/మొలకలు|sprouts|salad/i, 'sprouts'],
-  [/భోజనం|లంచ్|thali|lunch|meals/i, 'thali'],
-  [/జ్యూసులు|జ్యూస్|juices|juice/i, 'juice'],
-  [/స్మూతీలు|స్మూతీ|smoothies|smoothie/i, 'smoothie'],
-];
-
-const CATEGORY_ALIASES = [
-  { slug: 'tiffins', label: 'Tiffins & Breakfast', regex: /(tiffin|tiffins|breakfast|టిఫిన్|టిఫిన్స్|బ్రేక్‌ఫాస్ట్)/i },
-  { slug: 'fruit-bowls', label: 'Fruit Bowls', regex: /(fruit bowl|fruit bowls|పండ్ల బౌల్|ఫ్రూట్ బౌల్స్|ఫ్రూట్ బౌల్)/i },
-  { slug: 'juices', label: 'Fresh Juices', regex: /(juice|juices|జ్యూస్|జ్యూసులు|జ్యూస్‌లు|beverages)/i },
-  { slug: 'smoothies', label: 'Smoothies', regex: /(smoothie|smoothies|స్మూతీ)/i },
-  { slug: 'dairy', label: 'Dairy', regex: /(dairy|milk|curd|paneer|పాలు|పెరుగు)/i },
-  { slug: 'healthy-drinks', label: 'Healthy Drinks', regex: /(healthy drink|ragi|రాగి|హెల్దీ డ్రింక్)/i },
-  { slug: 'combos', label: 'Combos', regex: /(combos|combo|కాంబో)/i },
-  { slug: 'lunch', label: 'Lunch', regex: /(lunch|thali|meals|లంచ్|భోజనం)/i },
-  { slug: 'snacks', label: 'Healthy Snacks', regex: /(snack|snacks|sprouts|salad|స్నాక్స్|మొలకలు)/i },
-];
-
-function extractQuantity(text) {
-  const numMatch = text.match(/\b([1-9][0-9]?)\b/);
-  if (numMatch) return Math.min(20, Number(numMatch[1]));
-  if (/(ఒకటి|ఒక|oka|okati|one|single)(?=$|[\s.,!?])/i.test(text)) return 1;
-  if (/(రెండు|rendu|two)/i.test(text)) return 2;
-  if (/(మూడు|mudu|moodu|three)/i.test(text)) return 3;
-  if (/(నాలుగు|nalugu|four)/i.test(text)) return 4;
-  if (/(ఐదు|aidu|five)/i.test(text)) return 5;
-  return null;
+// 60-second cache ONLY for static business info (never cache cart, stock, or orders)
+let staticCache = { ts: 0, settings: null, categories: null, plans: null };
+async function getCachedStaticInfo() {
+  const now = Date.now();
+  if (staticCache.settings && now - staticCache.ts < 60_000) {
+    return staticCache;
+  }
+  const [settings, categories, plans] = await Promise.all([
+    getSettings(),
+    listCategories(),
+    listPlans(),
+  ]);
+  staticCache = { ts: now, settings, categories, plans };
+  return staticCache;
 }
 
 export function detectLanguage(text, requestedLang = 'en-IN') {
   if (/[\u0C00-\u0C7F]/.test(text)) return 'te-IN';
   if (
-    /(cheyandi|kavali|enti|unnaya|entha|pettu|add chey|namaskaram|bagunda|naku|naa|avunu|vaddu|chalu|tiffin|pampandi|akali|karam|teliyatledu|em tinalo|okati|rendu|moodu)/i.test(
+    /(cheyandi|kavali|enti|unnaya|entha|pettu|add chey|namaskaram|bagunda|naku|naa|avunu|vaddu|chalu|tiffin|pampandi|akali|karam|teliyatledu|em tinalo|okati|rendu|moodu|ekkada|undi)/i.test(
       text
     )
   ) {
     return 'te-IN';
   }
   return requestedLang === 'te-IN' ? 'te-IN' : 'en-IN';
-}
-
-function isAffirmative(text) {
-  return /^(yes|yeah|yep|yup|ok|okay|sure|confirm|proceed|go ahead|do it|add it|ha|haa|అవును|సరే|కన్ఫర్మ్|ఓకే|చేయండి|యాడ్ చేయండి)(?=$|[\s.,!?])/i.test(
-    text.trim()
-  ) || /(yes,?\s*confirm|confirm my order|yes please|అవును.*చేయండి|ఆర్డర్ కన్ఫర్మ్)/i.test(text);
-}
-
-function isNegative(text) {
-  return /^(no|nope|cancel|stop|never mind|don't|dont|వద్దు|క్యాన్సిల్|ఆపండి)(?=$|[\s.,!?])/i.test(text.trim()) ||
-    /(cancel order|cancel my order|do not place|వద్దు)/i.test(text);
-}
-
-function matchProductsFromText(text, allProducts) {
-  const lowered = text.toLowerCase();
-  const wantsCombo = /(combo|కాంబో|\+)/i.test(text);
-  const matchedTerms = [];
-  for (const [regex, term] of TELUGU_ALIASES) {
-    if (regex.test(text)) matchedTerms.push(term);
-  }
-
-  const hits = allProducts.filter((p) => {
-    const hay = `${p.name} ${p.category} ${p.description}`.toLowerCase();
-    if (matchedTerms.some((t) => hay.includes(t))) return true;
-    const words = lowered.split(/\s+/).filter((w) => w.length >= 4);
-    return words.some((w) => p.name.toLowerCase().includes(w));
-  });
-
-  return hits.sort((a, b) => {
-    const aCombo = a.category === 'combos' ? 1 : 0;
-    const bCombo = b.category === 'combos' ? 1 : 0;
-    if (!wantsCombo && aCombo !== bCombo) return aCombo - bCombo;
-    const aNameHit = matchedTerms.some((t) => a.name.toLowerCase().startsWith(t)) ? 1 : 0;
-    const bNameHit = matchedTerms.some((t) => b.name.toLowerCase().startsWith(t)) ? 1 : 0;
-    return bNameHit - aNameHit;
-  });
-}
-
-function matchIngredientsFromText(text, pool = []) {
-  const lowered = text.toLowerCase();
-  const matched = [];
-  const fruitAliases = {
-    apple: /(apple|యాపిల్)/i,
-    banana: /(banana|అరటి)/i,
-    pomegranate: /(pomegranate|దానిమ్మ)/i,
-    papaya: /(papaya|బొప్పాయి)/i,
-    watermelon: /(watermelon|పుచ్చకాయ)/i,
-    pineapple: /(pineapple|అనాస)/i,
-    mango: /(mango|మామిడి)/i,
-    kiwi: /(kiwi|కివీ)/i,
-    dragonfruit: /(dragon|డ్రాగన్)/i,
-    chia: /(chia|చియా)/i,
-    pumpkin: /(pumpkin|గుమ్మడి)/i,
-    almonds: /(almond|almonds|బాదం|nuts)/i,
-    walnuts: /(walnut|walnuts|వాల్‌నట్)/i,
-    granola: /(granola|గ్రానోలా)/i,
-    flax: /(flax|అవిసె)/i,
-    honey: /(honey|తేనె)/i,
-    yogurt: /(yogurt|curd|పెరుగు)/i,
-    'mint-lime': /(mint|lime|పుదీనా)/i,
-    cinnamon: /(cinnamon|దాల్చిన)/i,
-  };
-
-  for (const ing of pool) {
-    const aliasRe = fruitAliases[ing.id];
-    if (lowered.includes(ing.id.toLowerCase()) || lowered.includes(ing.name.toLowerCase()) || (aliasRe && aliasRe.test(text))) {
-      matched.push(ing.id);
-    }
-  }
-  return [...new Set(matched)];
 }
 
 function formatProductCard(p) {
@@ -177,451 +74,544 @@ function formatProductCard(p) {
     image: p.image,
     stock: p.stock,
     veg: p.veg,
+    description: p.description || '',
   };
 }
 
-async function callOptionalFreeLlm({ userMessage, lang, toolContext, history = [], settings }) {
-  const groqKey = process.env.GROQ_API_KEY?.trim();
-  const geminiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!groqKey && !geminiKey) return null;
-
-  const systemPrompt = [
-    `You are ${settings.aiName || 'HRUVITA AI'}, a warm, sweet, polite female food-ordering representative for ${settings.name || 'HRUVITA'} in ${settings.city || 'Hyderabad'}.`,
-    lang === 'te-IN'
-      ? 'Reply warmly in natural, friendly spoken Telugu (clear Telugu script). Keep responses concise (1-3 sentences) for natural voice playback.'
-      : 'Reply warmly in friendly, pleasant Indian English (1-3 sentences) suitable for natural female voice playback.',
-    'STRICT SAFETY RULES: Only state real items, prices, totals, stock, slots, and order statuses from Tool Context. Never invent prices, items, or orders. Never make medical claims. Never ask for UPI PINs or card CVVs. Keep any exact rupee totals and confirmation questions intact.',
-    settings.aiInstructions || '',
-    `\nTool Context:\n${toolContext}`,
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  const recentMsgs = (history || []).slice(-6).map((m) => ({
-    role: m.role === 'assistant' ? 'assistant' : 'user',
-    content: m.text,
-  }));
-
-  if (groqKey) {
-    try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${groqKey}`,
-          'Content-Type': 'application/json',
+// ============================================================
+// TOOL DEFINITIONS FOR REAL AI FUNCTION CALLING
+// ============================================================
+const TOOL_DEFINITIONS = [
+  {
+    name: 'search_products',
+    description:
+      'Search real available HRUVITA food products in MongoDB by keyword, category slug (tiffins, fruit-bowls, juices, smoothies, dairy, healthy-drinks, combos, lunch, snacks), or maxPrice.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Dish name or keyword in English (e.g. idli, dosa, fruit bowl, orange juice, spicy, breakfast).' },
+        category: { type: 'string', description: 'Optional category slug: tiffins, fruit-bowls, juices, smoothies, dairy, healthy-drinks, combos, lunch, snacks.' },
+        maxPrice: { type: 'number', description: 'Optional maximum price in INR (e.g. 100).' },
+      },
+    },
+  },
+  {
+    name: 'show_category',
+    description: 'Navigate the website to a food category page and display its real available products.',
+    parameters: {
+      type: 'object',
+      properties: {
+        category: {
+          type: 'string',
+          description: 'Category slug: tiffins, fruit-bowls, juices, smoothies, dairy, healthy-drinks, combos, lunch, snacks.',
         },
-        body: JSON.stringify({
-          model: process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
-          temperature: 0.35,
-          max_tokens: 200,
-          messages: [{ role: 'system', content: systemPrompt }, ...recentMsgs, { role: 'user', content: userMessage }],
-        }),
+      },
+      required: ['category'],
+    },
+  },
+  {
+    name: 'open_product_details',
+    description: 'Get real details (price, stock, ingredients, diet tags) for a specific product and open its product page.',
+    parameters: {
+      type: 'object',
+      properties: {
+        productId: { type: 'string', description: 'Exact product ID such as p1, p2, p5.' },
+      },
+      required: ['productId'],
+    },
+  },
+  {
+    name: 'add_to_cart',
+    description: 'Add a verified product and quantity to the customer cart after checking stock.',
+    parameters: {
+      type: 'object',
+      properties: {
+        productId: { type: 'string', description: 'Exact product ID from search_products.' },
+        quantity: { type: 'number', description: 'Quantity to add (1 to 20).' },
+      },
+      required: ['productId', 'quantity'],
+    },
+  },
+  {
+    name: 'update_cart_quantity',
+    description: 'Update quantity of a product already in the cart (set quantity=0 to remove).',
+    parameters: {
+      type: 'object',
+      properties: {
+        productId: { type: 'string' },
+        quantity: { type: 'number' },
+      },
+      required: ['productId', 'quantity'],
+    },
+  },
+  {
+    name: 'remove_from_cart',
+    description: 'Remove a product completely from the cart.',
+    parameters: {
+      type: 'object',
+      properties: {
+        productId: { type: 'string' },
+      },
+      required: ['productId'],
+    },
+  },
+  {
+    name: 'view_cart',
+    description: 'View current cart items, server-calculated subtotal, delivery charge, GST, and grand total, and open the cart page.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'open_checkout',
+    description:
+      'Check if the cart has items. If non-empty, open the checkout page and return the exact server-calculated total. If empty, report empty cart.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_saved_addresses',
+    description: 'Retrieve saved delivery addresses for the logged-in customer.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'select_delivery_address',
+    description: 'Select a saved delivery address owned by the logged-in customer.',
+    parameters: {
+      type: 'object',
+      properties: {
+        addressId: { type: 'string' },
+      },
+      required: ['addressId'],
+    },
+  },
+  {
+    name: 'get_subscription_plans',
+    description: 'Retrieve live 7, 15, and 30-day breakfast subscription plans and open the Subscriptions page.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'build_custom_bowl',
+    description:
+      'Inspect live bowl options or create a custom fruit bowl with real DB ingredient pricing. Pass addToCart=true only after customer confirms.',
+    parameters: {
+      type: 'object',
+      properties: {
+        sizeId: { type: 'string', description: 'small, medium, or large' },
+        fruitIds: { type: 'array', items: { type: 'string' }, description: 'e.g. ["apple","banana","pomegranate"]' },
+        toppingIds: { type: 'array', items: { type: 'string' }, description: 'e.g. ["almonds","chia"]' },
+        extraIds: { type: 'array', items: { type: 'string' }, description: 'e.g. ["honey","yogurt"]' },
+        addToCart: { type: 'boolean', description: 'Set true only when customer explicitly asks to add the custom bowl to cart.' },
+      },
+    },
+  },
+  {
+    name: 'get_my_orders',
+    description: 'Retrieve authenticated customer order history and open the Orders dashboard.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'track_order',
+    description: 'Track latest order or a specific order ID for the authenticated customer.',
+    parameters: {
+      type: 'object',
+      properties: {
+        orderId: { type: 'string', description: 'Optional order ID.' },
+      },
+    },
+  },
+  {
+    name: 'get_business_info_and_offers',
+    description: 'Retrieve real active coupon codes, delivery fees, free delivery threshold, kitchen hours, and today delivery slots.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'place_cod_order',
+    description:
+      'Place a real Cash-on-Delivery order ONLY after customer explicitly confirmed the order summary and total. For online Razorpay payment, call initiate_online_checkout instead.',
+    parameters: {
+      type: 'object',
+      properties: {
+        confirmed: { type: 'boolean', description: 'Must be true only after explicit customer confirmation.' },
+      },
+      required: ['confirmed'],
+    },
+  },
+  {
+    name: 'initiate_online_checkout',
+    description: 'Open checkout and initiate Razorpay online payment popup after explicit customer confirmation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        confirmed: { type: 'boolean' },
+      },
+      required: ['confirmed'],
+    },
+  },
+];
+
+// ============================================================
+// SECURE BACKEND TOOL EXECUTOR
+// ============================================================
+async function executeToolCall(
+  toolName,
+  args = {},
+  ctx,
+  stateAcc
+) {
+  const t0 = Date.now();
+  logAI('HRUVITA-TOOLS', `Tool selected: ${toolName}`, args);
+
+  const { user, cartItems, customBowls, selectedAddressId, slotId, vegOnly } = ctx;
+  let result = {};
+
+  switch (toolName) {
+    case 'search_products': {
+      const db0 = Date.now();
+      const all = await listProducts({
+        q: args.query || '',
+        category: args.category || '',
+        max: args.maxPrice || 0,
       });
-      if (res.ok) {
-        const data = await res.json();
-        const reply = data.choices?.[0]?.message?.content?.trim();
-        if (reply) return reply;
-      }
-    } catch {
-      // fall through
-    }
-  }
+      stateAcc.dbDurationMs += Date.now() - db0;
+      const filtered = all
+        .filter((p) => p.active !== false && p.stock > 0 && (!vegOnly || p.veg))
+        .slice(0, 6);
+      // Fallback: if query was broad (e.g. Telugu word not in English text index), return all available items so LLM can pick accurately!
+      const finalPool =
+        filtered.length > 0
+          ? filtered.slice(0, 5)
+          : (await listProducts()).filter((p) => p.active !== false && p.stock > 0).slice(0, 6);
 
-  if (geminiKey) {
-    try {
-      const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-      const transcript = recentMsgs.map((m) => `${m.role}: ${m.content}`).join('\n');
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n${transcript}\nCustomer: ${userMessage}` }] }],
-          }),
-        }
+      stateAcc.recommendedProducts = finalPool.slice(0, 4).map(formatProductCard);
+      result = {
+        count: finalPool.length,
+        products: finalPool.map((p) => ({
+          id: p.id,
+          name: p.name,
+          cat: p.category,
+          price: p.discountPrice || p.price,
+          stock: p.stock,
+        })),
+      };
+      break;
+    }
+
+    case 'show_category': {
+      const slug = String(args.category || 'tiffins').toLowerCase().trim();
+      const db0 = Date.now();
+      const items = (await listProducts({ category: slug })).filter(
+        (p) => p.active !== false && p.stock > 0 && (!vegOnly || p.veg)
       );
-      if (res.ok) {
-        const data = await res.json();
-        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (reply) return reply;
-      }
-    } catch {
-      // fall through
-    }
-  }
-
-  return null;
-}
-
-export async function processAssistantTurn({
-  message,
-  language = 'en-IN',
-  user = null,
-  cartItems = {},
-  customBowls = [],
-  selectedAddressId = '',
-  slotId = 'morning',
-  paymentMethod = 'cod',
-  personalizationEnabled = true,
-  sessionState = { pendingIntent: null, customBowlDraft: null },
-  history = [],
-}) {
-  const cleanMsg = String(message || '').trim();
-  const lang = detectLanguage(cleanMsg, language);
-  const isTelugu = lang === 'te-IN';
-
-  const [allProducts, categories, coupons, slots, plans, settings] = await Promise.all([
-    listProducts(),
-    listCategories(),
-    listCoupons(),
-    listSlotsForDate(new Date().toISOString().slice(0, 10)),
-    listPlans(),
-    getSettings(),
-  ]);
-
-  const toolsUsed = [];
-  const actions = [];
-  const toolFacts = [];
-  let recommendedProducts = [];
-  let nextSessionState = {
-    pendingIntent: sessionState?.pendingIntent || null,
-    customBowlDraft: sessionState?.customBowlDraft || null,
-  };
-  let fallbackReply = '';
-  let preserveExactReply = false;
-
-  // Helper to filter by user's veg preference if personalization is on
-  const vegOnly = personalizationEnabled && user?.preferences?.vegOnly;
-  const availableProducts = allProducts.filter((p) => p.active !== false && (!vegOnly || p.veg));
-
-  // ------------------------------------------------------------------
-  // 0. HANDLE PENDING CONVERSATION INTENTS (Confirmations / Multi-turn)
-  // ------------------------------------------------------------------
-  const pending = nextSessionState.pendingIntent;
-
-  if (pending && isNegative(cleanMsg)) {
-    nextSessionState = { pendingIntent: null, customBowlDraft: null };
-    preserveExactReply = true;
-    fallbackReply = isTelugu
-      ? 'సరే అండి, దాన్ని క్యాన్సిల్ చేశాను. మీకు ఇంకేమైనా కావాలా?'
-      : 'No problem! I have cancelled that request. What else would you like today?';
-    return {
-      reply: fallbackReply,
-      language: lang,
-      toolsUsed: ['cancel_pending_action'],
-      actions: [],
-      recommendedProducts: [],
-      sessionState: nextSessionState,
-    };
-  }
-
-  // A. Pending Order Confirmation ("Yes, confirm my order")
-  if (pending?.type === 'confirm_order') {
-    if (isAffirmative(cleanMsg)) {
-      preserveExactReply = true;
-      nextSessionState.pendingIntent = null;
-      if (!user) {
-        actions.push({ type: 'NAVIGATE', to: '/login', label: 'Sign In' });
-        fallbackReply = isTelugu
-          ? 'ఆర్డర్ పూర్తి చేయడానికి దయచేసి ముందుగా లాగిన్ అవ్వండి.'
-          : 'Please sign in first to confirm your order.';
-      } else if (pending.paymentMethod === 'razorpay') {
-        toolsUsed.push('initiate_razorpay_checkout');
-        actions.push({ type: 'OPEN_RAZORPAY_CHECKOUT', to: '/cart' });
-        fallbackReply = isTelugu
-          ? 'సరే! మీ Razorpay పేమెంట్ పాప్‌అప్ ఓపెన్ చేస్తున్నాను. దయచేసి పేమెంట్ పూర్తి చేయండి.'
-          : 'Great! Opening your Razorpay payment checkout now. Please complete your payment securely.';
-      } else {
-        // Execute real COD order through existing backend repository
-        try {
-          toolsUsed.push('place_order_cod');
-          const deliveryDate = pending.scheduledDate || new Date().toISOString().slice(0, 10);
-          const quote = await calculateCheckoutQuote({
-            items: cartItems,
-            customBowls,
-            userId: user.id,
-          });
-          const orderId = `ORD-${Date.now().toString(36).toUpperCase()}`;
-          await deductOrderStockAtomically(quote.items, {
-            reason: 'order_deducted',
-            orderId,
-            actor: user.email,
-          });
-          const order = await createOrderRecord({
-            id: orderId,
-            idempotencyKey: `voice-${user.id}-${Date.now()}`,
-            userId: user.id,
-            customerName: user.fullName || user.name,
-            customerEmail: user.email,
-            customerPhone: pending.address.phone || user.mobileNumber || user.phone || '9000000000',
-            items: quote.items,
-            pricing: quote.pricing,
-            address: pending.address,
-            scheduledDate: deliveryDate,
-            slotId: pending.slot.id,
-            slotLabel: `${pending.slot.name} (${pending.slot.window})`,
-            paymentMethod: 'cod',
-            paymentStatus: 'pending',
-            status: 'confirmed',
-            stockDeducted: true,
-            statusHistory: [
-              {
-                status: 'confirmed',
-                note: 'Confirmed via HRUVITA AI Voice Assistant (COD)',
-                by: user.email,
-                at: new Date().toISOString(),
-              },
-            ],
-          });
-          await createPaymentRecord({
-            id: `PAY-${Date.now().toString(36).toUpperCase()}`,
-            orderId: order.id,
-            userId: user.id,
-            method: 'cod',
-            amount: quote.pricing.grandTotal,
-            currency: 'INR',
-            status: 'created',
-          });
-          await recordAudit({
-            actorId: user.id,
-            actorEmail: user.email,
-            action: 'VOICE_ORDER_CONFIRMED',
-            entity: 'order',
-            entityId: order.id,
-            details: { total: quote.pricing.grandTotal },
-          });
-          await sendUserNotification({
-            userId: user.id,
-            email: user.email,
-            type: 'order',
-            title: `Order Confirmed (${order.id})`,
-            message: `Your voice-confirmed COD order of ₹${quote.pricing.grandTotal} is scheduled for ${deliveryDate} (${pending.slot.name}).`,
-          });
-
-          actions.push({ type: 'CLEAR_CART' });
-          actions.push({ type: 'NAVIGATE', to: '/dashboard', label: `Track ${order.id}` });
-          fallbackReply = isTelugu
-            ? `ధన్యవాదాలు! మీ ఆర్డర్ ${order.id} కన్ఫర్మ్ అయింది. మొత్తం ₹${quote.pricing.grandTotal} (Cash on Delivery). త్వరలో మీ వద్దకు చేరుతుంది!`
-            : `Wonderful! Your order ${order.id} for ₹${quote.pricing.grandTotal} (Cash on Delivery) is confirmed and sent to our kitchen!`;
-        } catch (ordErr) {
-          fallbackReply = isTelugu
-            ? `క్షమించండి, ఆర్డర్ చేయడంలో సమస్య వచ్చింది: ${ordErr.message}`
-            : `Sorry, I could not place your order: ${ordErr.message}`;
-        }
-      }
-      return {
-        reply: fallbackReply,
-        language: lang,
-        toolsUsed,
-        actions,
-        recommendedProducts,
-        sessionState: nextSessionState,
+      stateAcc.dbDurationMs += Date.now() - db0;
+      stateAcc.recommendedProducts = items.slice(0, 4).map(formatProductCard);
+      stateAcc.actions.push({ type: 'NAVIGATE', to: `/menu?category=${slug}`, label: `Browse ${slug}` });
+      result = {
+        navigatedTo: `/menu?category=${slug}`,
+        products: items.slice(0, 6).map((p) => ({
+          id: p.id,
+          name: p.name,
+          price: p.discountPrice || p.price,
+          stock: p.stock,
+        })),
       };
+      break;
     }
-  }
 
-  // B. Pending Product Quantity ("రెండు ప్లేట్లు" / "2 plates")
-  if (pending?.type === 'product_qty') {
-    const qty = extractQuantity(cleanMsg);
-    const prod = availableProducts.find((p) => p.id === pending.productId);
-    if (qty && prod) {
-      preserveExactReply = true;
-      toolsUsed.push('check_stock');
-      if (prod.stock < qty) {
-        nextSessionState.pendingIntent = null;
-        fallbackReply = isTelugu
-          ? `క్షమించండి, ${prod.name} ప్రస్తుతం ${prod.stock} మాత్రమే అందుబాటులో ఉన్నాయి.`
-          : `Sorry, we only have ${prod.stock} of ${prod.name} in stock right now.`;
+    case 'open_product_details': {
+      const db0 = Date.now();
+      const all = await listProducts();
+      stateAcc.dbDurationMs += Date.now() - db0;
+      const prod = all.find((p) => p.id === args.productId);
+      if (!prod) {
+        result = { error: 'Product not found.' };
       } else {
-        nextSessionState.pendingIntent = { type: 'confirm_add', productId: prod.id, qty };
-        const price = prod.discountPrice || prod.price;
-        fallbackReply = isTelugu
-          ? `సరే! ${qty} × ${prod.name} (₹${price * qty}) ను మీ కార్ట్‌లో యాడ్ చేయనా?`
-          : `Sure! Should I add ${qty} × ${prod.name} (₹${price * qty}) to your cart?`;
+        stateAcc.recommendedProducts = [formatProductCard(prod)];
+        stateAcc.actions.push({ type: 'NAVIGATE', to: `/product/${prod.id}`, label: `View ${prod.name}` });
+        result = {
+          navigatedTo: `/product/${prod.id}`,
+          product: {
+            id: prod.id,
+            name: prod.name,
+            price: prod.discountPrice || prod.price,
+            stock: prod.stock,
+            ingredients: prod.ingredients,
+            dietTags: prod.dietTags,
+            description: prod.description,
+          },
+        };
       }
-      return {
-        reply: fallbackReply,
-        language: lang,
-        toolsUsed,
-        actions: [],
-        recommendedProducts: [formatProductCard(prod)],
-        sessionState: nextSessionState,
-      };
+      break;
     }
-  }
 
-  // C. Pending Add-to-Cart Confirmation ("అవును" / "Yes")
-  if (pending?.type === 'confirm_add') {
-    if (isAffirmative(cleanMsg)) {
-      preserveExactReply = true;
-      const prod = availableProducts.find((p) => p.id === pending.productId);
-      nextSessionState.pendingIntent = null;
-      if (prod && prod.stock >= pending.qty) {
-        toolsUsed.push('add_to_cart');
+    case 'add_to_cart': {
+      const qty = Math.max(1, Math.min(20, Math.floor(Number(args.quantity) || 1)));
+      const db0 = Date.now();
+      const all = await listProducts();
+      stateAcc.dbDurationMs += Date.now() - db0;
+      const prod = all.find((p) => p.id === args.productId);
+      if (!prod || prod.active === false) {
+        result = { success: false, error: 'Product not found or inactive.' };
+      } else if (prod.stock < qty) {
+        result = {
+          success: false,
+          error: prod.stock <= 0 ? `${prod.name} is out of stock.` : `Only ${prod.stock} left of ${prod.name}.`,
+        };
+      } else {
         const unitP = prod.discountPrice || prod.price;
-        actions.push({
+        logAI('HRUVITA-CART', `Adding product: ${prod.id} x ${qty}`);
+        stateAcc.actions.push({
           type: 'ADD_TO_CART',
           productId: prod.id,
           productName: prod.name,
-          qty: pending.qty,
+          qty,
           unitPrice: unitP,
         });
-        actions.push({ type: 'OPEN_CART_SUGGESTION' });
-        fallbackReply = isTelugu
-          ? `అలాగే! ${pending.qty} × ${prod.name} మీ కార్ట్‌లో యాడ్ చేశాను. చెకౌట్ ఓపెన్ చేయాలా లేదా ఇంకేమైనా కావాలా?`
-          : `Done! I added ${pending.qty} × ${prod.name} to your cart. Would you like to proceed to checkout or add anything else?`;
-      } else {
-        fallbackReply = isTelugu
-          ? 'క్షమించండి, ఆ ఐటమ్ ప్రస్తుతం అందుబాటులో లేదు.'
-          : 'Sorry, that item is no longer available in the requested quantity.';
+        stateAcc.actions.push({ type: 'OPEN_CART_SUGGESTION' });
+        stateAcc.recommendedProducts = [formatProductCard(prod)];
+        result = {
+          success: true,
+          added: { productId: prod.id, name: prod.name, qty, unitPrice: unitP, lineTotal: unitP * qty },
+        };
       }
-      return {
-        reply: fallbackReply,
-        language: lang,
-        toolsUsed,
-        actions,
-        recommendedProducts: prod ? [formatProductCard(prod)] : [],
-        sessionState: nextSessionState,
-      };
+      break;
     }
-  }
 
-  // D. Pending Custom Fruit Bowl Builder Steps
-  if (pending?.type === 'bowl_fruits') {
-    const bowlOpts = await getDynamicBowlOptions();
-    const chosenFruits = matchIngredientsFromText(cleanMsg, bowlOpts.fruits);
-    if (chosenFruits.length > 0) {
-      preserveExactReply = true;
-      nextSessionState.customBowlDraft = {
-        sizeId: pending.sizeId || 'medium',
-        fruits: chosenFruits,
-        toppings: [],
-        extras: [],
+    case 'update_cart_quantity': {
+      const qty = Math.max(0, Math.min(20, Math.floor(Number(args.quantity) || 0)));
+      const all = await listProducts();
+      const prod = all.find((p) => p.id === args.productId);
+      if (!prod) {
+        result = { success: false, error: 'Product not found.' };
+      } else if (qty > prod.stock) {
+        result = { success: false, error: `Only ${prod.stock} available in stock.` };
+      } else {
+        logAI('HRUVITA-CART', `Updating quantity: ${prod.id} -> ${qty}`);
+        stateAcc.actions.push({
+          type: 'UPDATE_CART_QTY',
+          productId: prod.id,
+          productName: prod.name,
+          qty,
+        });
+        result = { success: true, productId: prod.id, name: prod.name, newQuantity: qty };
+      }
+      break;
+    }
+
+    case 'remove_from_cart': {
+      const all = await listProducts();
+      const prod = all.find((p) => p.id === args.productId);
+      logAI('HRUVITA-CART', `Removing product: ${args.productId}`);
+      stateAcc.actions.push({
+        type: 'UPDATE_CART_QTY',
+        productId: args.productId,
+        productName: prod?.name || args.productId,
+        qty: 0,
+      });
+      result = { success: true, removedProductId: args.productId, name: prod?.name || args.productId };
+      break;
+    }
+
+    case 'view_cart':
+    case 'open_checkout': {
+      const hasCatalog = Object.values(cartItems || {}).some((q) => Number(q) > 0);
+      const hasBowls = Array.isArray(customBowls) && customBowls.length > 0;
+      if (!hasCatalog && !hasBowls) {
+        result = {
+          empty: true,
+          navigated: false,
+          message: 'Cart is empty. Customer needs to add at least one item before checkout.',
+        };
+      } else {
+        const quote = await calculateCheckoutQuote({
+          items: cartItems,
+          customBowls,
+          userId: user?.id || null,
+        });
+        logAI('HRUVITA-CHECKOUT', `Opening ${toolName === 'open_checkout' ? 'checkout' : 'cart'} page`, quote.pricing);
+        stateAcc.actions.push({ type: 'NAVIGATE', to: '/cart', label: 'Open Cart & Checkout' });
+        stateAcc.actions.push({ type: 'OPEN_CART_SUGGESTION' });
+        result = {
+          empty: false,
+          navigatedTo: '/cart',
+          items: quote.items.map((i) => ({ name: i.name, qty: i.qty, lineTotal: i.lineTotal })),
+          pricing: quote.pricing,
+        };
+      }
+      break;
+    }
+
+    case 'get_saved_addresses': {
+      if (!user) {
+        stateAcc.actions.push({ type: 'NAVIGATE', to: '/login', label: 'Sign In' });
+        result = { authenticated: false, error: 'Customer must sign in to view saved addresses.' };
+      } else {
+        const addrs = await listAddressesByUser(user.id);
+        stateAcc.actions.push({ type: 'NAVIGATE', to: '/addresses', label: 'Manage Addresses' });
+        result = {
+          authenticated: true,
+          addresses: addrs.map((a) => ({
+            id: a.id,
+            label: a.addressLabel,
+            recipient: a.recipientName,
+            area: a.area,
+            pincode: a.pincode,
+            isDefault: a.isDefault,
+          })),
+        };
+      }
+      break;
+    }
+
+    case 'select_delivery_address': {
+      if (!user) {
+        result = { success: false, error: 'Authentication required.' };
+      } else {
+        const addr = await getAddressByIdForUser(args.addressId, user.id);
+        if (!addr) {
+          result = { success: false, error: 'Address not found for your account.' };
+        } else {
+          stateAcc.actions.push({ type: 'SELECT_ADDRESS', addressId: addr.id });
+          result = { success: true, selected: { id: addr.id, label: addr.addressLabel, pincode: addr.pincode } };
+        }
+      }
+      break;
+    }
+
+    case 'get_subscription_plans': {
+      const { plans } = await getCachedStaticInfo();
+      stateAcc.actions.push({ type: 'NAVIGATE', to: '/subscriptions', label: 'View Subscriptions' });
+      result = {
+        navigatedTo: '/subscriptions',
+        plans: plans.map((p) => ({ id: p.id, name: p.name, days: p.days, price: p.price, perDay: p.perDay })),
+      };
+      break;
+    }
+
+    case 'build_custom_bowl': {
+      const bowlOpts = await getDynamicBowlOptions();
+      stateAcc.actions.push({ type: 'NAVIGATE', to: '/build-bowl', label: 'Open Bowl Builder' });
+      const allIngs = [...bowlOpts.fruits, ...bowlOpts.toppings, ...bowlOpts.extras];
+      const draft = {
+        sizeId: args.sizeId || 'medium',
+        fruits: Array.isArray(args.fruitIds) ? args.fruitIds : [],
+        toppings: Array.isArray(args.toppingIds) ? args.toppingIds : [],
+        extras: Array.isArray(args.extraIds) ? args.extraIds : [],
         qty: 1,
       };
-      nextSessionState.pendingIntent = { type: 'bowl_toppings' };
-      const fruitNames = bowlOpts.fruits
-        .filter((f) => chosenFruits.includes(f.id))
-        .map((f) => f.name)
-        .join(', ');
-      fallbackReply = isTelugu
-        ? `బాగుంది! ${fruitNames} ఎంచుకున్నారు. దీనిపై నట్స్, చియా సీడ్స్, తేనె లేదా గ్రీక్ యోగర్ట్ ఏమైనా టాపింగ్స్ యాడ్ చేయాలా?`
-        : `Great choice! I picked ${fruitNames}. Would you like to add any toppings like nuts, chia seeds, honey, or Greek yogurt?`;
-      return {
-        reply: fallbackReply,
-        language: lang,
-        toolsUsed: ['custom_bowl_fruits'],
-        actions: [],
-        recommendedProducts: [],
-        sessionState: nextSessionState,
-      };
-    }
-  }
-
-  if (pending?.type === 'bowl_toppings' && nextSessionState.customBowlDraft) {
-    const bowlOpts = await getDynamicBowlOptions();
-    const allIngs = [...bowlOpts.fruits, ...bowlOpts.toppings, ...bowlOpts.extras];
-    const draft = { ...nextSessionState.customBowlDraft };
-
-    if (!/(no|none|skip|వద్దు)/i.test(cleanMsg)) {
-      const pickedToppings = matchIngredientsFromText(cleanMsg, bowlOpts.toppings);
-      const pickedExtras = matchIngredientsFromText(cleanMsg, bowlOpts.extras);
-      if (/(nuts|dry fruits|నట్స్)/i.test(cleanMsg) && pickedToppings.length === 0) {
-        pickedToppings.push('almonds');
+      const computed = computeCustomBowlPrice(draft, allIngs);
+      if (args.addToCart && draft.fruits.length > 0) {
+        stateAcc.actions.push({
+          type: 'ADD_CUSTOM_BOWL',
+          bowl: { ...draft, name: computed.name, summary: computed.summary, unitPrice: computed.unitPrice },
+        });
       }
-      draft.toppings = pickedToppings;
-      draft.extras = pickedExtras;
-    }
-
-    const computed = computeCustomBowlPrice(draft, allIngs);
-    nextSessionState.customBowlDraft = { ...draft, ...computed };
-    nextSessionState.pendingIntent = { type: 'bowl_confirm' };
-    preserveExactReply = true;
-    toolsUsed.push('custom_bowl_price');
-    fallbackReply = isTelugu
-      ? `మీ కస్టమ్ ఫ్రూట్ బౌల్ సిద్ధమైంది: ${computed.summary}. ధర ₹${computed.unitPrice}. దీన్ని మీ కార్ట్‌లో యాడ్ చేయనా?`
-      : `Perfect! Your custom fruit bowl is ready (${computed.summary}) for ₹${computed.unitPrice}. Would you like me to add it to your cart?`;
-    return {
-      reply: fallbackReply,
-      language: lang,
-      toolsUsed,
-      actions: [],
-      recommendedProducts: [],
-      sessionState: nextSessionState,
-    };
-  }
-
-  if (pending?.type === 'bowl_confirm' && nextSessionState.customBowlDraft) {
-    if (isAffirmative(cleanMsg)) {
-      preserveExactReply = true;
-      const draft = nextSessionState.customBowlDraft;
-      nextSessionState = { pendingIntent: null, customBowlDraft: null };
-      toolsUsed.push('add_custom_bowl');
-      actions.push({
-        type: 'ADD_CUSTOM_BOWL',
-        bowl: {
-          sizeId: draft.sizeId,
-          fruits: draft.fruits,
-          toppings: draft.toppings,
-          extras: draft.extras,
-          name: draft.name,
-          summary: draft.summary,
-          unitPrice: draft.unitPrice,
-          qty: 1,
-        },
-      });
-      actions.push({ type: 'OPEN_CART_SUGGESTION' });
-      fallbackReply = isTelugu
-        ? `మీ ${draft.name} (₹${draft.unitPrice}) కార్ట్‌లో యాడ్ చేశాను! చెకౌట్ చేయాలా?`
-        : `Added your ${draft.name} (₹${draft.unitPrice}) to the cart! Would you like to open checkout?`;
-      return {
-        reply: fallbackReply,
-        language: lang,
-        toolsUsed,
-        actions,
-        recommendedProducts: [],
-        sessionState: nextSessionState,
+      result = {
+        navigatedTo: '/build-bowl',
+        availableSizes: bowlOpts.sizes,
+        availableFruits: bowlOpts.fruits.map((f) => ({ id: f.id, name: f.name, extraPrice: f.price })),
+        availableToppings: bowlOpts.toppings.map((t) => ({ id: t.id, name: t.name, extraPrice: t.price })),
+        availableExtras: bowlOpts.extras.map((e) => ({ id: e.id, name: e.name, extraPrice: e.price })),
+        computedBowl: { name: computed.name, summary: computed.summary, unitPrice: computed.unitPrice },
+        addedToCart: Boolean(args.addToCart && draft.fruits.length > 0),
       };
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // 1. CONVERSATIONAL ORDER CHECKOUT ("I want to place my order")
-  // ------------------------------------------------------------------
-  if (/(place my order|place order|confirm my order|checkout now|ఆర్డర్ చేయాలి|ఆర్డర్ కన్ఫర్మ్|ఆర్డర్ పెట్టు)/i.test(cleanMsg)) {
-    preserveExactReply = true;
-    if (!user) {
-      actions.push({ type: 'NAVIGATE', to: '/login', label: 'Sign In to Checkout' });
-      fallbackReply = isTelugu
-        ? 'ఆర్డర్ ప్లేస్ చేయడానికి దయచేసి ముందుగా మీ HRUVITA అకౌంట్‌లో లాగిన్ అవ్వండి.'
-        : 'Please sign in to your HRUVITA account so I can review your address and place your order.';
-      return { reply: fallbackReply, language: lang, toolsUsed: ['auth_required'], actions, recommendedProducts, sessionState: nextSessionState };
+      break;
     }
 
-    try {
-      const quote = await calculateCheckoutQuote({ items: cartItems, customBowls, userId: user.id });
-      const userAddresses = await listAddressesByUser(user.id);
-      const chosenAddr =
-        userAddresses.find((a) => a.id === selectedAddressId) ||
-        userAddresses.find((a) => a.isDefault) ||
-        userAddresses[0];
+    case 'get_my_orders':
+    case 'track_order': {
+      if (!user) {
+        stateAcc.actions.push({ type: 'NAVIGATE', to: '/login', label: 'Sign In' });
+        result = { authenticated: false, error: 'Customer must sign in to view or track orders.' };
+      } else {
+        stateAcc.actions.push({ type: 'NAVIGATE', to: '/dashboard', label: 'Open Orders' });
+        if (args.orderId) {
+          const ord = await getOrderById(args.orderId);
+          if (!ord || ord.userId !== user.id) {
+            result = { error: 'Order not found for your account.' };
+          } else {
+            result = {
+              order: {
+                id: ord.id,
+                status: ord.status,
+                total: ord.pricing?.grandTotal,
+                scheduledDate: ord.scheduledDate,
+                slotLabel: ord.slotLabel,
+              },
+            };
+          }
+        } else {
+          const orders = await listOrdersByUser(user.id);
+          result = {
+            orderCount: orders.length,
+            latestOrders: orders.slice(0, 3).map((o) => ({
+              id: o.id,
+              status: o.status,
+              total: o.pricing?.grandTotal,
+              scheduledDate: o.scheduledDate,
+              slotLabel: o.slotLabel,
+              items: (o.items || []).map((i) => `${i.qty}x ${i.name}`).join(', '),
+            })),
+          };
+        }
+      }
+      break;
+    }
 
+    case 'get_business_info_and_offers': {
+      const [{ settings }, coupons, slots] = await Promise.all([
+        getCachedStaticInfo(),
+        listCoupons(),
+        listSlotsForDate(new Date().toISOString().slice(0, 10)),
+      ]);
+      result = {
+        brand: settings.name,
+        city: settings.city,
+        hours: settings.hours,
+        deliveryCharge: settings.deliveryCharge,
+        freeDeliveryAbove: settings.freeDeliveryAbove,
+        activeCoupons: coupons.map((c) => ({ code: c.code, title: c.title })),
+        todaySlots: slots.filter((s) => s.available).map((s) => ({ id: s.id, name: s.name, window: s.window })),
+      };
+      break;
+    }
+
+    case 'place_cod_order': {
+      if (!args.confirmed) {
+        result = { success: false, error: 'Explicit customer confirmation is required before placing an order.' };
+        break;
+      }
+      if (!user) {
+        stateAcc.actions.push({ type: 'NAVIGATE', to: '/login', label: 'Sign In' });
+        result = { success: false, error: 'Customer must sign in before placing an order.' };
+        break;
+      }
+      const hasCatalog = Object.values(cartItems || {}).some((q) => Number(q) > 0);
+      const hasBowls = Array.isArray(customBowls) && customBowls.length > 0;
+      if (!hasCatalog && !hasBowls) {
+        result = { success: false, error: 'Cart is empty.' };
+        break;
+      }
+      const addrs = await listAddressesByUser(user.id);
+      const chosenAddr = addrs.find((a) => a.id === selectedAddressId) || addrs.find((a) => a.isDefault) || addrs[0];
       if (!chosenAddr) {
-        actions.push({ type: 'NAVIGATE', to: '/addresses/new', label: 'Add Delivery Address' });
-        fallbackReply = isTelugu
-          ? 'మీ వద్ద ఇంకా డెలివరీ అడ్రస్ సేవ్ కాలేదు. దయచేసి ముందుగా మీ అడ్రస్ యాడ్ చేయండి.'
-          : 'You do not have a saved delivery address yet. Let me open the address page so you can add one.';
-        return { reply: fallbackReply, language: lang, toolsUsed: ['show_saved_addresses'], actions, recommendedProducts, sessionState: nextSessionState };
+        stateAcc.actions.push({ type: 'NAVIGATE', to: '/addresses/new', label: 'Add Address' });
+        result = { success: false, error: 'No saved delivery address found. Please add an address first.' };
+        break;
       }
-
       const legacyAddr = formatAddressForLegacy(chosenAddr);
-      const chosenSlot = slots.find((s) => s.id === slotId && s.available) || slots.find((s) => s.available) || slots[0];
-      const itemSummary = quote.items.map((it) => `${it.qty} × ${it.name}`).join(', ');
       const todayStr = new Date().toISOString().slice(0, 10);
-
-      nextSessionState.pendingIntent = {
-        type: 'confirm_order',
+      const slots = await listSlotsForDate(todayStr);
+      const chosenSlot = slots.find((s) => s.id === slotId && s.available) || slots.find((s) => s.available) || slots[0];
+      const quote = await calculateCheckoutQuote({ items: cartItems, customBowls, userId: user.id });
+      const orderId = `ORD-${Date.now().toString(36).toUpperCase()}`;
+      await deductOrderStockAtomically(quote.items, { reason: 'order_deducted', orderId, actor: user.email });
+      const order = await createOrderRecord({
+        id: orderId,
+        idempotencyKey: `ai-${user.id}-${Date.now()}`,
+        userId: user.id,
+        customerName: user.fullName || user.name,
+        customerEmail: user.email,
+        customerPhone: legacyAddr.phone || user.mobileNumber || '9000000000',
+        items: quote.items,
+        pricing: quote.pricing,
         address: {
           label: legacyAddr.label,
           recipient: legacyAddr.recipient,
@@ -632,363 +622,355 @@ export async function processAssistantTurn({
           pincode: chosenAddr.pincode,
           notes: legacyAddr.notes,
         },
-        slot: chosenSlot,
         scheduledDate: todayStr,
-        paymentMethod: /(online|upi|razorpay|card|ఆన్‌లైన్)/i.test(cleanMsg) ? 'razorpay' : paymentMethod || 'cod',
-      };
-
-      toolsUsed.push('review_order_quote');
-      actions.push({ type: 'NAVIGATE', to: '/cart', label: 'Review Checkout' });
-      fallbackReply = isTelugu
-        ? `మీ ఆర్డర్‌లో ${itemSummary} ఉన్నాయి. మొత్తం ₹${quote.pricing.grandTotal} (${legacyAddr.label} - ${chosenAddr.area || chosenAddr.pincode}). ఈ ఆర్డర్‌ను కన్ఫర్మ్ చేయాలా?`
-        : `Your order has ${itemSummary}. Grand total is ₹${quote.pricing.grandTotal}, delivering to ${legacyAddr.label} (${chosenAddr.pincode}). Should I confirm your order?`;
-    } catch {
-      fallbackReply = isTelugu
-        ? 'ప్రస్తుతం మీ కార్ట్ ఖాళీగా ఉంది. ముందుగా ఏదైనా ఆహారం కార్ట్‌లో యాడ్ చేయండి.'
-        : 'Your cart is empty right now. Tell me what you would like to add first!';
-    }
-    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
-  }
-
-  // ------------------------------------------------------------------
-  // 2. ORDER TRACKING & ORDERS PAGE NAVIGATION (Authenticated Only)
-  // ------------------------------------------------------------------
-  if (/(where is my order|order status|my order|my orders|order history|orders page|order page|go to orders|open orders|track|delivered|ఎక్కడ ఉంది|ఆర్డర్ స్టేటస్|naa order|నా ఆర్డర్లు|ఆర్డర్ పేజీ|డెలివరీ అయిందా)/i.test(cleanMsg)) {
-    toolsUsed.push('get_order_status');
-    preserveExactReply = true;
-    if (!user) {
-      actions.push({ type: 'NAVIGATE', to: '/login', label: 'Sign In' });
-      fallbackReply = isTelugu
-        ? 'మీ ఆర్డర్ల పేజీ చూడటానికి దయచేసి ముందుగా మీ అకౌంట్‌లో లాగిన్ అవ్వండి.'
-        : 'Please sign in to your HRUVITA account so I can open your orders page and check your order status.';
-    } else {
-      const orders = await listOrdersByUser(user.id);
-      actions.push({ type: 'NAVIGATE', to: '/dashboard', label: 'Open Orders Page' });
-      if (orders.length === 0) {
-        fallbackReply = isTelugu
-          ? 'మీ ఆర్డర్ల పేజీ ఓపెన్ చేశాను. మీరు ఇంకా ఏ ఆర్డర్ చేయలేదు — ఈరోజు తాజా ఫ్రూట్ బౌల్ లేదా ఇడ్లీ ఆర్డర్ చేయాలా?'
-          : 'I opened your Orders page. You have not placed any orders yet — would you like to order a fresh fruit bowl or tiffin?';
-      } else {
-        const latest = orders[0];
-        fallbackReply = isTelugu
-          ? `మీ ఆర్డర్ల పేజీ ఓపెన్ చేశాను. మీ తాజా ఆర్డర్ ${latest.id} ప్రస్తుతం "${latest.status.replace(/_/g, ' ')}" స్థితిలో ఉంది (₹${latest.pricing?.grandTotal}).`
-          : `I opened your Orders page. Your latest order ${latest.id} is currently ${latest.status.replace(/_/g, ' ')} for ₹${latest.pricing?.grandTotal}, scheduled on ${latest.scheduledDate} (${latest.slotLabel}).`;
-      }
-    }
-    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
-  }
-
-  // ------------------------------------------------------------------
-  // 2B. EXPLICIT CART / CHECKOUT PAGE NAVIGATION
-  // ------------------------------------------------------------------
-  if (/(go to cart|open cart|cart page|take me to cart|go to checkout|open checkout|checkout page|proceed to checkout|pay now|కార్ట్ ఓపెన్|చెకౌట్|కార్ట్ పేజీ)/i.test(cleanMsg)) {
-    toolsUsed.push('navigate_cart_checkout');
-    preserveExactReply = true;
-    actions.push({ type: 'NAVIGATE', to: '/cart', label: 'Open Cart & Checkout' });
-    actions.push({ type: 'OPEN_CART_SUGGESTION' });
-    const hasCatalog = Object.values(cartItems || {}).some((q) => Number(q) > 0);
-    const hasBowls = Array.isArray(customBowls) && customBowls.length > 0;
-    if (!hasCatalog && !hasBowls) {
-      fallbackReply = isTelugu
-        ? 'మీ కోసం కార్ట్ & చెకౌట్ పేజీ ఓపెన్ చేశాను! ప్రస్తుతం మీ కార్ట్ ఖాళీగా ఉంది.'
-        : 'I opened the Cart & Checkout page for you! Your cart is currently empty.';
-    } else {
-      const quote = await calculateCheckoutQuote({ items: cartItems, customBowls, userId: user?.id || null });
-      fallbackReply = isTelugu
-        ? `మీ కోసం కార్ట్ & చెకౌట్ పేజీ ఓపెన్ చేశాను. మొత్తం చెల్లించాల్సినది ₹${quote.pricing.grandTotal}.`
-        : `I opened your Cart & Checkout page! Your total is ₹${quote.pricing.grandTotal}.`;
-    }
-    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
-  }
-
-  // ------------------------------------------------------------------
-  // 2C. CLEAR CART COMMAND
-  // ------------------------------------------------------------------
-  if (/(clear cart|empty cart|remove everything|కార్ట్ ఖాళీ)/i.test(cleanMsg)) {
-    toolsUsed.push('clear_cart');
-    preserveExactReply = true;
-    actions.push({ type: 'CLEAR_CART' });
-    fallbackReply = isTelugu
-      ? 'మీ కార్ట్‌ను ఖాళీ చేశాను. కొత్తగా ఏదైనా యాడ్ చేయాలా?'
-      : 'I have cleared your cart. What would you like to add next?';
-    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
-  }
-
-  // ------------------------------------------------------------------
-  // 2D. GENERAL PAGE NAVIGATION (Menu, Home, Account, Contact, About)
-  // ------------------------------------------------------------------
-  if (/(show menu|open menu|explore menu|full menu|go to menu|menu page|what do you have|మెనూ)/i.test(cleanMsg)) {
-    toolsUsed.push('navigate_menu');
-    const picks = availableProducts.filter((p) => p.bestseller && p.stock > 0).slice(0, 4);
-    recommendedProducts = picks.map(formatProductCard);
-    actions.push({ type: 'NAVIGATE', to: '/menu', label: 'Explore Full Menu' });
-    fallbackReply = isTelugu
-      ? 'ఇదిగో మా పూర్తి మెనూ! ఇందులో టిఫిన్స్, ఫ్రూట్ బౌల్స్, జ్యూస్‌లు మరియు కాంబోలు ఉన్నాయి.'
-      : 'Here is our full menu! I also highlighted our top best sellers below.';
-    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
-  }
-
-  if (/(go home|home page|main page|హోమ్ పేజీ)/i.test(cleanMsg)) {
-    toolsUsed.push('navigate_home');
-    actions.push({ type: 'NAVIGATE', to: '/', label: 'Go to Home' });
-    fallbackReply = isTelugu ? 'హోమ్ పేజీ ఓపెన్ చేశాను.' : 'Taking you back to the HRUVITA home page.';
-    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
-  }
-
-  // ------------------------------------------------------------------
-  // 3. CUSTOM FRUIT BOWL BUILDER DISCOVERY
-  // ------------------------------------------------------------------
-  if (/(make my own|custom.*bowl|build.*bowl|own fruit bowl|సొంత.*బౌల్|కస్టమ్ బౌల్)/i.test(cleanMsg)) {
-    toolsUsed.push('open_bowl_builder');
-    preserveExactReply = true;
-    nextSessionState.pendingIntent = { type: 'bowl_fruits', sizeId: 'medium' };
-    actions.push({ type: 'NAVIGATE', to: '/build-bowl', label: 'Build Your Bowl' });
-    fallbackReply = isTelugu
-      ? 'తప్పకుండా! మీ కోసం Build Your Own Bowl ఓపెన్ చేశాను. మీ బౌల్‌లో ఏ పండ్లు కావాలి? (ఉదాహరణకు: యాపిల్, అరటి, దానిమ్మ, మామిడి)'
-      : 'Sure! I opened Build Your Own Bowl for you. Which fruits would you like in your bowl — for example apple, banana, pomegranate, or mango?';
-    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
-  }
-
-  // ------------------------------------------------------------------
-  // 4. DAILY SUBSCRIPTIONS
-  // ------------------------------------------------------------------
-  if (/(daily breakfast|subscription|plans|సబ్‌స్క్రిప్షన్|రోజూ బ్రేక్‌ఫాస్ట్|ప్లాన్)/i.test(cleanMsg)) {
-    toolsUsed.push('show_subscriptions');
-    preserveExactReply = true;
-    const planSummary = plans.map((p) => `${p.name} (₹${p.price})`).join(', ');
-    actions.push({ type: 'NAVIGATE', to: '/subscriptions', label: 'View Breakfast Plans' });
-    fallbackReply = isTelugu
-      ? `మా వద్ద ${planSummary} బ్రేక్‌ఫాస్ట్ సబ్‌స్క్రిప్షన్ ప్లాన్స్ ఉన్నాయి. మీరు ఎప్పుడైనా 10 PM లోపు పాజ్ చేసుకోవచ్చు!`
-      : `We offer ${planSummary} daily breakfast subscriptions! You can choose your favorite meal, start date, and pause anytime.`;
-    return { reply: fallbackReply, language: lang, toolsUsed, actions, recommendedProducts, sessionState: nextSessionState };
-  }
-
-  // ------------------------------------------------------------------
-  // 5. OFFERS, SLOTS & SAVED ADDRESSES
-  // ------------------------------------------------------------------
-  if (/(offer|coupon|discount|ఆఫర్|కూపన్|డిస్కౌంట్)/i.test(cleanMsg)) {
-    toolsUsed.push('get_offers');
-    const offerText = coupons.slice(0, 3).map((c) => `${c.code} (${c.title})`).join(', ');
-    toolFacts.push(`Active coupons: ${offerText}`);
-    fallbackReply = isTelugu
-      ? `ప్రస్తుతం అందుబాటులో ఉన్న ఆఫర్లు: ${offerText}. చెకౌట్‌లో కూపన్ అప్లై చేయండి!`
-      : `Here are our active offers: ${offerText}. You can apply any code at checkout!`;
-  } else if (/(slot|timing|delivery time|టైమింగ్|డెలివరీ ఎప్పుడు|స్లాట్)/i.test(cleanMsg)) {
-    toolsUsed.push('list_delivery_slots');
-    const slotText = slots.filter((s) => s.available).map((s) => `${s.name} (${s.window})`).join(', ');
-    toolFacts.push(`Available slots today: ${slotText}`);
-    fallbackReply = isTelugu
-      ? `ఈరోజు అందుబాటులో ఉన్న డెలివరీ స్లాట్లు: ${slotText}. ₹${settings.freeDeliveryAbove || 199} పైన ఆర్డర్‌కు ఉచిత డెలివరీ!`
-      : `Today's available delivery slots are ${slotText}. Delivery is free above ₹${settings.freeDeliveryAbove || 199}.`;
-  } else if (/(address|addresses|అడ్రస్)/i.test(cleanMsg)) {
-    toolsUsed.push('show_saved_addresses');
-    actions.push({ type: 'NAVIGATE', to: '/addresses', label: 'Manage Addresses' });
-    fallbackReply = isTelugu
-      ? 'మీ సేవ్ చేసిన డెలివరీ అడ్రస్‌లను చూడటానికి Addresses పేజీ ఓపెన్ చేశాను.'
-      : 'I opened your Saved Addresses page so you can view, select, or add a new delivery address.';
-  }
-  // ------------------------------------------------------------------
-  // 6. VIEW CART / TOTAL PRICE
-  // ------------------------------------------------------------------
-  else if (/(view cart|my cart|show.*cart|what is in cart|how much is my total|cart total|కార్ట్|మొత్తం ఎంత)/i.test(cleanMsg)) {
-    toolsUsed.push('view_cart');
-    preserveExactReply = true;
-    const hasCatalog = Object.values(cartItems || {}).some((q) => Number(q) > 0);
-    const hasBowls = Array.isArray(customBowls) && customBowls.length > 0;
-    if (!hasCatalog && !hasBowls) {
-      fallbackReply = isTelugu
-        ? 'ప్రస్తుతం మీ కార్ట్ ఖాళీగా ఉంది. ఏదైనా ఐటమ్ యాడ్ చేయమని చెప్పండి!'
-        : 'Your cart is currently empty. Tell me what you would like to add!';
-    } else {
-      const quote = await calculateCheckoutQuote({ items: cartItems, customBowls, userId: user?.id || null });
-      const names = quote.items.map((it) => `${it.qty} × ${it.name}`).join(', ');
-      actions.push({ type: 'NAVIGATE', to: '/cart', label: 'Open Cart' });
-      actions.push({ type: 'OPEN_CART_SUGGESTION' });
-      fallbackReply = isTelugu
-        ? `మీ కార్ట్‌లో ${names} ఉన్నాయి. మొత్తం చెల్లించాల్సినది ₹${quote.pricing.grandTotal} (డెలివరీ ₹${quote.pricing.deliveryCharge}, GST ₹${quote.pricing.taxAmount}). ఆర్డర్ కన్ఫర్మ్ చేయాలా?`
-        : `Your cart has ${names}. Your grand total is ₹${quote.pricing.grandTotal} (including ₹${quote.pricing.deliveryCharge} delivery and ₹${quote.pricing.taxAmount} GST). Would you like to place the order?`;
-    }
-  }
-  // ------------------------------------------------------------------
-  // 7. REMOVE OR UPDATE QUANTITY IN CART
-  // ------------------------------------------------------------------
-  else if (/(remove|delete|drop|తొలగించు|తీసేయ్)/i.test(cleanMsg)) {
-    const matched = matchProductsFromText(cleanMsg, allProducts);
-    if (matched.length > 0) {
-      const target = matched[0];
-      const currentQty = Number(cartItems?.[target.id] || 0);
-      const removeQty = extractQuantity(cleanMsg) || 1;
-      const nextQty = Math.max(0, currentQty - removeQty);
-      toolsUsed.push('remove_from_cart');
-      preserveExactReply = true;
-      if (currentQty <= 0) {
-        fallbackReply = isTelugu
-          ? `మీ కార్ట్‌లో ${target.name} లేదు.`
-          : `${target.name} is not currently in your cart.`;
-      } else {
-        actions.push({ type: 'UPDATE_CART_QTY', productId: target.id, productName: target.name, qty: nextQty });
-        fallbackReply = isTelugu
-          ? `${target.name} ను మీ కార్ట్ నుండి అప్‌డేట్ చేశాను (ఇప్పుడు ${nextQty}).`
-          : `Updated ${target.name} in your cart (now ${nextQty}).`;
-      }
-    }
-  } else if (/(change|update|set|మార్చు)/i.test(cleanMsg) && extractQuantity(cleanMsg)) {
-    const matched = matchProductsFromText(cleanMsg, allProducts);
-    const newQty = extractQuantity(cleanMsg);
-    if (matched.length > 0 && newQty) {
-      const target = matched[0];
-      toolsUsed.push('update_quantity');
-      preserveExactReply = true;
-      actions.push({ type: 'UPDATE_CART_QTY', productId: target.id, productName: target.name, qty: Math.min(newQty, target.stock) });
-      fallbackReply = isTelugu
-        ? `మీ కార్ట్‌లో ${target.name} క్వాంటిటీని ${newQty} కు మార్చాను.`
-        : `Updated ${target.name} quantity in your cart to ${newQty}.`;
-    }
-  }
-  // ------------------------------------------------------------------
-  // 8. MOOD-BASED RECOMMENDATIONS
-  // ------------------------------------------------------------------
-  else if (/(hungry|starving|akali|ఆకలి|కడుపు నిండా)/i.test(cleanMsg)) {
-    toolsUsed.push('mood_recommendation');
-    const picks = availableProducts.filter((p) => ['tiffins', 'lunch'].includes(p.category) && p.stock > 0).slice(0, 3);
-    recommendedProducts = picks.map(formatProductCard);
-    actions.push({ type: 'NAVIGATE', to: '/menu?category=tiffins', label: 'View Tiffins' });
-    toolFacts.push(`Mood=Hungry. Filling picks: ${picks.map((p) => `${p.name} ₹${p.discountPrice || p.price}`).join(', ')}`);
-    fallbackReply = isTelugu
-      ? `మీకు బాగా ఆకలిగా ఉందా? ఇవిగో వేడివేడి, కడుపు నిండే టిఫిన్స్: ${picks.map((p) => `${p.name} (₹${p.discountPrice || p.price})`).join(', ')}. ఏది యాడ్ చేయమంటారు?`
-      : `Feeling hungry? Here are our filling breakfast picks: ${picks.map((p) => `${p.name} (₹${p.discountPrice || p.price})`).join(', ')}. Which one would you like?`;
-  } else if (/(tired|exhausted|fatigue|refresh|అలసటగా|అలసట|నీరసం|ఫ్రెష్)/i.test(cleanMsg)) {
-    toolsUsed.push('mood_recommendation');
-    const picks = availableProducts.filter((p) => ['fruit-bowls', 'juices'].includes(p.category) && p.stock > 0).slice(0, 3);
-    recommendedProducts = picks.map(formatProductCard);
-    actions.push({ type: 'NAVIGATE', to: '/menu?category=fruit-bowls', label: 'View Fruit Bowls' });
-    toolFacts.push(`Mood=Tired. Refreshing picks: ${picks.map((p) => `${p.name} ₹${p.discountPrice || p.price}`).join(', ')}`);
-    fallbackReply = isTelugu
-      ? `మీకు ఫ్రెష్‌గా అనిపించడానికి ఒక ఫ్రూట్ బౌల్ లేదా తాజా జ్యూస్ ట్రై చేయొచ్చు: ${picks.map((p) => `${p.name} (₹${p.discountPrice || p.price})`).join(', ')}. మీకు ఏది ఇష్టం?`
-      : `To help you feel refreshed, you can try a fresh fruit bowl or cold-pressed juice: ${picks.map((p) => `${p.name} (₹${p.discountPrice || p.price})`).join(', ')}. Which one sounds good?`;
-  } else if (/(spicy|karam|కారంగా|కారం)/i.test(cleanMsg)) {
-    toolsUsed.push('mood_recommendation');
-    const picks = availableProducts.filter((p) => ['tiffins', 'snacks'].includes(p.category) && p.stock > 0).slice(0, 3);
-    recommendedProducts = picks.map(formatProductCard);
-    actions.push({ type: 'NAVIGATE', to: '/menu?category=tiffins', label: 'View Spicy Tiffins' });
-    toolFacts.push(`Mood=Spicy. Picks: ${picks.map((p) => `${p.name} ₹${p.discountPrice || p.price}`).join(', ')}`);
-    fallbackReply = isTelugu
-      ? `తప్పకుండా! కారంగా, రుచిగా ఉండే టిఫిన్స్ ఇవిగో: ${picks.map((p) => `${p.name} (₹${p.discountPrice || p.price})`).join(', ')}.`
-      : `Sure! Here are our flavorful spicy tiffin options: ${picks.map((p) => `${p.name} (₹${p.discountPrice || p.price})`).join(', ')}.`;
-  } else if (/(confused|suggest|recommend|what should i eat|bestseller|popular|ఏమి తినాలి|సలహా|teliyatledu|em tinalo)/i.test(cleanMsg)) {
-    toolsUsed.push('mood_recommendation');
-    const picks = availableProducts.filter((p) => p.bestseller && p.stock > 0).slice(0, 3);
-    recommendedProducts = picks.map(formatProductCard);
-    toolFacts.push(`Popular picks: ${picks.map((p) => `${p.name} ₹${p.discountPrice || p.price}`).join(', ')}`);
-    fallbackReply = isTelugu
-      ? 'తప్పకుండా సహాయం చేస్తాను! మీకు కడుపు నిండే టిఫిన్ కావాలా, తాజా జ్యూస్ కావాలా, లేదా ఫ్రూట్ బౌల్ కావాలా?'
-      : 'Of course! Would you prefer a filling breakfast, a refreshing juice, or a fresh fruit bowl?';
-  }
-  // ------------------------------------------------------------------
-  // 9. PRODUCT-SPECIFIC CONVERSATION OR CATEGORY DETECTION
-  // ------------------------------------------------------------------
-  else {
-    const matchedProducts = matchProductsFromText(cleanMsg, availableProducts);
-    const matchedCat = CATEGORY_ALIASES.find((c) => c.regex.test(cleanMsg));
-    const hasSpecificDishWord =
-      /(idli|idly|idlis|idlys|ఇడ్లీ|dosa|dosas|దోస|దోశ|pongal|పొంగల్|upma|ఉప్మా|orange|ఆరెంజ్|నారింజ|watermelon|పుచ్చకాయ|pomegranate|దానిమ్మ|banana|అరటి|mango|మామిడి|milk|పాలు|curd|పెరుగు|paneer|పనీర్|ragi|రాగి|sprouts|మొలకలు|thali|భోజనం|mixed fruit|exotic)/i.test(
-        cleanMsg
-      );
-
-    if (matchedProducts.length > 0 && (!matchedCat || hasSpecificDishWord)) {
-      toolsUsed.push('search_products', 'check_stock');
-      const primary = matchedProducts[0];
-      const unitP = primary.discountPrice || primary.price;
-      const qty = extractQuantity(cleanMsg);
-      const directAddVerb = /(add|order|buy|cart|give me|get me|pettu|యాడ్|పెట్టు)/i.test(cleanMsg);
-
-      recommendedProducts = matchedProducts.slice(0, 3).map(formatProductCard);
-
-      if (primary.stock <= 0) {
-        preserveExactReply = true;
-        fallbackReply = isTelugu
-          ? `క్షమించండి, ${primary.name} ప్రస్తుతం స్టాక్‌లో లేదు. దానికి బదులుగా ఫ్రెష్ ఆరెంజ్ జ్యూస్ లేదా మిక్స్‌డ్ ఫ్రూట్ బౌల్ ట్రై చేస్తారా?`
-          : `Sorry, ${primary.name} is currently out of stock. Would you like to try our Fresh Orange Juice or Mixed Fruit Bowl instead?`;
-      } else if (directAddVerb && qty) {
-        preserveExactReply = true;
-        toolsUsed.push('add_to_cart');
-        actions.push({
-          type: 'ADD_TO_CART',
-          productId: primary.id,
-          productName: primary.name,
-          qty: Math.min(qty, primary.stock),
-          unitPrice: unitP,
-        });
-        actions.push({ type: 'OPEN_CART_SUGGESTION' });
-        fallbackReply = isTelugu
-          ? `అలాగే! ${qty} × ${primary.name} (₹${unitP * qty}) మీ కార్ట్‌లో యాడ్ చేశాను. చెకౌట్ ఓపెన్ చేయాలా?`
-          : `Added ${qty} × ${primary.name} (₹${unitP * qty}) to your cart! Would you like to open checkout or add anything else?`;
-      } else if (qty && qty > 0) {
-        preserveExactReply = true;
-        nextSessionState.pendingIntent = { type: 'confirm_add', productId: primary.id, qty };
-        actions.push({ type: 'NAVIGATE', to: `/product/${primary.id}`, label: `View ${primary.name}` });
-        fallbackReply = isTelugu
-          ? `సరే! ${qty} × ${primary.name} (₹${unitP * qty}) ను మీ కార్ట్‌లో యాడ్ చేయనా?`
-          : `Sure! Should I add ${qty} × ${primary.name} (₹${unitP * qty}) to your cart?`;
-      } else {
-        // Multi-turn product inquiry -> navigate to Product Detail & ask quantity
-        preserveExactReply = true;
-        nextSessionState.pendingIntent = { type: 'product_qty', productId: primary.id };
-        actions.push({ type: 'NAVIGATE', to: `/product/${primary.id}`, label: `View ${primary.name}` });
-        fallbackReply = isTelugu
-          ? `చాలా మంచిది! ${primary.name} (₹${unitP}) అందుబాటులో ఉంది. మీకు ఎన్ని ప్లేట్లు లేదా యూనిట్లు కావాలి?`
-          : `Great choice! ${primary.name} is ₹${unitP} and freshly available. How many would you like?`;
-      }
-    } else if (matchedCat) {
-      toolsUsed.push('show_category');
-      const catItems = availableProducts.filter((p) => p.category === matchedCat.slug && p.stock > 0).slice(0, 4);
-      recommendedProducts = catItems.map(formatProductCard);
-      actions.push({ type: 'NAVIGATE', to: `/menu?category=${matchedCat.slug}`, label: `Browse ${matchedCat.label}` });
-      toolFacts.push(`Category ${matchedCat.label}: ${catItems.map((p) => `${p.name} ₹${p.discountPrice || p.price}`).join(', ')}`);
-      fallbackReply = isTelugu
-        ? `తప్పకుండా! ఇవిగో ఈరోజు అందుబాటులో ఉన్న ${matchedCat.label} ఐటమ్స్.`
-        : `Sure! Here are our available ${matchedCat.label} options right now.`;
-    } else if (/(delivery fee|delivery charge|free delivery|డెలివరీ ఛార్జ్|ఉచిత డెలివరీ|timing|hours|open)/i.test(cleanMsg)) {
-      toolsUsed.push('get_business_info_and_faqs');
-      fallbackReply = isTelugu
-        ? `₹${settings.freeDeliveryAbove || 199} పైన ఆర్డర్లకు డెలివరీ ఉచితం (లేదా ₹${settings.deliveryCharge || 25}). మా వేళలు: ${settings.hours}.`
-        : `Delivery is free on orders above ₹${settings.freeDeliveryAbove || 199} (otherwise ₹${settings.deliveryCharge || 25}). Our kitchen hours are ${settings.hours}.`;
-    } else if (/^(hi|hello|hey|namaste|namaskaram|good morning|good afternoon|good evening|నమస్కారం|హలో|హాయ్)(?=$|[\s.,!?])/i.test(cleanMsg)) {
-      toolsUsed.push('greeting');
-      fallbackReply = isTelugu
-        ? 'నమస్కారం! HRUVITA కి స్వాగతం. ఈరోజు మీకు టిఫిన్స్, ఫ్రూట్ బౌల్స్ లేదా ఫ్రెష్ జ్యూస్‌లలో ఏమి కావాలి?'
-        : 'Hello! Welcome to HRUVITA. What would you like to eat today — fresh fruit bowls, tiffins, or cold-pressed juices?';
-    } else if (/^(thanks|thank you|dhanyavadalu|ధన్యవాదాలు|థాంక్స్)/i.test(cleanMsg)) {
-      toolsUsed.push('courtesy');
-      fallbackReply = isTelugu
-        ? 'మీకు ధన్యవాదాలు! మీకు ఇంకేమైనా కావాలంటే నన్ను అడగండి.'
-        : "You're very welcome! Let me know anytime if you'd like to add more items or checkout.";
-    } else {
-      toolsUsed.push('get_business_info_and_faqs');
-      const faqs = Array.isArray(settings.aiFaqs) && settings.aiFaqs.length ? settings.aiFaqs : DEFAULT_FAQS;
-      toolFacts.push(`Hours: ${settings.hours}, City: ${settings.city}, FAQs: ${faqs.map((f) => `${f.q} ${f.a}`).join(' ')}`);
-      fallbackReply = isTelugu
-        ? `నమస్కారం! నేను HRUVITA AI. టిఫిన్స్, ఫ్రూట్ బౌల్స్, జ్యూస్‌లు వెతకడానికి, మీ సొంత బౌల్ తయారు చేయడానికి లేదా ఆర్డర్ చేయడానికి నన్ను అడగండి.`
-        : `Hello! I'm HRUVITA AI. Ask me to browse tiffins, fruit bowls, fresh juices, build a custom bowl, open cart, or track your order!`;
-    }
-  }
-
-  const llmReply = preserveExactReply
-    ? null
-    : await callOptionalFreeLlm({
-        userMessage: cleanMsg,
-        lang,
-        toolContext: toolFacts.join('\n'),
-        history,
-        settings,
+        slotId: chosenSlot.id,
+        slotLabel: `${chosenSlot.name} (${chosenSlot.window})`,
+        paymentMethod: 'cod',
+        paymentStatus: 'pending',
+        status: 'confirmed',
+        stockDeducted: true,
+        statusHistory: [{ status: 'confirmed', note: 'Placed via HRUVITA AI Agent (COD)', by: user.email, at: new Date().toISOString() }],
       });
+      await createPaymentRecord({ id: `PAY-${Date.now().toString(36).toUpperCase()}`, orderId: order.id, userId: user.id, method: 'cod', amount: quote.pricing.grandTotal, currency: 'INR', status: 'created' });
+      await recordAudit({ actorId: user.id, actorEmail: user.email, action: 'VOICE_ORDER_CONFIRMED', entity: 'order', entityId: order.id, details: { total: quote.pricing.grandTotal } });
+      await sendUserNotification({ userId: user.id, email: user.email, type: 'order', title: `Order Confirmed (${order.id})`, message: `Your COD order of ₹${quote.pricing.grandTotal} is confirmed.` });
+      stateAcc.actions.push({ type: 'CLEAR_CART' });
+      stateAcc.actions.push({ type: 'NAVIGATE', to: '/dashboard', label: `Track ${order.id}` });
+      result = { success: true, orderId: order.id, grandTotal: quote.pricing.grandTotal, slot: chosenSlot.name };
+      break;
+    }
+
+    case 'initiate_online_checkout': {
+      if (!args.confirmed) {
+        result = { success: false, error: 'Explicit customer confirmation required.' };
+      } else {
+        stateAcc.actions.push({ type: 'OPEN_RAZORPAY_CHECKOUT', to: '/cart' });
+        result = { success: true, message: 'Navigated to checkout to open Razorpay payment popup.' };
+      }
+      break;
+    }
+
+    default:
+      result = { error: `Unknown tool: ${toolName}` };
+  }
+
+  const dur = Date.now() - t0;
+  stateAcc.toolDurationMs += dur;
+  logAI('HRUVITA-TOOLS', `Tool ${toolName} finished in ${dur}ms`);
+  return result;
+}
+
+// ============================================================
+// GROQ / OPENAI-COMPATIBLE TOOL CALLING LOOP
+// ============================================================
+async function runGroqToolAgent({ messages, ctx, stateAcc, model }) {
+  const groqKey = process.env.GROQ_API_KEY?.trim();
+  if (!groqKey) throw Object.assign(new Error('GROQ_API_KEY missing'), { code: 'MISSING_API_KEY' });
+
+  const openAiTools = TOOL_DEFINITIONS.map((t) => ({
+    type: 'function',
+    function: { name: t.name, description: t.description, parameters: t.parameters },
+  }));
+
+  const loopMessages = [...messages];
+  for (let step = 0; step < 3; step++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    const ai0 = Date.now();
+    logAI('HRUVITA-AI', `Sending request to Groq (${model}) step=${step + 1}`);
+
+    let res;
+    try {
+      res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: loopMessages,
+          tools: openAiTools,
+          tool_choice: 'auto',
+          temperature: 0.3,
+          max_tokens: 300,
+        }),
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    stateAcc.aiDurationMs += Date.now() - ai0;
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw Object.assign(new Error(`Groq HTTP ${res.status}: ${errText.slice(0, 160)}`), {
+        code: `GROQ_HTTP_${res.status}`,
+      });
+    }
+
+    const data = await res.json();
+    const choice = data.choices?.[0]?.message;
+    logAI('HRUVITA-AI', `AI response received in ${Date.now() - ai0}ms`);
+
+    if (!choice) throw Object.assign(new Error('Empty Groq response'), { code: 'EMPTY_AI_RESPONSE' });
+
+    if (Array.isArray(choice.tool_calls) && choice.tool_calls.length > 0) {
+      loopMessages.push(choice);
+      for (const tc of choice.tool_calls) {
+        const fnName = tc.function?.name;
+        let parsedArgs = {};
+        try {
+          parsedArgs = tc.function?.arguments ? JSON.parse(tc.function.arguments) : {};
+        } catch {
+          parsedArgs = {};
+        }
+        stateAcc.toolsUsed.push(fnName);
+        const toolResult = await executeToolCall(fnName, parsedArgs, ctx, stateAcc);
+        loopMessages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: JSON.stringify(toolResult),
+        });
+      }
+      continue;
+    }
+
+    return (choice.content || '').trim();
+  }
+
+  return '';
+}
+
+// ============================================================
+// GEMINI FUNCTION-CALLING FAILOVER AGENT
+// ============================================================
+async function runGeminiToolAgent({ systemPrompt, history, userMessage, ctx, stateAcc, model }) {
+  const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!geminiKey) throw Object.assign(new Error('GEMINI_API_KEY missing'), { code: 'MISSING_API_KEY' });
+
+  const contents = [
+    ...(history || []).slice(-6).map((m) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.text }],
+    })),
+    { role: 'user', parts: [{ text: userMessage }] },
+  ];
+
+  const tools = [{ functionDeclarations: TOOL_DEFINITIONS }];
+
+  for (let step = 0; step < 3; step++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    const ai0 = Date.now();
+    logAI('HRUVITA-AI', `Sending request to Gemini (${model}) step=${step + 1}`);
+
+    let res;
+    try {
+      res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`,
+        {
+          method: 'POST',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+            contents,
+            tools,
+            generationConfig: { temperature: 0.3, maxOutputTokens: 300 },
+          }),
+        }
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+
+    stateAcc.aiDurationMs += Date.now() - ai0;
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw Object.assign(new Error(`Gemini HTTP ${res.status}: ${errText.slice(0, 160)}`), {
+        code: `GEMINI_HTTP_${res.status}`,
+      });
+    }
+
+    const data = await res.json();
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    const fnCallPart = parts.find((p) => p.functionCall);
+    logAI('HRUVITA-AI', `Gemini response received in ${Date.now() - ai0}ms`);
+
+    if (fnCallPart) {
+      const { name, args } = fnCallPart.functionCall;
+      stateAcc.toolsUsed.push(name);
+      contents.push({ role: 'model', parts });
+      const toolResult = await executeToolCall(name, args || {}, ctx, stateAcc);
+      contents.push({
+        role: 'user',
+        parts: [{ functionResponse: { name, response: toolResult } }],
+      });
+      continue;
+    }
+
+    const textPart = parts.find((p) => p.text);
+    return (textPart?.text || '').trim();
+  }
+
+  return '';
+}
+
+// ============================================================
+// MAIN ENTRYPOINT
+// ============================================================
+export async function processAssistantTurn({
+  message,
+  language = 'en-IN',
+  user = null,
+  cartItems = {},
+  customBowls = [],
+  selectedAddressId = '',
+  slotId = 'morning',
+  personalizationEnabled = true,
+  history = [],
+}) {
+  const totalStart = Date.now();
+  const cleanMsg = String(message || '').trim();
+  const lang = detectLanguage(cleanMsg, language);
+  const isTelugu = lang === 'te-IN';
+
+  logAI('HRUVITA-AI', `Customer message received: "${cleanMsg}"`);
+  logAI('HRUVITA-AI', `Detected language: ${lang}`);
+
+  const { settings, categories } = await getCachedStaticInfo();
+  const vegOnly = Boolean(personalizationEnabled && user?.preferences?.vegOnly);
+
+  const cartSummary = Object.entries(cartItems || {})
+    .filter(([, q]) => Number(q) > 0)
+    .map(([id, q]) => `${id}×${q}`)
+    .join(', ') || 'EMPTY';
+
+  const stateAcc = {
+    actions: [],
+    toolsUsed: [],
+    recommendedProducts: [],
+    aiDurationMs: 0,
+    toolDurationMs: 0,
+    dbDurationMs: 0,
+    provider: 'none',
+    modelUsed: 'none',
+    errorCode: '',
+    errorMessage: '',
+  };
+
+  const systemPrompt = [
+    `You are ${settings.aiName || 'HRUVITA AI'}, a warm, friendly, polite female food-ordering representative for ${settings.name || 'HRUVITA'} in ${settings.city || 'Hyderabad'}.`,
+    `Language rule: Respond naturally in ${isTelugu ? 'clear, warm spoken Telugu (Telugu script)' : 'friendly, natural Indian English'}. Keep replies concise (1-3 short sentences) so they sound great when spoken aloud by a female voice.`,
+    `Categories: ${categories.map((c) => c.slug).join(', ')}`,
+    `Current Cart: ${cartSummary}${customBowls?.length ? ` + ${customBowls.length} custom bowl(s)` : ''}`,
+    `Customer Auth: ${user ? `Signed in as ${user.fullName || user.name}` : 'Guest (not signed in)'}`,
+    `CRITICAL RULES:`,
+    `1. You do NOT know product IDs, prices, or stock from memory. Whenever a customer asks for, wants, or orders food (e.g. "నాకు రెండు ఇడ్లీ ప్లేట్లు కావాలి", "I want juices", "under ₹100"), you MUST call search_products or show_category FIRST to look up real MongoDB products, then call add_to_cart with the exact productId returned by search_products if they asked to order/add.`,
+    `2. Always call open_checkout for checkout requests, view_cart for cart requests, build_custom_bowl for custom bowls, get_subscription_plans for subscriptions, get_business_info_and_offers for coupons/slots/delivery charges, and get_my_orders/track_order for order tracking.`,
+    `3. Never invent products, prices, stock, offers, or delivery slots. Never make medical claims. Never place a final order (place_cod_order / initiate_online_checkout) without explicit confirmation after reading the total.`,
+    settings.aiInstructions || '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const ctx = { user, cartItems, customBowls, selectedAddressId, slotId, vegOnly };
+  const groqModel = process.env.AI_MODEL?.trim() || 'openai/gpt-oss-20b';
+  const geminiModel = process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash';
+
+  let reply = '';
+
+  // 1. Primary Real LLM (Groq Tool Calling with automatic alternate-model failover on 429)
+  if (process.env.GROQ_API_KEY?.trim()) {
+    const llmMsgs = [
+      { role: 'system', content: systemPrompt },
+      ...(history || []).slice(-4).map((m) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.text,
+      })),
+      {
+        role: 'user',
+        content: `${cleanMsg}\n\n[Language instruction for this reply: Respond ONLY in ${
+          isTelugu ? 'natural Telugu script' : 'clear friendly Indian English'
+        }.]`,
+      },
+    ];
+    const groqCandidates = [...new Set([groqModel, 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b'])];
+    for (const candidateModel of groqCandidates) {
+      try {
+        stateAcc.provider = 'groq';
+        stateAcc.modelUsed = candidateModel;
+        reply = await runGroqToolAgent({ messages: llmMsgs, ctx, stateAcc, model: candidateModel });
+        if (reply) {
+          stateAcc.errorCode = '';
+          stateAcc.errorMessage = '';
+          break;
+        }
+      } catch (err) {
+        stateAcc.errorCode = err.code || 'GROQ_FAILED';
+        stateAcc.errorMessage = err.message;
+        logAIError(`Groq (${candidateModel}) failed`, err);
+        if (!String(err.code).includes('429') && !String(err.code).includes('404')) break;
+      }
+    }
+  }
+
+  // 2. Failover Real LLM (Gemini Function Calling)
+  if (!reply && process.env.GEMINI_API_KEY?.trim()) {
+    try {
+      stateAcc.provider = 'gemini';
+      stateAcc.modelUsed = geminiModel;
+      reply = await runGeminiToolAgent({
+        systemPrompt,
+        history,
+        userMessage: cleanMsg,
+        ctx,
+        stateAcc,
+        model: geminiModel,
+      });
+      stateAcc.errorCode = '';
+      stateAcc.errorMessage = '';
+    } catch (err) {
+      stateAcc.errorCode = err.code || 'GEMINI_FAILED';
+      stateAcc.errorMessage = err.message;
+      logAIError('Gemini AI failover failed', err);
+    }
+  }
+
+  // 3. Honest error / fallback message only when both LLM APIs are missing or unreachable
+  if (!reply) {
+    if (!process.env.GROQ_API_KEY?.trim() && !process.env.GEMINI_API_KEY?.trim()) {
+      stateAcc.errorCode = 'MISSING_API_KEY';
+      stateAcc.errorMessage = 'Neither GROQ_API_KEY nor GEMINI_API_KEY is configured in backend/.env.';
+      logAIError('Missing AI API key', stateAcc.errorMessage);
+    } else if (!stateAcc.errorCode) {
+      stateAcc.errorCode = 'AI_UNAVAILABLE';
+      stateAcc.errorMessage = 'AI service did not return a valid reply.';
+    }
+    reply = isTelugu
+      ? 'క్షమించండి, ప్రస్తుతం AI సేవ తాత్కాలికంగా అందుబాటులో లేదు. దయచేసి కొద్దిసేపటి తర్వాత మళ్లీ ప్రయత్నించండి.'
+      : 'Sorry, our AI assistant is temporarily busy right now. Please try again in a moment.';
+  }
+
+  const totalDurationMs = Date.now() - totalStart;
+  logAI('HRUVITA-PERFORMANCE', `Total response time: ${totalDurationMs} ms (AI: ${stateAcc.aiDurationMs}ms, Tools: ${stateAcc.toolDurationMs}ms, DB: ${stateAcc.dbDurationMs}ms)`);
 
   return {
-    reply: llmReply || fallbackReply,
+    reply,
     language: lang,
-    toolsUsed,
-    actions,
-    recommendedProducts,
-    sessionState: nextSessionState,
+    toolsUsed: stateAcc.toolsUsed,
+    actions: stateAcc.actions,
+    recommendedProducts: stateAcc.recommendedProducts,
+    sessionState: { pendingIntent: null, customBowlDraft: null },
+    debug: {
+      provider: stateAcc.provider,
+      model: stateAcc.modelUsed,
+      detectedLanguage: lang,
+      aiDurationMs: stateAcc.aiDurationMs,
+      toolDurationMs: stateAcc.toolDurationMs,
+      dbDurationMs: stateAcc.dbDurationMs,
+      totalDurationMs,
+      toolsCalled: stateAcc.toolsUsed,
+      errorCode: stateAcc.errorCode || null,
+      errorMessage: stateAcc.errorMessage || null,
+    },
   };
 }
