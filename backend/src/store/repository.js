@@ -2236,6 +2236,16 @@ export async function pauseSubscriptionForDate(subId, userId, dateStr) {
 }
 
 // Assistant Conversations Repository
+export async function getConversationById(conversationId) {
+  if (!conversationId) return null;
+  if (mongoConnected) {
+    const doc = await Conversation.findOne({ id: conversationId }).lean();
+    return stripMongo(doc);
+  }
+  const found = mem.conversations.find((c) => c.id === conversationId);
+  return found ? { ...found } : null;
+}
+
 export async function saveConversationTurn({
   conversationId,
   userId = 'guest',
@@ -2245,6 +2255,7 @@ export async function saveConversationTurn({
   assistantText,
   toolsUsed = [],
   addedToCart = false,
+  sessionState = { pendingIntent: null, customBowlDraft: null },
 }) {
   const now = new Date().toISOString();
   const newMsgs = [
@@ -2257,7 +2268,7 @@ export async function saveConversationTurn({
       { id: conversationId },
       {
         $setOnInsert: { id: conversationId, userId, userName },
-        $set: { language },
+        $set: { language, sessionState },
         $push: { messages: { $each: newMsgs } },
         $inc: { cartActionsCount: addedToCart ? 1 : 0 },
       },
@@ -2271,6 +2282,7 @@ export async function saveConversationTurn({
     mem.conversations[idx] = {
       ...mem.conversations[idx],
       language,
+      sessionState,
       messages: [...mem.conversations[idx].messages, ...newMsgs],
       cartActionsCount: (mem.conversations[idx].cartActionsCount || 0) + (addedToCart ? 1 : 0),
       updatedAt: now,
@@ -2283,6 +2295,7 @@ export async function saveConversationTurn({
     userId,
     userName,
     language,
+    sessionState,
     messages: newMsgs,
     cartActionsCount: addedToCart ? 1 : 0,
     createdAt: now,

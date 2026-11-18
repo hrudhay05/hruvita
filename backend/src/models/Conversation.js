@@ -18,6 +18,10 @@ const conversationSchema = new mongoose.Schema(
     language: { type: String, enum: ['en-IN', 'te-IN'], default: 'en-IN' },
     messages: { type: [messageSchema], default: [] },
     cartActionsCount: { type: Number, default: 0 },
+    sessionState: {
+      type: mongoose.Schema.Types.Mixed,
+      default: { pendingIntent: null, customBowlDraft: null },
+    },
   },
   { timestamps: true }
 );

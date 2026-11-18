@@ -3,7 +3,7 @@ const defaultHost =
     ? `http://${window.location.hostname}:5000`
     : 'http://localhost:5000';
 
-const API_BASE = (import.meta.env.VITE_API_URL || defaultHost).replace(/\/$/, '');
+export const API_BASE = (import.meta.env.VITE_API_URL || defaultHost).replace(/\/$/, '');
 const TOKEN_KEY = 'hruvita_token';
 
 export function getStoredToken() {
