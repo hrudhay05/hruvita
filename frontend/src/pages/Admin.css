@@ -3,17 +3,17 @@
   min-height: 100vh;
   display: grid;
   grid-template-columns: 1fr;
-  background: #f4f7f5;
+  background: var(--bg);
   color: var(--ink);
 }
 
 .admin-sidebar {
-  background: var(--green-900);
+  background: linear-gradient(180deg, #123728 0%, #1b4d38 100%);
   color: var(--cream);
-  padding: 20px;
+  padding: 20px 16px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
 }
 
 .admin-brand-row {
@@ -36,36 +36,50 @@
 
 .admin-nav {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
   gap: 6px;
+  padding-bottom: 4px;
 }
 
 .admin-nav-btn {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
-  padding: 11px 14px;
+  width: auto;
+  flex-shrink: 0;
+  padding: 10px 14px;
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: rgba(253, 248, 238, 0.8);
-  font-size: 0.9rem;
+  color: rgba(253, 248, 238, 0.84);
+  font-size: 0.88rem;
   font-weight: 500;
   text-align: left;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: var(--transition);
 }
 
 .admin-nav-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.1);
   color: var(--white);
 }
 
 .admin-nav-btn-active {
-  background: var(--green-700);
+  background: var(--secondary);
   color: var(--white);
-  font-weight: 600;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+}
+
+@media (min-width: 900px) {
+  .admin-nav {
+    flex-direction: column;
+    overflow-x: visible;
+  }
+
+  .admin-nav-btn {
+    width: 100%;
+  }
 }
 
 .admin-sidebar-foot {
@@ -257,8 +271,14 @@
 
 .admin-form-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
+}
+
+@media (min-width: 640px) {
+  .admin-form-row {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .admin-field {

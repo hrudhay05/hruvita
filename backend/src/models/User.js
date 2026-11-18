@@ -42,7 +42,7 @@ const userSchema = new mongoose.Schema(
     termsAccepted: { type: Boolean, default: false },
     role: {
       type: String,
-      enum: ['customer', 'staff', 'admin'],
+      enum: ['customer', 'staff', 'admin_analyser', 'admin'],
       default: 'customer',
       index: true,
     },

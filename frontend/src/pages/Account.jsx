@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   FiCalendar,
   FiCheck,
   FiCheckCircle,
   FiEdit2,
+  FiEye,
   FiHeart,
   FiLock,
   FiLogOut,
@@ -14,12 +15,14 @@ import {
   FiPlayCircle,
   FiPlus,
   FiRefreshCw,
+  FiSearch,
   FiShield,
   FiShoppingBag,
   FiStar,
   FiTrash2,
 } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
+import OrderDetailModal from '../components/OrderDetailModal.jsx';
 import ProductCard from '../components/ProductCard.jsx';
 import Login from './Login.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -65,6 +68,9 @@ export default function Account() {
   const [busy, setBusy] = useState(false);
 
   const [myOrders, setMyOrders] = useState([]);
+  const [orderSearch, setOrderSearch] = useState('');
+  const [orderStatusFilter, setOrderStatusFilter] = useState('all');
+  const [selectedOrder, setSelectedOrder] = useState(null);
   const [mySubscriptions, setMySubscriptions] = useState([]);
   const [myReferrals, setMyReferrals] = useState([]);
   const [referralSummary, setReferralSummary] = useState({
@@ -110,6 +116,15 @@ export default function Account() {
   }, [user]);
 
   useEffect(() => {
+    const onOrderPlaced = () => {
+      setSection('orders');
+      loadDashboardData();
+    };
+    window.addEventListener('hruvita:order-placed', onOrderPlaced);
+    return () => window.removeEventListener('hruvita:order-placed', onOrderPlaced);
+  }, [loadDashboardData]);
+
+  useEffect(() => {
     if (user) {
       setProfileForm({
         fullName: user.fullName || user.name || '',
@@ -132,6 +147,9 @@ export default function Account() {
 
   if (!user) {
     return <Login />;
+  }
+  if (user.role === 'admin_analyser') {
+    return <Navigate to="/admin-analyst" replace />;
   }
 
   const handleProfileSave = async (e) => {
@@ -179,13 +197,35 @@ export default function Account() {
   };
 
   const handleRepeatOrder = (order) => {
+    let addedCount = 0;
+    let skippedCount = 0;
+    let priceChanged = false;
     for (const item of order.items || []) {
-      const prod = productById[item.productId];
-      if (prod && prod.stock > 0) {
-        setQty(prod.id, Math.min(item.qty, prod.stock));
+      const baseId = String(item.productId || '').replace(/^combo:/, '');
+      const prod = productById[baseId];
+      if (prod && prod.active !== false && prod.stock > 0) {
+        const livePrice = Number(prod.discountPrice > 0 ? prod.discountPrice : prod.price);
+        if (livePrice && Number(item.unitPrice) && livePrice !== Number(item.unitPrice)) {
+          priceChanged = true;
+        }
+        setQty(prod.id, Math.min(item.qty || 1, prod.stock));
+        addedCount += 1;
+      } else {
+        skippedCount += 1;
       }
     }
-    showToast('Items added to cart.');
+    if (addedCount === 0) {
+      showToast('None of the items in this order are currently available.', 'error');
+      return;
+    }
+    if (skippedCount > 0 || priceChanged) {
+      showToast(
+        `Added ${addedCount} available item(s) at current menu prices${skippedCount ? ` (${skippedCount} unavailable)` : ''}.`
+      );
+    } else {
+      showToast('Items added to cart at current prices.');
+    }
+    setSelectedOrder(null);
     navigate('/cart');
   };
 
@@ -323,7 +363,44 @@ export default function Account() {
 
       {section === 'orders' && (
         <section className="account-card">
-          <h2>Order History ({myOrders.length})</h2>
+          <div className="account-orders-head">
+            <div>
+              <h2>Order History ({myOrders.length})</h2>
+              <span className="account-orders-sub">Click any order card to inspect products, payment &amp; receipt</span>
+            </div>
+          </div>
+
+          {myOrders.length > 0 && (
+            <div className="account-orders-controls">
+              <div className="account-order-search">
+                <FiSearch size={15} />
+                <input
+                  type="search"
+                  placeholder="Search by Order ID or item..."
+                  value={orderSearch}
+                  onChange={(e) => setOrderSearch(e.target.value)}
+                />
+              </div>
+              <div className="account-order-filters">
+                {[
+                  { id: 'all', label: 'All' },
+                  { id: 'active', label: 'Active' },
+                  { id: 'delivered', label: 'Delivered' },
+                  { id: 'cancelled', label: 'Cancelled / Refunded' },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={`account-filter-pill ${orderStatusFilter === f.id ? 'account-filter-active' : ''}`}
+                    onClick={() => setOrderStatusFilter(f.id)}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {myOrders.length === 0 ? (
             <div style={{ padding: '20px 0' }}>
               <p style={{ color: 'var(--muted)', marginBottom: 16 }}>
@@ -333,62 +410,162 @@ export default function Account() {
                 Explore Menu
               </Button>
             </div>
-          ) : (
-            <div className="account-orders-list">
-              {myOrders.map((ord) => (
-                <div key={ord.id} className="account-order-card">
-                  <div className="account-order-top">
-                    <div>
-                      <strong>{ord.id}</strong> &bull;{' '}
-                      <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
-                        {ord.scheduledDate} ({ord.slotLabel})
-                      </span>
-                    </div>
-                    <span className={`account-status-badge account-status-${ord.status}`}>
-                      {ord.status.replace(/_/g, ' ')}
-                    </span>
-                  </div>
+          ) : (() => {
+            const q = orderSearch.trim().toLowerCase();
+            const filtered = myOrders.filter((ord) => {
+              if (orderStatusFilter === 'active' && ['delivered', 'cancelled', 'refunded', 'refund_initiated'].includes(ord.status)) return false;
+              if (orderStatusFilter === 'delivered' && ord.status !== 'delivered') return false;
+              if (orderStatusFilter === 'cancelled' && !['cancelled', 'refunded', 'refund_initiated'].includes(ord.status)) return false;
+              if (q) {
+                const matchId = ord.id.toLowerCase().includes(q);
+                const matchItem = (ord.items || []).some((it) => String(it.name || '').toLowerCase().includes(q));
+                if (!matchId && !matchItem) return false;
+              }
+              return true;
+            });
 
-                  <div style={{ fontSize: '0.9rem' }}>
-                    {(ord.items || []).map((it) => (
-                      <div key={it.productId}>
-                        {it.name} &times; {it.qty} ({money(it.lineTotal)})
+            if (filtered.length === 0) {
+              return <p style={{ color: 'var(--muted)', padding: '16px 0' }}>No matching orders found.</p>;
+            }
+
+            return (
+              <div className="account-orders-list">
+                {filtered.map((ord) => {
+                  const items = ord.items || [];
+                  const totalQty = items.reduce((s, it) => s + Number(it.qty || 1), 0);
+                  const isSameDay = ord.slotId === 'same-day';
+                  const isCancelled = ['cancelled', 'refunded', 'refund_initiated'].includes(ord.status);
+                  const placedStr = ord.createdAt
+                    ? new Date(ord.createdAt).toLocaleString('en-IN', {
+                        day: 'numeric',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : ord.scheduledDate;
+
+                  return (
+                    <article
+                      key={ord.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedOrder(ord)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelectedOrder(ord);
+                        }
+                      }}
+                      className={`account-order-card account-order-clickable ${
+                        isCancelled
+                          ? 'account-order-cancelled'
+                          : ord.status === 'delivered'
+                            ? 'account-order-delivered'
+                            : ''
+                      }`.trim()}
+                    >
+                      <div className="account-order-visual-row">
+                        <div className={`account-order-collage ${items.length > 1 ? 'account-collage-multi' : ''}`}>
+                          {items.slice(0, 4).map((it, idx) => {
+                            const baseId = String(it.productId || '').replace(/^combo:/, '');
+                            const img = it.image || productById[baseId]?.image || '';
+                            return img ? (
+                              <img key={`${baseId}-${idx}`} src={img} alt={it.name} loading="lazy" />
+                            ) : (
+                              <div key={`${baseId}-${idx}`} className="account-collage-fallback" aria-hidden="true">
+                                {it.emoji || '🥗'}
+                              </div>
+                            );
+                          })}
+                          {items.length > 4 && (
+                            <span className="account-collage-more">+{items.length - 4}</span>
+                          )}
+                        </div>
+
+                        <div className="account-order-main">
+                          <div className="account-order-top">
+                            <div className="account-order-id-wrap">
+                              <span className="account-order-id">{ord.id}</span>
+                              <span className="account-order-schedule">
+                                Placed {placedStr} &bull; Delivery {ord.scheduledDate}
+                                {!isSameDay && ord.slotLabel ? ` (${ord.slotLabel})` : ' (Same-Day Express)'}
+                              </span>
+                            </div>
+                            <span className={`account-status-badge account-status-${ord.status}`}>
+                              {ord.status.replace(/_/g, ' ')}
+                            </span>
+                          </div>
+
+                          <ul className="account-order-items">
+                            {items.slice(0, 3).map((it, i) => (
+                              <li key={`${it.productId || i}-${i}`} className="account-order-item-row">
+                                <span className="account-item-qty">{it.qty}&times;</span>
+                                <span className="account-item-name">{it.name}</span>
+                                <span className="account-item-price">{money(it.lineTotal)}</span>
+                              </li>
+                            ))}
+                            {items.length > 3 && (
+                              <li className="account-item-more">+{items.length - 3} more item(s)</li>
+                            )}
+                          </ul>
+                        </div>
                       </div>
-                    ))}
-                  </div>
 
-                  <div className="account-order-top" style={{ fontSize: '0.86rem', color: 'var(--muted)' }}>
-                    <span>
-                      Total:{' '}
-                      <strong style={{ color: 'var(--primary)' }}>
-                        {money(ord.pricing?.grandTotal)}
-                      </strong>{' '}
-                      &bull; {ord.paymentMethod.toUpperCase()} ({ord.paymentStatus})
-                    </span>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button
-                        type="button"
-                        className="admin-mini-btn"
-                        onClick={() => handleRepeatOrder(ord)}
-                      >
-                        <FiRefreshCw size={12} /> Order Again
-                      </button>
-                      {['pending', 'payment_pending', 'confirmed'].includes(ord.status) && (
-                        <button
-                          type="button"
-                          className="admin-mini-btn admin-mini-danger"
-                          onClick={() => handleCancelOrder(ord.id)}
-                        >
-                          Cancel
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+                      <div className="account-order-foot">
+                        <div className="account-order-pay">
+                          <span className="account-pay-chip">
+                            {totalQty} item{totalQty === 1 ? '' : 's'} &bull; {ord.paymentMethod.toUpperCase()} ({ord.paymentStatus})
+                          </span>
+                          <strong className="account-order-total">
+                            {money(ord.pricing?.grandTotal)}
+                          </strong>
+                        </div>
+                        <div className="account-order-actions" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="admin-mini-btn"
+                            onClick={() => setSelectedOrder(ord)}
+                          >
+                            <FiEye size={12} /> View Details
+                          </button>
+                          <button
+                            type="button"
+                            className="admin-mini-btn"
+                            onClick={() => handleRepeatOrder(ord)}
+                          >
+                            <FiRefreshCw size={12} /> Order Again
+                          </button>
+                          {['pending', 'payment_pending', 'confirmed', 'placed'].includes(ord.status) && (
+                            <button
+                              type="button"
+                              className="admin-mini-btn admin-mini-danger"
+                              onClick={() => handleCancelOrder(ord.id)}
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </section>
+      )}
+
+      {selectedOrder && (
+        <OrderDetailModal
+          order={selectedOrder}
+          onClose={() => setSelectedOrder(null)}
+          onReorder={handleRepeatOrder}
+          onCancel={async (id) => {
+            await handleCancelOrder(id);
+            setSelectedOrder(null);
+          }}
+          onReviewSubmitted={loadDashboardData}
+        />
       )}
 
       {section === 'subscriptions' && (

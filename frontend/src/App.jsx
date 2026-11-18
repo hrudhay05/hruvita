@@ -19,13 +19,15 @@ import AddressFormPage from './pages/AddressFormPage.jsx';
 import SavedAddresses from './pages/SavedAddresses.jsx';
 import Account from './pages/Account.jsx';
 import Admin from './pages/Admin.jsx';
+import AdminAnalystPage from './pages/AdminAnalystPage.jsx';
 import NotFound from './pages/NotFound.jsx';
 
 export default function App() {
   return (
     <Routes>
-      {/* Dedicated Admin Workspace */}
+      {/* Dedicated Admin Workspaces */}
       <Route path="admin" element={<Admin />} />
+      <Route path="admin-analyst" element={<AdminAnalystPage />} />
 
       {/* Customer Brand Website */}
       <Route element={<Layout />}>

@@ -499,17 +499,33 @@ export async function listSlots() {
   return mem.slots.filter((s) => s.active !== false).map((s) => ({ ...s }));
 }
 
+export function getBusinessDateParts(timeZone = 'Asia/Kolkata') {
+  const now = new Date();
+  const fmtDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const fmtHour = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    hour12: false,
+  });
+  const todayStr = fmtDate.format(now);
+  const tomorrowStr = fmtDate.format(new Date(now.getTime() + 86400000));
+  const rawHour = Number(fmtHour.format(now));
+  const currentHour = Number.isFinite(rawHour) ? rawHour % 24 : now.getHours();
+  return { todayStr, tomorrowStr, currentHour };
+}
+
 export async function listSlotsForDate(dateStr = '') {
   const settings = await getSettings();
   const slots = await listSlots();
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const { todayStr, tomorrowStr, currentHour } = getBusinessDateParts();
   const targetDate = dateStr || todayStr;
   const maxDays = Number(settings.maxPreOrderDays ?? 7);
   const cutoffHour = Number(settings.cutoffHour ?? 21);
-
-  const now = new Date();
-  const currentHour = now.getHours();
 
   const orders = await listAllOrders();
   const activeOrdersForDate = orders.filter(
@@ -554,11 +570,40 @@ export async function listSlotsForDate(dateStr = '') {
   });
 }
 
+export async function getBookingAvailability(dateStr = '') {
+  const settings = await getSettings();
+  const { todayStr, tomorrowStr, currentHour } = getBusinessDateParts();
+  const targetDate = dateStr || todayStr;
+  const isSameDay = targetDate === todayStr;
+  const cutoffHour = Number(settings.cutoffHour ?? 21);
+  const maxPreOrderDays = Number(settings.maxPreOrderDays ?? 7);
+  const storeOpen = settings.storeOpen !== false;
+  const sameDayAvailable = isSameDay && storeOpen && currentHour < cutoffHour;
+  const sameDayMessage = !storeOpen
+    ? `Store is currently closed. Please choose ${tomorrowStr} or another upcoming date.`
+    : sameDayAvailable
+      ? "Ordering for today? Great! We'll prepare your order as soon as possible."
+      : `Same-day ordering is closed after ${cutoffHour}:00. Please book for ${tomorrowStr} or a future date.`;
+
+  const slots = isSameDay ? [] : await listSlotsForDate(targetDate);
+  return {
+    date: targetDate,
+    isSameDay,
+    sameDayAvailable,
+    sameDayMessage,
+    nextAvailableDate: tomorrowStr,
+    cutoffHour,
+    maxPreOrderDays,
+    slots,
+  };
+}
+
 export async function validateDeliverySchedule({ scheduledDate, slotId }) {
   const settings = await getSettings();
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const { todayStr, tomorrowStr, currentHour } = getBusinessDateParts();
   const targetDate = scheduledDate || todayStr;
   const maxDays = Number(settings.maxPreOrderDays ?? 7);
+  const cutoffHour = Number(settings.cutoffHour ?? 21);
 
   const dayDiff = Math.round(
     (new Date(`${targetDate}T00:00:00`).getTime() - new Date(`${todayStr}T00:00:00`).getTime()) /
@@ -571,8 +616,30 @@ export async function validateDeliverySchedule({ scheduledDate, slotId }) {
     throw new Error(`Pre-orders are accepted up to ${maxDays} days in advance.`);
   }
 
+  // Same-day ordering: no delivery slot selection required; validate operating hours / cutoff
+  if (dayDiff === 0) {
+    if (settings.storeOpen === false) {
+      throw new Error(`The store is currently closed for same-day orders. Please book for ${tomorrowStr}.`);
+    }
+    if (currentHour >= cutoffHour) {
+      throw new Error(
+        `Same-day ordering is closed for today (cut-off ${cutoffHour}:00). Please choose ${tomorrowStr} or a future date.`
+      );
+    }
+    return {
+      id: 'same-day',
+      name: 'Same-Day Express',
+      window: 'Prepared ASAP',
+      isSameDay: true,
+    };
+  }
+
+  // Future-date pre-booking: require a valid, available delivery slot
   const enrichedSlots = await listSlotsForDate(targetDate);
-  const chosen = enrichedSlots.find((s) => s.id === slotId) || enrichedSlots[0];
+  if (!slotId || slotId === 'same-day') {
+    throw new Error('Please select a valid delivery slot for your advance booking.');
+  }
+  const chosen = enrichedSlots.find((s) => s.id === slotId);
   if (!chosen) {
     throw new Error('Selected delivery slot is not available.');
   }

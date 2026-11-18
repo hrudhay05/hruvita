@@ -18,6 +18,10 @@ export default function Login() {
 
   const handleUserRedirect = (loggedUser) => {
     if (!loggedUser) return;
+    if (loggedUser.role === 'admin_analyser') {
+      navigate('/admin-analyst');
+      return;
+    }
     if (loggedUser.role === 'admin' || loggedUser.role === 'staff') {
       navigate('/admin');
       return;

@@ -1,7 +1,15 @@
+// const defaultHost =
+//   typeof window !== 'undefined' && window.location?.hostname
+//     ? `http://${window.location.hostname}:5000`
+//     : 'http://localhost:5000';
+
+// export const API_BASE = (import.meta.env.VITE_API_URL || defaultHost).replace(/\/$/, '');
 const defaultHost =
-  typeof window !== 'undefined' && window.location?.hostname
-    ? `http://${window.location.hostname}:5000`
-    : 'http://localhost:5000';
+  typeof window !== 'undefined' && window.location?.hostname.endsWith('.ngrok-free.dev')
+    ? ''
+    : typeof window !== 'undefined' && window.location?.hostname
+      ? `http://${window.location.hostname}:5000`
+      : 'http://localhost:5000';
 
 export const API_BASE = (import.meta.env.VITE_API_URL || defaultHost).replace(/\/$/, '');
 const TOKEN_KEY = 'hruvita_token';

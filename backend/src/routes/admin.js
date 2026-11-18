@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import bcrypt from 'bcrypt';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { ORDER_STATUSES } from '../models/Order.js';
 import { sendUserNotification } from '../utils/emailService.js';
@@ -12,6 +13,9 @@ import {
   listProducts,
   listCategories,
   listUsers,
+  createUser,
+  findUserByEmail,
+  findUserById,
   updateUser,
   sanitizeUser,
   listAuditLogs,
@@ -73,6 +77,29 @@ router.get('/overview', async (_req, res) => {
     .filter((o) => !['cancelled', 'refund_initiated', 'refunded', 'payment_pending'].includes(o.status))
     .reduce((sum, o) => sum + (o.pricing?.grandTotal || 0), 0);
 
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayOrdersCount = orders.filter(
+    (o) => o.scheduledDate === todayIso || String(o.createdAt || '').slice(0, 10) === todayIso
+  ).length;
+  const pendingOrdersCount = orders.filter((o) =>
+    ['placed', 'confirmed', 'preparing', 'packed', 'out_for_delivery', 'payment_pending'].includes(o.status)
+  ).length;
+  const completedOrdersCount = orders.filter((o) => o.status === 'delivered').length;
+  const cancelledOrdersCount = orders.filter((o) => ['cancelled', 'refunded'].includes(o.status)).length;
+
+  const productQtyMap = new Map();
+  for (const o of orders) {
+    if (['cancelled', 'refunded'].includes(o.status)) continue;
+    for (const item of o.items || []) {
+      const key = item.name || item.productId || 'Item';
+      productQtyMap.set(key, (productQtyMap.get(key) || 0) + Number(item.qty || 1));
+    }
+  }
+  const popularProducts = [...productQtyMap.entries()]
+    .map(([name, qty]) => ({ name, qty }))
+    .sort((a, b) => b.qty - a.qty)
+    .slice(0, 5);
+
   res.json({
     stats: {
       totalProducts: products.length,
@@ -82,9 +109,14 @@ router.get('/overview', async (_req, res) => {
       totalCustomers: customers.length,
       totalOrders: orders.length,
       activeOrdersCount: activeOrders.length,
+      todayOrdersCount,
+      pendingOrdersCount,
+      completedOrdersCount,
+      cancelledOrdersCount,
       activeSubscriptionsCount: activeSubscriptions.length,
       totalRevenue,
     },
+    popularProducts,
     lowStock,
     outOfStock,
     customers,
@@ -691,6 +723,93 @@ router.post('/referrals/:id/resolve', requireRole('admin'), async (req, res) => 
   } catch (err) {
     res.status(400).json({ error: err.message || 'Could not resolve referral.' });
   }
+});
+
+// Owner/Super Admin: Admin Team & Admin Analyst Management
+router.get('/team', requireRole('admin'), async (_req, res) => {
+  const users = await listUsers();
+  const team = users
+    .filter((u) => ['admin', 'staff', 'admin_analyser'].includes(u.role))
+    .map((u) => ({
+      id: u.id,
+      fullName: u.fullName || u.name,
+      email: u.email,
+      role: u.role,
+      blocked: Boolean(u.blocked),
+      createdAt: u.createdAt,
+    }));
+  res.json({ team });
+});
+
+router.post('/team', requireRole('admin'), async (req, res) => {
+  try {
+    const { fullName, email, password, role = 'admin_analyser' } = req.body || {};
+    if (!fullName || !email || !password || String(password).length < 8) {
+      return res.status(400).json({ error: 'Full name, valid email, and password (8+ chars) are required.' });
+    }
+    if (!['admin_analyser', 'staff'].includes(role)) {
+      return res.status(400).json({ error: 'Role must be admin_analyser or staff.' });
+    }
+    const normEmail = String(email).trim().toLowerCase();
+    const existing = await findUserByEmail(normEmail);
+    if (existing) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+    const passwordHash = await bcrypt.hash(String(password), 12);
+    const created = await createUser({
+      id: `u-team-${Date.now().toString(36)}`,
+      fullName: String(fullName).trim(),
+      name: String(fullName).trim(),
+      email: normEmail,
+      password: passwordHash,
+      role,
+      isEmailVerified: true,
+      isProfileCompleted: true,
+      termsAccepted: true,
+      blocked: false,
+    });
+    await recordAudit({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'ADMIN_ACCOUNT_CREATED',
+      entity: 'user',
+      entityId: created.id,
+      newValue: { email: normEmail, role },
+      details: { email: normEmail, role },
+    });
+    return res.status(201).json({
+      member: {
+        id: created.id,
+        fullName: created.fullName,
+        email: created.email,
+        role: created.role,
+        blocked: false,
+      },
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Could not create team account.' });
+  }
+});
+
+router.patch('/team/:id/status', requireRole('admin'), async (req, res) => {
+  const target = await findUserById(req.params.id);
+  if (!target) return res.status(404).json({ error: 'Account not found.' });
+  if (target.id === req.user.id) {
+    return res.status(400).json({ error: 'You cannot deactivate your own owner account.' });
+  }
+  const blocked = Boolean(req.body?.blocked);
+  const updated = await updateUser(target.id, { blocked });
+  await recordAudit({
+    actorId: req.user.id,
+    actorEmail: req.user.email,
+    action: blocked ? 'ADMIN_ACCOUNT_DEACTIVATED' : 'ADMIN_ACCOUNT_ACTIVATED',
+    entity: 'user',
+    entityId: target.id,
+    previousValue: { blocked: Boolean(target.blocked) },
+    newValue: { blocked },
+    details: { email: target.email, role: target.role, blocked },
+  });
+  res.json({ member: { id: updated.id, email: updated.email, role: updated.role, blocked: Boolean(updated.blocked) } });
 });
 
 export default router;

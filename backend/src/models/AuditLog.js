@@ -8,6 +8,9 @@ const auditLogSchema = new mongoose.Schema(
     action: { type: String, required: true },
     entity: { type: String, required: true },
     entityId: { type: String, default: '' },
+    previousValue: { type: mongoose.Schema.Types.Mixed, default: null },
+    newValue: { type: mongoose.Schema.Types.Mixed, default: null },
+    reason: { type: String, default: '' },
     details: { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   { timestamps: true }

@@ -5,11 +5,17 @@
 .account-auth-box {
   max-width: 470px;
   margin: 12px auto;
-  padding: 32px;
+  padding: 20px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
   background: var(--white);
   box-shadow: var(--shadow-lg);
+}
+
+@media (min-width: 640px) {
+  .account-auth-box {
+    padding: 32px;
+  }
 }
 
 .account-tabs {
@@ -86,12 +92,18 @@
 
 .account-pwd-rules {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 5px 10px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   background: var(--green-50);
   font-size: 0.76rem;
+}
+
+@media (min-width: 480px) {
+  .account-pwd-rules {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .account-pwd-rule {
@@ -256,18 +268,171 @@
   font-weight: 600;
 }
 
+.account-orders-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.account-orders-head h2 {
+  margin-bottom: 0;
+}
+
+.account-orders-sub {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.account-orders-controls {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.account-order-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.account-order-search input {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  width: 100%;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.account-order-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.account-filter-pill {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--white);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.account-filter-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--white);
+}
+
+.account-order-clickable {
+  cursor: pointer;
+}
+
+.account-order-clickable:hover {
+  transform: translateY(-2px);
+}
+
+.account-order-visual-row {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.account-order-collage {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--green-50);
+  border: 1px solid var(--line);
+  display: grid;
+}
+
+.account-order-collage img,
+.account-collage-fallback {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.account-collage-fallback {
+  display: grid;
+  place-items: center;
+  background: var(--green-100);
+  font-size: 1.5rem;
+}
+
+.account-collage-multi {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+  background: var(--line);
+}
+
+.account-collage-more {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(18, 55, 40, 0.85);
+  color: var(--white);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.account-order-main {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.account-item-more {
+  font-size: 0.78rem;
+  color: var(--primary);
+  font-weight: 600;
+}
+
 .account-orders-list {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .account-order-card {
-  padding: 16px;
-  border-radius: var(--radius-sm);
+  padding: 18px;
+  border-radius: var(--radius);
   border: 1px solid var(--line);
-  background: var(--green-50);
+  border-left: 4px solid var(--primary);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
   display: grid;
-  gap: 10px;
+  gap: 14px;
+  transition: var(--transition);
+}
+
+.account-order-card:hover {
+  box-shadow: var(--shadow);
+}
+
+.account-order-delivered {
+  border-left-color: var(--secondary);
+}
+
+.account-order-cancelled {
+  border-left-color: var(--danger);
+  opacity: 0.88;
 }
 
 .account-order-top {
@@ -275,6 +440,143 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+}
+
+.account-order-id-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.account-order-id {
+  font-weight: 700;
+  font-size: 0.98rem;
+  color: var(--green-900);
+  letter-spacing: 0.02em;
+}
+
+.account-order-schedule {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.account-order-stepper {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 10px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--green-50);
+}
+
+.account-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.account-step-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--line);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.account-step-done {
+  color: var(--green-900);
+  font-weight: 600;
+}
+
+.account-step-done .account-step-dot {
+  background: var(--primary);
+  color: var(--white);
+}
+
+.account-step-current .account-step-dot {
+  box-shadow: 0 0 0 4px rgba(27, 77, 56, 0.18);
+}
+
+.account-order-items {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.account-order-item-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+}
+
+.account-item-qty {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--green-100);
+  color: var(--green-900);
+  font-weight: 700;
+  font-size: 0.76rem;
+}
+
+.account-item-name {
+  color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-item-price {
+  font-weight: 600;
+  color: var(--green-900);
+}
+
+.account-order-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.account-order-pay {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.account-pay-chip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--cream-dark);
+  color: var(--ink);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.account-order-total {
+  color: var(--primary);
+  font-size: 0.98rem;
+}
+
+.account-order-actions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 

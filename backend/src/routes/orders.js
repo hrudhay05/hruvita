@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { sendUserNotification } from '../utils/emailService.js';
+import { notifyAdmins } from '../utils/adminNotifier.js';
 import {
   getRazorpayKeyId,
   getRazorpaySecret,
@@ -11,6 +12,7 @@ import {
 } from '../utils/razorpayClient.js';
 import {
   listSlotsForDate,
+  getBookingAvailability,
   validateDeliverySchedule,
   listCoupons,
   getSettings,
@@ -22,6 +24,8 @@ import {
   getOrderByRazorpayOrderId,
   listOrdersByUser,
   listPaymentsByUser,
+  listProducts,
+  listCombos,
   confirmOrderPayment,
   transitionOrderStatus,
   findUserById,
@@ -37,11 +41,11 @@ export function signRazorpayPair(razorpayOrderId, razorpayPaymentId) {
     .digest('hex');
 }
 
-// Public delivery slots (with live capacity & pre-order cut-off for ?date=YYYY-MM-DD)
+// Public delivery slots (same-day ASAP vs advance booking slots for ?date=YYYY-MM-DD)
 router.get('/slots', async (req, res) => {
   const dateStr = String(req.query.date || '').slice(0, 10);
-  const slots = await listSlotsForDate(dateStr);
-  res.json({ slots });
+  const booking = await getBookingAvailability(dateStr);
+  res.json(booking);
 });
 
 router.get('/coupons', async (_req, res) => {
@@ -166,6 +170,15 @@ router.post('/orders', requireAuth, async (req, res) => {
         title: `Order Confirmed (${order.id})`,
         message: `Your COD order of ₹${quote.pricing.grandTotal} is confirmed for ${deliveryDate} (${slot.name}).`,
       });
+
+      notifyAdmins({
+        dedupKey: `new-cod-${order.id}`,
+        category: 'order',
+        title: `New COD Order ${order.id}`,
+        description: `₹${quote.pricing.grandTotal} COD order from ${req.user.name || req.user.email}.`,
+        entityType: 'order',
+        entityId: order.id,
+      }).catch(() => {});
 
       return res.status(201).json({ order, payment });
     }
@@ -353,13 +366,57 @@ router.post('/webhooks/razorpay', async (req, res) => {
   }
 });
 
+async function enrichOrdersWithCatalogAndPayments(orders, payments = []) {
+  const [products, combos] = await Promise.all([listProducts(), listCombos()]);
+  const prodMap = new Map(products.map((p) => [p.id, p]));
+  const comboMap = new Map(combos.map((c) => [c.id, c]));
+  const payByOrder = new Map();
+  for (const p of payments) {
+    if (p.orderId) payByOrder.set(p.orderId, p);
+  }
+
+  return orders.map((ord) => {
+    const pay = payByOrder.get(ord.id);
+    const enrichedItems = (ord.items || []).map((it) => {
+      const baseId = String(it.productId || '').replace(/^combo:/, '');
+      const catalogEntry = it.isCombo ? comboMap.get(baseId) : prodMap.get(baseId);
+      return {
+        ...it,
+        image: it.image || catalogEntry?.image || '',
+        description: it.description || catalogEntry?.description || '',
+      };
+    });
+    const paymentSummary = pay
+      ? {
+          id: pay.id,
+          method: pay.method,
+          amount: pay.amount,
+          currency: pay.currency || 'INR',
+          status: pay.status,
+          razorpayOrderId: pay.razorpayOrderId || ord.razorpayOrderId || '',
+          razorpayPaymentId: pay.razorpayPaymentId || ord.razorpayPaymentId || '',
+          refundId: pay.refundId || '',
+          refundStatus: pay.refundStatus || '',
+          createdAt: pay.createdAt,
+        }
+      : null;
+
+    return {
+      ...ord,
+      items: enrichedItems,
+      paymentSummary,
+    };
+  });
+}
+
 // Customer's orders & payment history
 router.get('/orders/my', requireAuth, async (req, res) => {
   const [orders, payments] = await Promise.all([
     listOrdersByUser(req.user.id),
     listPaymentsByUser(req.user.id),
   ]);
-  res.json({ orders, payments });
+  const enriched = await enrichOrdersWithCatalogAndPayments(orders, payments);
+  res.json({ orders: enriched, payments });
 });
 
 router.get('/orders/:id', requireAuth, async (req, res) => {
@@ -370,7 +427,9 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
   if (order.userId !== req.user.id && req.user.role !== 'admin' && req.user.role !== 'staff') {
     return res.status(403).json({ error: 'Forbidden.' });
   }
-  res.json({ order });
+  const payments = await listPaymentsByUser(order.userId);
+  const [enriched] = await enrichOrdersWithCatalogAndPayments([order], payments);
+  res.json({ order: enriched });
 });
 
 router.post('/orders/:id/cancel', requireAuth, async (req, res) => {
@@ -391,6 +450,14 @@ router.post('/orders/:id/cancel', requireAuth, async (req, res) => {
       note: req.body?.reason || 'Cancelled by customer',
       by: req.user.email,
     });
+    notifyAdmins({
+      dedupKey: `cancel-${order.id}-${nextStatus}`,
+      category: nextStatus === 'refund_initiated' ? 'payment' : 'cancellation',
+      title: nextStatus === 'refund_initiated' ? `Refund Requested: ${order.id}` : `Order Cancelled: ${order.id}`,
+      description: `${order.id} updated to ${nextStatus} by customer.`,
+      entityType: 'order',
+      entityId: order.id,
+    }).catch(() => {});
     return res.json({ order: updated });
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Could not cancel order.' });

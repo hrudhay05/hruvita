@@ -119,12 +119,18 @@
 
 .auth-pwd-checklist {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 6px 12px;
   padding: 12px;
   border-radius: var(--radius-sm);
   background: var(--green-50);
   font-size: 0.78rem;
+}
+
+@media (min-width: 480px) {
+  .auth-pwd-checklist {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .auth-pwd-item {

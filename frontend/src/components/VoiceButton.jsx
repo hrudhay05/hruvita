@@ -65,6 +65,7 @@ export default function VoiceButton() {
   const [lastSpoken, setLastSpoken] = useState({ text: '', lang: 'en-IN' });
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [assistantState, setAssistantState] = useState('IDLE'); // IDLE | GREETING | LISTENING | PROCESSING | SPEAKING | ENDING | CLOSED
   const [conversationId, setConversationId] = useState('');
   const [messages, setMessages] = useState([
     {
@@ -91,6 +92,16 @@ export default function VoiceButton() {
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef(null);
   const mediaRecorderRef = useRef(null);
+  const stateRef = useRef('IDLE');
+  const chatAbortRef = useRef(null);
+  const ttsAbortRef = useRef(null);
+  const inFlightRef = useRef(false);
+
+  const transitionState = useCallback((next) => {
+    stateRef.current = next;
+    setAssistantState(next);
+    devLog('HRUVITA-STATE', `State -> ${next}`);
+  }, []);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -113,6 +124,10 @@ export default function VoiceButton() {
   }, []);
 
   const stopAllSpeech = useCallback(() => {
+    if (ttsAbortRef.current) {
+      ttsAbortRef.current.abort();
+      ttsAbortRef.current = null;
+    }
     if (audioRef.current) {
       audioRef.current.onended = null;
       audioRef.current.pause();
@@ -156,6 +171,13 @@ export default function VoiceButton() {
   }, [clearRetryTimer]);
 
   const resetAndCloseAssistant = useCallback(() => {
+    transitionState('CLOSED');
+    if (chatAbortRef.current) {
+      chatAbortRef.current.abort();
+      chatAbortRef.current = null;
+    }
+    inFlightRef.current = false;
+    setBusy(false);
     closingSessionRef.current = false;
     greetedSessionRef.current = false;
     voiceActiveRef.current = false;
@@ -174,7 +196,7 @@ export default function VoiceButton() {
     ]);
     setOpen(false);
     setMinimized(false);
-  }, [lang, stopListening, stopAllSpeech]);
+  }, [lang, stopListening, stopAllSpeech, transitionState]);
 
   // Cleanup on unmount or drawer close/minimize
   useEffect(() => {
@@ -186,13 +208,19 @@ export default function VoiceButton() {
         stopAllSpeech();
         greetedSessionRef.current = false;
         closingSessionRef.current = false;
+        transitionState('IDLE');
       }
     }
-  }, [open, minimized, stopListening, stopAllSpeech]);
+  }, [open, minimized, stopListening, stopAllSpeech, transitionState]);
 
-  useEffect(() => {
-    const switchConversationMode = (nextMode) => {
-    // Properly stop previous mode before starting the newly selected mode
+  const switchConversationMode = (nextMode) => {
+    // Properly stop previous mode & cancel any pending requests before starting the newly selected mode
+    if (chatAbortRef.current) {
+      chatAbortRef.current.abort();
+      chatAbortRef.current = null;
+    }
+    inFlightRef.current = false;
+    setBusy(false);
     stopListening();
     stopAllSpeech();
     retryCountRef.current = 0;
@@ -203,6 +231,7 @@ export default function VoiceButton() {
 
     if (nextMode === 'text') {
       voiceActiveRef.current = false;
+      transitionState('IDLE');
       devLog('HRUVITA-VOICE', 'Switched to Text mode (mic & voice stopped)');
       return;
     }
@@ -215,6 +244,7 @@ export default function VoiceButton() {
     if (nextMode === 'ptt') {
       // Push-to-Talk: greet & activate mic for FIRST interaction, then wait for next manual click
       voiceActiveRef.current = false;
+      transitionState('GREETING');
       devLog('HRUVITA-VOICE', 'Switched to Push-to-Talk mode');
       speakFemaleVoice(welcomeText, lang, {
         skipAutoListen: true,
@@ -226,6 +256,7 @@ export default function VoiceButton() {
       });
     } else if (nextMode === 'handsfree') {
       voiceActiveRef.current = true;
+      transitionState('GREETING');
       devLog('HRUVITA-VOICE', 'Switched to Hands-Free mode');
       if (!greetedSessionRef.current) {
         greetedSessionRef.current = true;
@@ -236,8 +267,10 @@ export default function VoiceButton() {
     }
   };
 
-  return () => {
+  useEffect(() => {
+    return () => {
       voiceActiveRef.current = false;
+      if (chatAbortRef.current) chatAbortRef.current.abort();
       stopListening();
       stopAllSpeech();
     };
@@ -362,6 +395,7 @@ export default function VoiceButton() {
       let finalTranscript = '';
 
       rec.onstart = () => {
+        transitionState('LISTENING');
         setListening(true);
         setInterimText('');
         devLog('HRUVITA-VOICE', `Microphone active (${targetLang})`);
@@ -545,9 +579,12 @@ export default function VoiceButton() {
 
     try {
       const tts0 = Date.now();
+      const ttsController = new AbortController();
+      ttsAbortRef.current = ttsController;
       devLog('HRUVITA-TTS', `Requesting female voice (${speechLang})`);
       const resp = await fetch(`${API_BASE}/api/assistant/tts`, {
         method: 'POST',
+        signal: ttsController.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, language: speechLang }),
       });
@@ -622,10 +659,16 @@ export default function VoiceButton() {
 
   const sendMessage = async (textToSend) => {
     const clean = String(textToSend || '').trim();
-    if (!clean || busy) return;
+    if (!clean || busy || inFlightRef.current || stateRef.current === 'CLOSED') return;
+
+    inFlightRef.current = true;
+    if (chatAbortRef.current) chatAbortRef.current.abort();
+    const controller = new AbortController();
+    chatAbortRef.current = controller;
 
     const turn0 = Date.now();
     devLog('HRUVITA-AI', `Sending customer message: "${clean}"`);
+    transitionState('PROCESSING');
     setInput('');
     setMessages((prev) => [...prev, { role: 'user', text: clean, actions: [], products: [] }]);
     setBusy(true);
@@ -633,6 +676,7 @@ export default function VoiceButton() {
     try {
       const data = await apiRequest('/api/assistant/chat', {
         method: 'POST',
+        signal: controller.signal,
         body: JSON.stringify({
           message: clean,
           language: lang,
@@ -647,6 +691,9 @@ export default function VoiceButton() {
       if (data.conversationId) setConversationId(data.conversationId);
 
       // Execute safe structured website, cart, payment & navigation actions
+      const hasOrderPlaced = (data.actions || []).some(
+        (x) => x.type === 'ORDER_PLACED' || x.type === 'CLEAR_CART'
+      );
       for (const act of data.actions || []) {
         if (act.type === 'ADD_TO_CART' && act.productId) {
           devLog('HRUVITA-CART', `Adding product ${act.productId} x ${act.qty || 1}`);
@@ -666,10 +713,15 @@ export default function VoiceButton() {
         } else if (act.type === 'SET_PAYMENT_METHOD' && act.method) {
           devLog('HRUVITA-PAYMENT', `Payment method selected: ${act.method}`);
           window.dispatchEvent(new CustomEvent('hruvita:set-payment', { detail: act.method }));
-          navigate(`/cart?pay=${act.method}`);
+          if (!hasOrderPlaced) {
+            navigate(`/cart?pay=${act.method}`);
+          }
         } else if (act.type === 'CLEAR_CART') {
           devLog('HRUVITA-CART', 'Cart cleared');
           clear();
+        } else if (act.type === 'ORDER_PLACED') {
+          window.dispatchEvent(new CustomEvent('hruvita:order-placed', { detail: act.orderId }));
+          navigate('/dashboard?tab=orders');
         } else if (act.type === 'NAVIGATE' && act.to) {
           const hasPayOverride = (data.actions || []).some((x) => x.type === 'SET_PAYMENT_METHOD');
           if (!(hasPayOverride && act.to === '/cart')) {
@@ -689,6 +741,7 @@ export default function VoiceButton() {
 
       const isEnding = (data.actions || []).some((a) => a.type === 'END_CONVERSATION');
       if (isEnding) {
+        transitionState('ENDING');
         closingSessionRef.current = true;
         voiceActiveRef.current = false;
         stopListening();
@@ -720,9 +773,14 @@ export default function VoiceButton() {
           });
         }
       } else if (modeRef.current !== 'text') {
+        transitionState('SPEAKING');
         await speakFemaleVoice(data.reply, replyLang);
+      } else {
+        transitionState('IDLE');
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return;
+      transitionState('IDLE');
       devLog('HRUVITA-ERROR', `Assistant request failed: ${err.message}`);
       setMessages((prev) => [
         ...prev,
@@ -735,6 +793,7 @@ export default function VoiceButton() {
         },
       ]);
     } finally {
+      inFlightRef.current = false;
       setBusy(false);
     }
   };
@@ -759,51 +818,6 @@ export default function VoiceButton() {
         ? [{ role: 'assistant', text: GREETINGS[nextLang], lang: nextLang, actions: [], products: [] }]
         : prev
     );
-  };
-
-  const switchConversationMode = (nextMode) => {
-    // Properly stop previous mode before starting the newly selected mode
-    stopListening();
-    stopAllSpeech();
-    retryCountRef.current = 0;
-    closingSessionRef.current = false;
-    setMode(nextMode);
-    modeRef.current = nextMode;
-    handsFreeRef.current = nextMode === 'handsfree';
-
-    if (nextMode === 'text') {
-      voiceActiveRef.current = false;
-      devLog('HRUVITA-VOICE', 'Switched to Text mode (mic & voice stopped)');
-      return;
-    }
-
-    const welcomeText =
-      lang === 'te-IN'
-        ? 'నమస్కారం! HRUVITA కి స్వాగతం. ఈరోజు నేను మీకు ఎలా సహాయం చేయగలను?'
-        : 'Hello! Welcome! How can I help you today?';
-
-    if (nextMode === 'ptt') {
-      // Push-to-Talk: greet & activate mic for FIRST interaction, then wait for next manual click
-      voiceActiveRef.current = false;
-      devLog('HRUVITA-VOICE', 'Switched to Push-to-Talk mode');
-      speakFemaleVoice(welcomeText, lang, {
-        skipAutoListen: true,
-        onFinished: () => {
-          if (openRef.current && modeRef.current === 'ptt' && !closingSessionRef.current) {
-            beginListeningRef.current(lang);
-          }
-        },
-      });
-    } else if (nextMode === 'handsfree') {
-      voiceActiveRef.current = true;
-      devLog('HRUVITA-VOICE', 'Switched to Hands-Free mode');
-      if (!greetedSessionRef.current) {
-        greetedSessionRef.current = true;
-        speakFemaleVoice(welcomeText, lang);
-      } else {
-        beginListeningRef.current(lang);
-      }
-    }
   };
 
   return (

@@ -635,6 +635,8 @@ export function buildInitialUsers() {
   const adminEmail = (process.env.ADMIN_EMAIL || 'admin@hruvita.com').toLowerCase();
   const adminPass = process.env.ADMIN_PASSWORD || 'Admin@123';
   const adminHash = bcrypt.hashSync(adminPass, 12);
+  const analystPass = process.env.ANALYST_PASSWORD || 'Analyst@123';
+  const analystHash = bcrypt.hashSync(analystPass, 12);
   const demoCustomerHash = bcrypt.hashSync('Customer@123', 12);
 
   return [
@@ -654,6 +656,27 @@ export function buildInitialUsers() {
       dateOfBirth: new Date('1995-01-15'),
       termsAccepted: true,
       referralCode: 'HRUVITAADMIN',
+      rewardPoints: 0,
+      preferences: { vegOnly: true, spiceLevel: 'medium', allergies: [], deliveryNotes: '' },
+      wishlist: [],
+      blocked: false,
+    },
+    {
+      id: 'u-analyst',
+      role: 'admin_analyser',
+      fullName: 'HRUVITA Business Analyst',
+      name: 'HRUVITA Business Analyst',
+      username: 'hruvita_analyst',
+      email: (process.env.ANALYST_EMAIL || 'analyst@hruvita.com').toLowerCase(),
+      mobileNumber: '9876543211',
+      phone: '9876543211',
+      password: analystHash,
+      isEmailVerified: true,
+      isProfileCompleted: true,
+      gender: 'Prefer not to say',
+      dateOfBirth: new Date('1996-05-10'),
+      termsAccepted: true,
+      referralCode: 'HRUVITAANALYST',
       rewardPoints: 0,
       preferences: { vegOnly: true, spiceLevel: 'medium', allergies: [], deliveryNotes: '' },
       wishlist: [],

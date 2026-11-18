@@ -11,6 +11,7 @@ import {
 } from '../store/repository.js';
 import { ACCESS_COOKIE_NAME, requireAuth, requireRole } from '../middleware/auth.js';
 import { processAssistantTurn, DEFAULT_FAQS } from '../utils/aiBrain.js';
+import { getProviderHealthSnapshot } from '../utils/aiProviderManager.js';
 import { synthesizeFemaleSpeech, FEMALE_VOICE_CONFIG } from '../utils/ttsService.js';
 import { createRequestId, logAI, logAIError } from '../utils/aiLogger.js';
 
@@ -62,6 +63,7 @@ router.get('/debug', async (req, res) => {
     sttConfigured: Boolean(process.env.GROQ_API_KEY?.trim()),
     ttsProvider: process.env.ELEVENLABS_API_KEY?.trim() ? 'elevenlabs+edge-neural' : 'edge-neural',
     voices: FEMALE_VOICE_CONFIG,
+    providerHealth: getProviderHealthSnapshot(),
   });
 });
 
@@ -132,6 +134,7 @@ router.post('/chat', async (req, res) => {
     const result = await processAssistantTurn({
       message: String(message).trim(),
       language,
+      conversationId,
       user,
       cartItems,
       customBowls,

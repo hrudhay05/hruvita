@@ -118,12 +118,57 @@
 
 .cart-checkout-box {
   margin-top: 20px;
-  padding: 20px;
+  padding: 22px;
   border-radius: var(--radius);
   border: 1px solid var(--line);
   background: var(--white);
+  box-shadow: var(--shadow-sm);
   display: grid;
   gap: 16px;
+}
+
+.cart-sameday-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+}
+
+.cart-sameday-open {
+  background: var(--green-50);
+  border-color: #c5dec8;
+  color: var(--green-900);
+}
+
+.cart-sameday-open strong {
+  display: block;
+  font-size: 0.94rem;
+  margin-bottom: 2px;
+}
+
+.cart-sameday-open p {
+  font-size: 0.88rem;
+  color: var(--primary);
+}
+
+.cart-sameday-closed {
+  background: #fdf1ef;
+  border-color: #f3c4be;
+  color: var(--danger);
+}
+
+.cart-sameday-closed strong {
+  display: block;
+  font-size: 0.94rem;
+  margin-bottom: 2px;
+}
+
+.cart-sameday-closed p {
+  font-size: 0.86rem;
 }
 
 .cart-checkout-box h2 {
@@ -248,8 +293,14 @@
 
 .cart-pay-methods {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
+}
+
+@media (min-width: 420px) {
+  .cart-pay-methods {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .cart-pay-option {

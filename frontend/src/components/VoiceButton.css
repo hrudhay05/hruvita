@@ -1,13 +1,28 @@
 .voice-wrap {
   position: fixed !important;
-  right: 16px;
-  bottom: calc(var(--bottom-nav-h) + 14px + env(safe-area-inset-bottom));
+  right: 12px;
+  left: 12px;
+  bottom: calc(var(--bottom-nav-h) + 12px + env(safe-area-inset-bottom));
   z-index: 9999;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 10px;
   pointer-events: none;
+}
+
+.voice-drawer {
+  width: 100%;
+  max-width: 392px;
+  max-height: min(72dvh, 520px);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: voiceAppear 0.18s ease both;
 }
 
 .voice-wrap > * {
@@ -57,19 +72,6 @@
 @keyframes voiceAppear {
   from { opacity: 0; }
   to { opacity: 1; }
-}
-
-.voice-drawer {
-  width: min(calc(100vw - 24px), 392px);
-  max-height: min(74dvh, 540px);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  animation: voiceAppear 0.18s ease both;
 }
 
 .voice-head {
@@ -505,6 +507,7 @@
 
 @media (min-width: 768px) {
   .voice-wrap {
+    left: auto;
     right: 24px;
     bottom: 24px;
   }

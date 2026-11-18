@@ -19,24 +19,42 @@ export default function Cart() {
   const { showToast } = useToast();
 
   const [slots, setSlots] = useState([]);
+  const [bookingInfo, setBookingInfo] = useState({
+    isSameDay: true,
+    sameDayAvailable: true,
+    sameDayMessage: "Ordering for today? Great! We'll prepare your order as soon as possible.",
+    nextAvailableDate: '',
+  });
   const [coupons, setCoupons] = useState([]);
   const [couponInput, setCouponInput] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState('');
   const [useRewards, setUseRewards] = useState(false);
   const [quote, setQuote] = useState(null);
+  const [quoteError, setQuoteError] = useState('');
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const fmtBusinessDate = (dt) =>
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(dt);
+  const todayStr = fmtBusinessDate(new Date());
   const maxPreOrderDays = Number(settings?.maxPreOrderDays ?? 7);
   const preOrderDates = Array.from({ length: maxPreOrderDays + 1 }, (_, i) => {
     const dt = new Date(Date.now() + i * 86400000);
-    const iso = dt.toISOString().slice(0, 10);
+    const iso = fmtBusinessDate(dt);
     const label =
       i === 0
         ? `Today (${iso})`
         : i === 1
           ? `Tomorrow (${iso})`
-          : dt.toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' }) +
-            ` (${iso})`;
+          : dt.toLocaleDateString('en-IN', {
+              timeZone: 'Asia/Kolkata',
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+            }) + ` (${iso})`;
     return { iso, label };
   });
   const [searchParams] = useSearchParams();
@@ -125,7 +143,18 @@ export default function Cart() {
   useEffect(() => {
     apiRequest(`/api/slots?date=${encodeURIComponent(scheduledDate)}`)
       .then((d) => {
-        if (d.slots?.length) {
+        setBookingInfo({
+          isSameDay: d.isSameDay ?? scheduledDate === todayStr,
+          sameDayAvailable: d.sameDayAvailable ?? true,
+          sameDayMessage:
+            d.sameDayMessage ||
+            "Ordering for today? Great! We'll prepare your order as soon as possible.",
+          nextAvailableDate: d.nextAvailableDate || '',
+        });
+        if (d.isSameDay ?? scheduledDate === todayStr) {
+          setSlots([]);
+          setSlotId('same-day');
+        } else if (d.slots?.length) {
           setSlots(d.slots);
           const currentValid = d.slots.find((s) => s.id === slotId && s.available !== false);
           if (!currentValid) {
@@ -166,8 +195,10 @@ export default function Cart() {
   useEffect(() => {
     if (!hasItems) {
       setQuote(null);
+      setQuoteError('');
       return;
     }
+    setQuoteError('');
     apiRequest('/api/checkout/quote', {
       method: 'POST',
       body: JSON.stringify({
@@ -178,8 +209,14 @@ export default function Cart() {
         userId: user?.id || null,
       }),
     })
-      .then((data) => setQuote(data))
-      .catch(() => {});
+      .then((data) => {
+        setQuote(data);
+        setQuoteError('');
+      })
+      .catch((err) => {
+        setQuote(null);
+        setQuoteError(err?.message || 'Could not calculate live quote.');
+      });
   }, [items, customBowls, appliedCoupon, useRewards, user?.id, hasItems]);
 
   if (confirmedOrder) {
@@ -228,17 +265,23 @@ export default function Cart() {
   );
   const localSubtotal = localCatalogSubtotal + localBowlSubtotal;
 
+  const freeAbove = Number(settings?.freeDeliveryAbove ?? 199);
+  const baseDelivery = Number(settings?.deliveryCharge ?? 25);
+  const taxPct = Number(settings?.taxPercent ?? 5);
+  const fallbackDelivery = localSubtotal >= freeAbove ? 0 : baseDelivery;
+  const fallbackTax = Math.round((localSubtotal * taxPct) / 100);
+
   const pricing = quote?.pricing || {
     subtotal: localSubtotal,
     couponCode: '',
     couponDiscount: 0,
-    couponMessage: '',
+    couponMessage: quoteError || '',
     rewardPointsUsed: 0,
-    deliveryCharge: localSubtotal >= 199 ? 0 : 25,
-    freeDeliveryAbove: 199,
-    taxPercent: 5,
-    taxAmount: Math.round(localSubtotal * 0.05),
-    grandTotal: localSubtotal + (localSubtotal >= 199 ? 0 : 25) + Math.round(localSubtotal * 0.05),
+    deliveryCharge: fallbackDelivery,
+    freeDeliveryAbove: freeAbove,
+    taxPercent: taxPct,
+    taxAmount: fallbackTax,
+    grandTotal: localSubtotal + fallbackDelivery + fallbackTax,
   };
 
   const handleApplyCoupon = (codeToApply) => {
@@ -294,7 +337,7 @@ export default function Cart() {
           useRewards,
           address,
           scheduledDate,
-          slotId,
+          slotId: scheduledDate === todayStr ? 'same-day' : slotId,
           paymentMethod,
           idempotencyKey: `idem-${user.id}-${Date.now()}`,
         }),
@@ -488,7 +531,9 @@ export default function Cart() {
           </ul>
 
           <div className="cart-checkout-box">
-            <h2>1. Delivery Date &amp; Time Slot (Pre-order up to {maxPreOrderDays} days)</h2>
+            <h2>
+              1. Delivery Date {scheduledDate !== todayStr ? `& Time Slot (Pre-order up to ${maxPreOrderDays} days)` : ''}
+            </h2>
             <div className="cart-field-grid">
               <div className="cart-field">
                 <label htmlFor="checkout-date">Delivery Date</label>
@@ -507,43 +552,57 @@ export default function Cart() {
               </div>
             </div>
 
-            <div className="cart-slots">
-              {(slots.length
-                ? slots.filter((s) => !s.isFull)
-                : [
-                    { id: 'morning', name: 'Morning Slot', window: '6:30 AM – 9:00 AM', available: true },
-                    { id: 'afternoon', name: 'Afternoon Slot', window: '12:30 PM – 2:30 PM', available: true },
-                    { id: 'evening', name: 'Evening Slot', window: '6:30 PM – 8:30 PM', available: true },
-                  ]
-              ).map((s) => {
-                const disabled = s.available === false;
-                return (
-                  <button
-                    key={s.id}
+            {scheduledDate === todayStr ? (
+              <div
+                className={`cart-sameday-banner ${bookingInfo.sameDayAvailable ? 'cart-sameday-open' : 'cart-sameday-closed'}`}
+              >
+                <div>
+                  <strong>{bookingInfo.sameDayAvailable ? 'Same-Day Express Preparation' : 'Same-Day Ordering Closed'}</strong>
+                  <p>{bookingInfo.sameDayMessage}</p>
+                </div>
+                {!bookingInfo.sameDayAvailable && bookingInfo.nextAvailableDate && (
+                  <Button
                     type="button"
-                    disabled={disabled}
-                    title={s.unavailableReason || ''}
-                    className={`cart-slot-btn ${slotId === s.id && !disabled ? 'cart-slot-active' : ''}`.trim()}
-                    style={disabled ? { opacity: 0.48, cursor: 'not-allowed' } : undefined}
-                    onClick={() => !disabled && setSlotId(s.id)}
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setScheduledDate(bookingInfo.nextAvailableDate)}
                   >
-                    <span>{s.name}</span>
-                    <span>{s.window}</span>
-                    {disabled ? (
-                      <small style={{ color: 'var(--danger)', fontSize: '0.72rem' }}>
-                        {s.unavailableReason || 'Unavailable'}
-                      </small>
-                    ) : (
-                      s.remainingCapacity !== undefined && (
-                        <small style={{ color: 'var(--primary)', fontSize: '0.72rem' }}>
-                          {s.remainingCapacity} spots left
+                    Switch to Tomorrow ({bookingInfo.nextAvailableDate})
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="cart-slots">
+                {slots.filter((s) => !s.isFull).map((s) => {
+                  const disabled = s.available === false;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      disabled={disabled}
+                      title={s.unavailableReason || ''}
+                      className={`cart-slot-btn ${slotId === s.id && !disabled ? 'cart-slot-active' : ''}`.trim()}
+                      style={disabled ? { opacity: 0.48, cursor: 'not-allowed' } : undefined}
+                      onClick={() => !disabled && setSlotId(s.id)}
+                    >
+                      <span>{s.name}</span>
+                      <span>{s.window}</span>
+                      {disabled ? (
+                        <small style={{ color: 'var(--danger)', fontSize: '0.72rem' }}>
+                          {s.unavailableReason || 'Unavailable'}
                         </small>
-                      )
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+                      ) : (
+                        s.remainingCapacity !== undefined && (
+                          <small style={{ color: 'var(--primary)', fontSize: '0.72rem' }}>
+                            {s.remainingCapacity} spots left
+                          </small>
+                        )
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <h2 style={{ marginBottom: 0 }}>2. Delivery Address</h2>

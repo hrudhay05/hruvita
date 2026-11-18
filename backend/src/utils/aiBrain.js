@@ -16,10 +16,22 @@ import {
   getSettings,
   recordAudit,
   formatAddressForLegacy,
+  transitionOrderStatus,
+  getBusinessDateParts,
+  validateDeliverySchedule,
 } from '../store/repository.js';
 import { computeCustomBowlPrice } from '../data/bowlOptions.js';
 import { sendUserNotification } from './emailService.js';
 import { logAI, logAIError } from './aiLogger.js';
+import {
+  isCircuitOpen,
+  recordProviderSuccess,
+  recordProviderFailure,
+  backoffWithJitter,
+  fetchWithTimeout,
+  safeParseJsonArgs,
+  getProviderHealthSnapshot,
+} from './aiProviderManager.js';
 
 export const DEFAULT_FAQS = [
   {
@@ -258,6 +270,39 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'reorder_previous_order',
+    description: 'Reorder items from the customer\'s latest order or a specific orderId back into their cart.',
+    parameters: {
+      type: 'object',
+      properties: {
+        orderId: { type: 'string', description: 'Optional order ID to reorder; defaults to most recent order.' },
+      },
+    },
+  },
+  {
+    name: 'cancel_my_order',
+    description: 'Cancel a customer\'s own active order if it has not been dispatched yet (placed or confirmed).',
+    parameters: {
+      type: 'object',
+      properties: {
+        orderId: { type: 'string', description: 'Order ID to cancel.' },
+        reason: { type: 'string', description: 'Optional cancellation reason.' },
+      },
+      required: ['orderId'],
+    },
+  },
+  {
+    name: 'escalate_to_human',
+    description: 'Escalate a complex complaint, refund dispute, or explicit request for a human agent to HRUVITA customer support.',
+    parameters: {
+      type: 'object',
+      properties: {
+        issue: { type: 'string', description: 'Short summary of the customer issue.' },
+      },
+      required: ['issue'],
+    },
+  },
+  {
     name: 'end_conversation',
     description:
       'End and close the assistant conversation when customer says goodbye, thank you, that is all, nothing else, sare bye, chalu, vellostha, etc.',
@@ -268,9 +313,21 @@ const TOOL_DEFINITIONS = [
 function isClosingPhrase(text = '') {
   const clean = String(text || '').trim().toLowerCase();
   if (!clean) return false;
-  return /^(bye|goodbye|bye bye|thank you|thanks|thank you,?\s*bye|thanks,?\s*bye|that'?s all|nothing else|no more questions|see you|ok(ay)?,?\s*bye|sare,?\s*bye|inka emi vaddu|inka vaddu|chalu|vellostha|వెళ్ళొస్తా|చాలు|ధన్యవాదాలు|థాంక్స్|బై|ఇంకేమీ వద్దు)[.!?\s]*$/i.test(
+  // Mid-conversation polite phrases like "thank you, now add masala dosa" or "thanks, show menu" must NOT close.
+  const hasContinuationCue = /\b(now|also|and|please|show|add|open|order|check|want|need|what|which|how|menu|cart|bowl|status|cancel|track|కావాలి|చూపించు|చేయండి|యాడ్)\b/i.test(
     clean
-  ) || /\b(goodbye|thank you,?\s*bye|that'?s all|nothing else|no more questions|sare,?\s*bye|inka emi vaddu|vellostha)\b/i.test(clean);
+  );
+  if (hasContinuationCue && !/\b(bye|goodbye|vellostha|వెళ్ళొస్తా)\b/i.test(clean)) {
+    return false;
+  }
+  return (
+    /^(bye|goodbye|bye bye|thank you|thanks|thank you,?\s*bye|thanks,?\s*bye|that'?s all|nothing else|no more questions|see you|ok(ay)?,?\s*bye|sare,?\s*bye|inka emi vaddu|inka vaddu|chalu|vellostha|వెళ్ళొస్తా|చాలు|ధన్యవాదాలు|థాంక్స్|బై|ఇంకేమీ వద్దు)[.!?\s]*$/i.test(
+      clean
+    ) ||
+    /\b(goodbye|thank you,?\s*bye|that'?s all|nothing else|no more questions|sare,?\s*bye|inka emi vaddu|vellostha)\b/i.test(
+      clean
+    )
+  );
 }
 
 // ============================================================
@@ -283,6 +340,11 @@ async function executeToolCall(
   stateAcc
 ) {
   const t0 = Date.now();
+  const dedupKey = `${toolName}:${JSON.stringify(args || {})}`;
+  if (stateAcc.toolCache?.has(dedupKey)) {
+    logAI('HRUVITA-TOOLS', `Deduplicated duplicate tool call in turn: ${toolName}`);
+    return stateAcc.toolCache.get(dedupKey);
+  }
   logAI('HRUVITA-TOOLS', `Tool selected: ${toolName}`, args);
 
   const { user, cartItems, customBowls, selectedAddressId, slotId, vegOnly } = ctx;
@@ -711,15 +773,32 @@ async function executeToolCall(
         break;
       }
       const legacyAddr = formatAddressForLegacy(chosenAddr);
-      const todayStr = new Date().toISOString().slice(0, 10);
-      const slots = await listSlotsForDate(todayStr);
-      const chosenSlot = slots.find((s) => s.id === slotId && s.available) || slots.find((s) => s.available) || slots[0];
+      const { todayStr } = getBusinessDateParts();
+      const chosenSlot = await validateDeliverySchedule({ scheduledDate: todayStr, slotId: 'same-day' });
       const quote = await calculateCheckoutQuote({ items: cartItems, customBowls, userId: user.id });
+      const cartDigest = Object.entries(cartItems || {})
+        .filter(([, q]) => Number(q) > 0)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([id, q]) => `${id}:${q}`)
+        .join('|');
+      const idempotencyKey = `ai-cod-${user.id}-${ctx.conversationId || 'direct'}-${cartDigest}-${customBowls?.length || 0}`;
+      const existingOrder = (await listOrdersByUser(user.id)).find((o) => o.idempotencyKey === idempotencyKey);
+      if (existingOrder) {
+        logAI('HRUVITA-TOOLS', `Prevented duplicate COD order via idempotencyKey: ${existingOrder.id}`);
+        result = {
+          success: true,
+          duplicatePrevented: true,
+          orderId: existingOrder.id,
+          grandTotal: existingOrder.pricing?.grandTotal || quote.pricing.grandTotal,
+          slot: chosenSlot.name,
+        };
+        break;
+      }
       const orderId = `ORD-${Date.now().toString(36).toUpperCase()}`;
       await deductOrderStockAtomically(quote.items, { reason: 'order_deducted', orderId, actor: user.email });
       const order = await createOrderRecord({
         id: orderId,
-        idempotencyKey: `ai-${user.id}-${Date.now()}`,
+        idempotencyKey,
         userId: user.id,
         customerName: user.fullName || user.name,
         customerEmail: user.email,
@@ -749,7 +828,8 @@ async function executeToolCall(
       await recordAudit({ actorId: user.id, actorEmail: user.email, action: 'VOICE_ORDER_CONFIRMED', entity: 'order', entityId: order.id, details: { total: quote.pricing.grandTotal } });
       await sendUserNotification({ userId: user.id, email: user.email, type: 'order', title: `Order Confirmed (${order.id})`, message: `Your COD order of ₹${quote.pricing.grandTotal} is confirmed.` });
       stateAcc.actions.push({ type: 'CLEAR_CART' });
-      stateAcc.actions.push({ type: 'NAVIGATE', to: '/dashboard', label: `Track ${order.id}` });
+      stateAcc.actions.push({ type: 'ORDER_PLACED', orderId: order.id });
+      stateAcc.actions.push({ type: 'NAVIGATE', to: '/dashboard?tab=orders', label: `Track ${order.id}` });
       result = { success: true, orderId: order.id, grandTotal: quote.pricing.grandTotal, slot: chosenSlot.name };
       break;
     }
@@ -761,6 +841,95 @@ async function executeToolCall(
         stateAcc.actions.push({ type: 'OPEN_RAZORPAY_CHECKOUT', to: '/cart' });
         result = { success: true, message: 'Navigated to checkout to open Razorpay payment popup.' };
       }
+      break;
+    }
+
+    case 'reorder_previous_order': {
+      if (!user) {
+        stateAcc.actions.push({ type: 'NAVIGATE', to: '/login', label: 'Sign In' });
+        result = { authenticated: false, error: 'Please sign in first to reorder a previous order.' };
+        break;
+      }
+      const orders = await listOrdersByUser(user.id);
+      const targetOrder = args.orderId
+        ? orders.find((o) => o.id.toLowerCase() === String(args.orderId).trim().toLowerCase())
+        : orders[0];
+      if (!targetOrder) {
+        result = { found: false, error: 'No previous orders found to reorder.' };
+        break;
+      }
+      const added = [];
+      for (const item of targetOrder.items || []) {
+        if (item.productId) {
+          stateAcc.actions.push({
+            type: 'ADD_TO_CART',
+            productId: item.productId,
+            qty: Math.max(1, Number(item.qty || 1)),
+            name: item.name,
+          });
+          added.push(`${item.name} x${item.qty || 1}`);
+        }
+      }
+      stateAcc.actions.push({ type: 'NAVIGATE', to: '/cart', label: 'Open Cart' });
+      result = {
+        success: added.length > 0,
+        reorderedFrom: targetOrder.id,
+        itemsAdded: added,
+        message: added.length > 0 ? `Added ${added.join(', ')} to your cart.` : 'No standard catalog items found in that order.',
+      };
+      break;
+    }
+
+    case 'cancel_my_order': {
+      if (!user) {
+        stateAcc.actions.push({ type: 'NAVIGATE', to: '/login', label: 'Sign In' });
+        result = { authenticated: false, error: 'Please sign in first to cancel an order.' };
+        break;
+      }
+      const order = await getOrderById(String(args.orderId || '').trim());
+      if (!order || order.userId !== user.id) {
+        result = { success: false, error: 'Order not found for your account.' };
+        break;
+      }
+      if (!['placed', 'confirmed'].includes(order.status)) {
+        result = {
+          success: false,
+          error: `Order ${order.id} is already "${order.status}" and cannot be cancelled automatically. Would you like me to connect you to HRUVITA support?`,
+        };
+        break;
+      }
+      const updated = await transitionOrderStatus(order.id, 'cancelled', {
+        actor: user.email,
+        note: args.reason || 'Cancelled by customer via HRUVITA AI Assistant',
+      });
+      await recordAudit({
+        actorId: user.id,
+        actorEmail: user.email,
+        action: 'AI_ORDER_CANCELLED',
+        entity: 'order',
+        entityId: order.id,
+        details: { reason: args.reason || 'Customer request' },
+      });
+      result = { success: true, orderId: updated.id, status: updated.status };
+      break;
+    }
+
+    case 'escalate_to_human': {
+      const settings = await getSettings();
+      await recordAudit({
+        actorId: user?.id || 'guest',
+        actorEmail: user?.email || 'guest',
+        action: 'AI_SUPPORT_ESCALATION',
+        entity: 'assistant',
+        entityId: ctx.conversationId || 'direct',
+        details: { issue: String(args.issue || 'Customer requested human support').slice(0, 300) },
+      });
+      result = {
+        escalated: true,
+        supportPhone: settings.supportPhone || '+91 98765 43210',
+        supportEmail: settings.supportEmail || 'support@hruvita.com',
+        message: 'Escalated to HRUVITA human support team with conversation context.',
+      };
       break;
     }
 
@@ -779,6 +948,7 @@ async function executeToolCall(
       result = { error: `Unknown tool: ${toolName}` };
   }
 
+  stateAcc.toolCache?.set(dedupKey, result);
   const dur = Date.now() - t0;
   stateAcc.toolDurationMs += dur;
   logAI('HRUVITA-TOOLS', `Tool ${toolName} finished in ${dur}ms`);
@@ -792,6 +962,11 @@ async function runGroqToolAgent({ messages, ctx, stateAcc, model }) {
   const groqKey = process.env.GROQ_API_KEY?.trim();
   if (!groqKey) throw Object.assign(new Error('GROQ_API_KEY missing'), { code: 'MISSING_API_KEY' });
 
+  const providerKey = `groq:${model}`;
+  if (isCircuitOpen(providerKey)) {
+    throw Object.assign(new Error(`Circuit open for ${providerKey}`), { code: 'CIRCUIT_OPEN' });
+  }
+
   const openAiTools = TOOL_DEFINITIONS.map((t) => ({
     type: 'function',
     function: { name: t.name, description: t.description, parameters: t.parameters },
@@ -799,41 +974,47 @@ async function runGroqToolAgent({ messages, ctx, stateAcc, model }) {
 
   const loopMessages = [...messages];
   for (let step = 0; step < 3; step++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
     const ai0 = Date.now();
     logAI('HRUVITA-AI', `Sending request to Groq (${model}) step=${step + 1}`);
 
     let res;
-    try {
-      res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages: loopMessages,
-          tools: openAiTools,
-          tool_choice: 'auto',
-          temperature: 0.3,
-          max_tokens: 300,
-        }),
-      });
-    } finally {
-      clearTimeout(timer);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      res = await fetchWithTimeout(
+        'https://api.groq.com/openai/v1/chat/completions',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            messages: loopMessages,
+            tools: openAiTools,
+            tool_choice: 'auto',
+            temperature: 0.3,
+            max_tokens: 300,
+          }),
+        },
+        12_000
+      );
+      if (res.ok || ![429, 500, 502, 503].includes(res.status) || attempt === 1) break;
+      const retryAfter = res.headers.get('retry-after');
+      if (Number(retryAfter) > 3) break; // Respect long Retry-After by failing over immediately
+      await backoffWithJitter(attempt, retryAfter);
     }
 
-    stateAcc.aiDurationMs += Date.now() - ai0;
+    const latency = Date.now() - ai0;
+    stateAcc.aiDurationMs += latency;
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      throw Object.assign(new Error(`Groq HTTP ${res.status}: ${errText.slice(0, 160)}`), {
-        code: `GROQ_HTTP_${res.status}`,
-      });
+      const retryAfter = Number(res.headers.get('retry-after')) || 0;
+      const code = `GROQ_HTTP_${res.status}`;
+      recordProviderFailure(providerKey, code, retryAfter);
+      throw Object.assign(new Error(`Groq HTTP ${res.status}: ${errText.slice(0, 160)}`), { code });
     }
 
+    recordProviderSuccess(providerKey, latency);
     const data = await res.json();
     const choice = data.choices?.[0]?.message;
-    logAI('HRUVITA-AI', `AI response received in ${Date.now() - ai0}ms`);
+    logAI('HRUVITA-AI', `AI response received in ${latency}ms`);
 
     if (!choice) throw Object.assign(new Error('Empty Groq response'), { code: 'EMPTY_AI_RESPONSE' });
 
@@ -841,12 +1022,7 @@ async function runGroqToolAgent({ messages, ctx, stateAcc, model }) {
       loopMessages.push(choice);
       for (const tc of choice.tool_calls) {
         const fnName = tc.function?.name;
-        let parsedArgs = {};
-        try {
-          parsedArgs = tc.function?.arguments ? JSON.parse(tc.function.arguments) : {};
-        } catch {
-          parsedArgs = {};
-        }
+        const parsedArgs = safeParseJsonArgs(tc.function?.arguments);
         stateAcc.toolsUsed.push(fnName);
         const toolResult = await executeToolCall(fnName, parsedArgs, ctx, stateAcc);
         loopMessages.push({
@@ -871,6 +1047,11 @@ async function runGeminiToolAgent({ systemPrompt, history, userMessage, ctx, sta
   const geminiKey = process.env.GEMINI_API_KEY?.trim();
   if (!geminiKey) throw Object.assign(new Error('GEMINI_API_KEY missing'), { code: 'MISSING_API_KEY' });
 
+  const providerKey = `gemini:${model}`;
+  if (isCircuitOpen(providerKey)) {
+    throw Object.assign(new Error(`Circuit open for ${providerKey}`), { code: 'CIRCUIT_OPEN' });
+  }
+
   const contents = [
     ...(history || []).slice(-6).map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
@@ -882,18 +1063,15 @@ async function runGeminiToolAgent({ systemPrompt, history, userMessage, ctx, sta
   const tools = [{ functionDeclarations: TOOL_DEFINITIONS }];
 
   for (let step = 0; step < 3; step++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
     const ai0 = Date.now();
     logAI('HRUVITA-AI', `Sending request to Gemini (${model}) step=${step + 1}`);
 
     let res;
-    try {
-      res = await fetch(
+    for (let attempt = 0; attempt < 2; attempt++) {
+      res = await fetchWithTimeout(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`,
         {
           method: 'POST',
-          signal: controller.signal,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: systemPrompt }] },
@@ -901,30 +1079,36 @@ async function runGeminiToolAgent({ systemPrompt, history, userMessage, ctx, sta
             tools,
             generationConfig: { temperature: 0.3, maxOutputTokens: 300 },
           }),
-        }
+        },
+        12_000
       );
-    } finally {
-      clearTimeout(timer);
+      if (res.ok || ![429, 500, 502, 503].includes(res.status) || attempt === 1) break;
+      const retryAfter = res.headers.get('retry-after');
+      if (Number(retryAfter) > 3) break;
+      await backoffWithJitter(attempt, retryAfter);
     }
 
-    stateAcc.aiDurationMs += Date.now() - ai0;
+    const latency = Date.now() - ai0;
+    stateAcc.aiDurationMs += latency;
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      throw Object.assign(new Error(`Gemini HTTP ${res.status}: ${errText.slice(0, 160)}`), {
-        code: `GEMINI_HTTP_${res.status}`,
-      });
+      const retryAfter = Number(res.headers.get('retry-after')) || 0;
+      const code = `GEMINI_HTTP_${res.status}`;
+      recordProviderFailure(providerKey, code, retryAfter);
+      throw Object.assign(new Error(`Gemini HTTP ${res.status}: ${errText.slice(0, 160)}`), { code });
     }
 
+    recordProviderSuccess(providerKey, latency);
     const data = await res.json();
     const parts = data.candidates?.[0]?.content?.parts || [];
     const fnCallPart = parts.find((p) => p.functionCall);
-    logAI('HRUVITA-AI', `Gemini response received in ${Date.now() - ai0}ms`);
+    logAI('HRUVITA-AI', `Gemini response received in ${latency}ms`);
 
     if (fnCallPart) {
       const { name, args } = fnCallPart.functionCall;
       stateAcc.toolsUsed.push(name);
       contents.push({ role: 'model', parts });
-      const toolResult = await executeToolCall(name, args || {}, ctx, stateAcc);
+      const toolResult = await executeToolCall(name, safeParseJsonArgs(args), ctx, stateAcc);
       contents.push({
         role: 'user',
         parts: [{ functionResponse: { name, response: toolResult } }],
@@ -945,6 +1129,7 @@ async function runGeminiToolAgent({ systemPrompt, history, userMessage, ctx, sta
 export async function processAssistantTurn({
   message,
   language = 'en-IN',
+  conversationId = '',
   user = null,
   cartItems = {},
   customBowls = [],
@@ -972,6 +1157,7 @@ export async function processAssistantTurn({
   const stateAcc = {
     actions: [],
     toolsUsed: [],
+    toolCache: new Map(),
     recommendedProducts: [],
     recommendedOrders: [],
     aiDurationMs: 0,
@@ -1000,13 +1186,13 @@ export async function processAssistantTurn({
     .filter(Boolean)
     .join('\n');
 
-  const ctx = { user, cartItems, customBowls, selectedAddressId, slotId, vegOnly };
+  const ctx = { user, cartItems, customBowls, selectedAddressId, slotId, vegOnly, conversationId };
   const groqModel = process.env.AI_MODEL?.trim() || 'openai/gpt-oss-20b';
   const geminiModel = process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash';
 
   let reply = '';
 
-  // 1. Primary Real LLM (Groq Tool Calling with automatic alternate-model failover on 429)
+  // 1. Primary Real LLM (Groq Tool Calling with automatic alternate-model failover on 429/5xx/circuit)
   if (process.env.GROQ_API_KEY?.trim()) {
     const llmMsgs = [
       { role: 'system', content: systemPrompt },
@@ -1023,6 +1209,7 @@ export async function processAssistantTurn({
     ];
     const groqCandidates = [...new Set([groqModel, 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b'])];
     for (const candidateModel of groqCandidates) {
+      if (isCircuitOpen(`groq:${candidateModel}`)) continue;
       try {
         stateAcc.provider = 'groq';
         stateAcc.modelUsed = candidateModel;
@@ -1036,7 +1223,7 @@ export async function processAssistantTurn({
         stateAcc.errorCode = err.code || 'GROQ_FAILED';
         stateAcc.errorMessage = err.message;
         logAIError(`Groq (${candidateModel}) failed`, err);
-        if (!String(err.code).includes('429') && !String(err.code).includes('404')) break;
+        if (!/429|404|500|502|503|CIRCUIT_OPEN|TIMEOUT/.test(String(err.code))) break;
       }
     }
   }
@@ -1110,6 +1297,7 @@ export async function processAssistantTurn({
       dbDurationMs: stateAcc.dbDurationMs,
       totalDurationMs,
       toolsCalled: stateAcc.toolsUsed,
+      providerHealth: getProviderHealthSnapshot(),
       errorCode: stateAcc.errorCode || null,
       errorMessage: stateAcc.errorMessage || null,
     },

@@ -27,6 +27,7 @@ import {
   FiSliders,
 } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
+import AdminAnalystDashboard from '../components/AdminAnalystDashboard.jsx';
 import Logo from '../components/Logo.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
@@ -79,6 +80,8 @@ export default function Admin() {
   const [error, setError] = useState('');
   const [overview, setOverview] = useState(null);
   const [statusFilter, setStatusFilter] = useState('');
+  const [orderDateFilter, setOrderDateFilter] = useState('');
+  const [orderProductFilter, setOrderProductFilter] = useState('');
   const [prodSearch, setProdSearch] = useState('');
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [kitchenSlipOrder, setKitchenSlipOrder] = useState(null);
@@ -202,18 +205,65 @@ export default function Admin() {
     }
   }, [isAdmin, activeTab, kitchenDate, loadKitchen]);
 
+  const [team, setTeam] = useState([]);
+  const [teamForm, setTeamForm] = useState({ fullName: '', email: '', password: '', role: 'admin_analyser' });
+
+  const loadTeam = useCallback(async () => {
+    if (user?.role !== 'admin') return;
+    try {
+      const res = await apiRequest('/api/admin/team');
+      setTeam(res.team || []);
+    } catch {
+      /* ignore */
+    }
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role === 'admin' && activeTab === 'team') loadTeam();
+  }, [user?.role, activeTab, loadTeam]);
+
+  const handleCreateTeamMember = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      await apiRequest('/api/admin/team', { method: 'POST', body: JSON.stringify(teamForm) });
+      showToast(`Created ${teamForm.role} account for ${teamForm.email}`);
+      setTeamForm({ fullName: '', email: '', password: '', role: 'admin_analyser' });
+      await Promise.all([loadTeam(), loadOverview()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleToggleTeamStatus = async (member) => {
+    try {
+      await apiRequest(`/api/admin/team/${member.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ blocked: !member.blocked }),
+      });
+      showToast(`${member.email} ${member.blocked ? 'activated' : 'deactivated'}.`);
+      await Promise.all([loadTeam(), loadOverview()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const handleAdminLogin = async (e) => {
     e.preventDefault();
     setError('');
     try {
       const logged = await login(email, password, true, true);
-      if (logged?.role !== 'admin' && logged?.role !== 'staff') {
+      if (!['admin', 'staff', 'admin_analyser'].includes(logged?.role)) {
         setError('This account does not have admin permissions.');
       }
     } catch (err) {
       setError(err.message);
     }
   };
+
+  if (user?.role === 'admin_analyser') {
+    return <AdminAnalystDashboard user={user} onLogout={logout} />;
+  }
 
   if (!user || !isAdmin) {
     return (
@@ -232,11 +282,11 @@ export default function Admin() {
           {error && <div className="account-alert" role="alert">{error}</div>}
           <form className="admin-form" onSubmit={handleAdminLogin}>
             <div className="admin-field">
-              <label htmlFor="admin-email">Admin Email</label>
+              <label htmlFor="admin-email">Admin Email or Username</label>
               <input
                 id="admin-email"
                 name="email"
-                type="email"
+                type="text"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -670,9 +720,19 @@ export default function Admin() {
   };
 
   const allOrders = overview?.orders || [];
-  const filteredOrders = statusFilter
-    ? allOrders.filter((o) => o.status === statusFilter)
-    : allOrders;
+  const filteredOrders = allOrders.filter((o) => {
+    if (statusFilter && o.status !== statusFilter) return false;
+    if (orderDateFilter) {
+      const createdDay = String(o.createdAt || '').slice(0, 10);
+      if (o.scheduledDate !== orderDateFilter && createdDay !== orderDateFilter) return false;
+    }
+    if (orderProductFilter.trim()) {
+      const q = orderProductFilter.trim().toLowerCase();
+      const hasMatch = (o.items || []).some((it) => String(it.name || '').toLowerCase().includes(q));
+      if (!hasMatch) return false;
+    }
+    return true;
+  });
 
   const filteredProducts = products.filter(
     (p) =>
@@ -696,6 +756,7 @@ export default function Admin() {
     { id: 'reports', label: 'Reports & CSV', icon: FiBarChart2 },
     { id: 'customers', label: `Customers (${overview?.customers?.length || 0})`, icon: FiUsers },
     { id: 'settings', label: 'Settings & Slots', icon: FiSettings },
+    ...(user?.role === 'admin' ? [{ id: 'team', label: 'Admin Team', icon: FiShield }] : []),
     { id: 'audit', label: 'Audit Logs', icon: FiActivity },
   ];
 
@@ -729,6 +790,18 @@ export default function Admin() {
 
         <div className="admin-sidebar-foot">
           <div style={{ opacity: 0.8 }}>{user.email}</div>
+          <Link
+            to="/admin-analyst"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              color: 'var(--bg)',
+              fontWeight: 600,
+            }}
+          >
+            <FiBarChart2 size={14} /> Analyst Portal
+          </Link>
           <Link
             to="/"
             style={{
@@ -803,10 +876,45 @@ export default function Admin() {
               </strong>
             </div>
             <div className="admin-kpi-card">
+              <span>Today&apos;s Orders</span>
+              <strong>{stats.todayOrdersCount || 0}</strong>
+            </div>
+            <div className="admin-kpi-card">
+              <span>Pending / Done / Cancelled</span>
+              <strong style={{ fontSize: '1.05rem' }}>
+                {stats.pendingOrdersCount || 0} / {stats.completedOrdersCount || 0} / {stats.cancelledOrdersCount || 0}
+              </strong>
+            </div>
+            <div className="admin-kpi-card">
               <span>Customers</span>
               <strong>{stats.totalCustomers}</strong>
             </div>
           </div>
+
+          {Array.isArray(overview?.popularProducts) && overview.popularProducts.length > 0 && activeTab === 'overview' && (
+            <section className="admin-panel" style={{ padding: '14px 18px', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+                <strong style={{ fontSize: '0.92rem' }}>Top Ordered Products:</strong>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {overview.popularProducts.map((p) => (
+                    <span
+                      key={p.name}
+                      style={{
+                        background: 'var(--bg-soft, #f3f7f4)',
+                        border: '1px solid var(--border, #e2e8f0)',
+                        borderRadius: 999,
+                        padding: '4px 10px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {p.name} ({p.qty})
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
 
           {/* Kitchen Tomorrow-Prep View */}
           {activeTab === 'kitchen' && (
@@ -897,9 +1005,24 @@ export default function Admin() {
             <section className="admin-panel">
               <div className="admin-panel-head">
                 <h2>Orders Queue ({filteredOrders.length})</h2>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <input
+                    type="date"
+                    aria-label="Filter orders by date"
+                    className="menu-select"
+                    value={orderDateFilter}
+                    onChange={(e) => setOrderDateFilter(e.target.value)}
+                  />
+                  <input
+                    type="search"
+                    aria-label="Filter orders by product"
+                    placeholder="Filter by product..."
+                    className="menu-select"
+                    value={orderProductFilter}
+                    onChange={(e) => setOrderProductFilter(e.target.value)}
+                  />
                   <label htmlFor="admin-status-filter" style={{ fontSize: '0.84rem', fontWeight: 600 }}>
-                    Status Filter:
+                    Status:
                   </label>
                   <select
                     id="admin-status-filter"
@@ -2278,6 +2401,62 @@ export default function Admin() {
                         </tr>
                       ))
                     )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'team' && user?.role === 'admin' && (
+            <section className="admin-panel">
+              <div className="admin-panel-head">
+                <h2>Admin &amp; Analyst Team Management</h2>
+              </div>
+              <form className="admin-form" onSubmit={handleCreateTeamMember} style={{ marginBottom: 20 }}>
+                <div className="admin-form-row">
+                  <div className="admin-field">
+                    <label htmlFor="tm-name">Full Name</label>
+                    <input id="tm-name" required value={teamForm.fullName} onChange={(e) => setTeamForm({ ...teamForm, fullName: e.target.value })} placeholder="Analyst Name" />
+                  </div>
+                  <div className="admin-field">
+                    <label htmlFor="tm-email">Email</label>
+                    <input id="tm-email" type="email" required value={teamForm.email} onChange={(e) => setTeamForm({ ...teamForm, email: e.target.value })} placeholder="analyst@hruvita.com" />
+                  </div>
+                </div>
+                <div className="admin-form-row">
+                  <div className="admin-field">
+                    <label htmlFor="tm-pass">Password (8+ chars)</label>
+                    <input id="tm-pass" type="password" minLength={8} required value={teamForm.password} onChange={(e) => setTeamForm({ ...teamForm, password: e.target.value })} />
+                  </div>
+                  <div className="admin-field">
+                    <label htmlFor="tm-role">Role</label>
+                    <select id="tm-role" value={teamForm.role} onChange={(e) => setTeamForm({ ...teamForm, role: e.target.value })}>
+                      <option value="admin_analyser">Admin Analyst (admin_analyser)</option>
+                      <option value="staff">Staff</option>
+                    </select>
+                  </div>
+                </div>
+                <Button type="submit" size="sm">Create Team Account</Button>
+              </form>
+              <div className="admin-table-wrap">
+                <table className="admin-table">
+                  <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {team.map((m) => (
+                      <tr key={m.id}>
+                        <td><strong>{m.fullName}</strong></td>
+                        <td>{m.email}</td>
+                        <td><span className="admin-badge">{m.role}</span></td>
+                        <td>{m.blocked ? 'Deactivated' : 'Active'}</td>
+                        <td>
+                          {m.role !== 'admin' && (
+                            <button type="button" className="admin-mini-btn" onClick={() => handleToggleTeamStatus(m)}>
+                              {m.blocked ? 'Activate' : 'Deactivate'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
