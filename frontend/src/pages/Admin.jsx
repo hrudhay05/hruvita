@@ -857,42 +857,44 @@ export default function Admin() {
         <div className="admin-content">
           {error && <div className="account-alert" role="alert">{error}</div>}
 
-          <div className="admin-kpi-grid">
-            <div className="admin-kpi-card">
-              <span>Total Revenue</span>
-              <strong>{money(stats.totalRevenue || 0)}</strong>
+          {activeTab === 'overview' && (
+            <div className="admin-kpi-grid">
+              <div className="admin-kpi-card">
+                <span>Total Revenue</span>
+                <strong>{money(stats.totalRevenue || 0)}</strong>
+              </div>
+              <div className="admin-kpi-card">
+                <span>Active / Total Orders</span>
+                <strong>
+                  {stats.activeOrdersCount || 0} / {stats.totalOrders || 0}
+                </strong>
+              </div>
+              <div className="admin-kpi-card">
+                <span>Active Subscriptions</span>
+                <strong>{stats.activeSubscriptionsCount || 0}</strong>
+              </div>
+              <div className="admin-kpi-card">
+                <span>Out of Stock</span>
+                <strong style={{ color: stats.outOfStockCount > 0 ? 'var(--danger)' : 'var(--primary)' }}>
+                  {stats.outOfStockCount}
+                </strong>
+              </div>
+              <div className="admin-kpi-card">
+                <span>Today&apos;s Orders</span>
+                <strong>{stats.todayOrdersCount || 0}</strong>
+              </div>
+              <div className="admin-kpi-card">
+                <span>Pending / Done / Cancelled</span>
+                <strong style={{ fontSize: '1.05rem' }}>
+                  {stats.pendingOrdersCount || 0} / {stats.completedOrdersCount || 0} / {stats.cancelledOrdersCount || 0}
+                </strong>
+              </div>
+              <div className="admin-kpi-card">
+                <span>Customers</span>
+                <strong>{stats.totalCustomers}</strong>
+              </div>
             </div>
-            <div className="admin-kpi-card">
-              <span>Active / Total Orders</span>
-              <strong>
-                {stats.activeOrdersCount || 0} / {stats.totalOrders || 0}
-              </strong>
-            </div>
-            <div className="admin-kpi-card">
-              <span>Active Subscriptions</span>
-              <strong>{stats.activeSubscriptionsCount || 0}</strong>
-            </div>
-            <div className="admin-kpi-card">
-              <span>Out of Stock</span>
-              <strong style={{ color: stats.outOfStockCount > 0 ? 'var(--danger)' : 'var(--primary)' }}>
-                {stats.outOfStockCount}
-              </strong>
-            </div>
-            <div className="admin-kpi-card">
-              <span>Today&apos;s Orders</span>
-              <strong>{stats.todayOrdersCount || 0}</strong>
-            </div>
-            <div className="admin-kpi-card">
-              <span>Pending / Done / Cancelled</span>
-              <strong style={{ fontSize: '1.05rem' }}>
-                {stats.pendingOrdersCount || 0} / {stats.completedOrdersCount || 0} / {stats.cancelledOrdersCount || 0}
-              </strong>
-            </div>
-            <div className="admin-kpi-card">
-              <span>Customers</span>
-              <strong>{stats.totalCustomers}</strong>
-            </div>
-          </div>
+          )}
 
           {Array.isArray(overview?.popularProducts) && overview.popularProducts.length > 0 && activeTab === 'overview' && (
             <section className="admin-panel" style={{ padding: '14px 18px', marginBottom: 16 }}>
