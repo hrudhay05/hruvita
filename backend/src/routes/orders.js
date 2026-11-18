@@ -3,6 +3,13 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { sendUserNotification } from '../utils/emailService.js';
 import {
+  getRazorpayKeyId,
+  getRazorpaySecret,
+  getWebhookSecret,
+  isRealRazorpayConfigured,
+  createRazorpayClient,
+} from '../utils/razorpayClient.js';
+import {
   listSlotsForDate,
   validateDeliverySchedule,
   listCoupons,
@@ -22,10 +29,6 @@ import {
 } from '../store/repository.js';
 
 const router = Router();
-
-const getRazorpaySecret = () => process.env.RAZORPAY_KEY_SECRET || 'rzp_test_secret_hruvita_dev';
-const getRazorpayKeyId = () => process.env.RAZORPAY_KEY_ID || 'rzp_test_hruvita_demo';
-const getWebhookSecret = () => process.env.RAZORPAY_WEBHOOK_SECRET || 'rzp_webhook_secret_hruvita_dev';
 
 export function signRazorpayPair(razorpayOrderId, razorpayPaymentId) {
   return crypto
@@ -174,9 +177,26 @@ router.post('/orders', requireAuth, async (req, res) => {
       actor: req.user.email,
     });
 
-    const rzpOrderId = `order_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const amountPaise = Math.round(quote.pricing.grandTotal * 100);
     const reservationExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+    const rzpClient = createRazorpayClient();
+    let rzpOrderId = `order_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    let isRealGateway = false;
+
+    if (rzpClient) {
+      const rzpOrder = await rzpClient.orders.create({
+        amount: amountPaise,
+        currency: 'INR',
+        receipt: orderId,
+        notes: {
+          hruvitaOrderId: orderId,
+          userId: req.user.id,
+        },
+      });
+      rzpOrderId = rzpOrder.id;
+      isRealGateway = true;
+    }
 
     const order = await createOrderRecord({
       id: orderId,
@@ -219,9 +239,8 @@ router.post('/orders', requireAuth, async (req, res) => {
       status: 'created',
     });
 
-    // Provide test payment token so the built-in Razorpay Test Checkout modal can sign & verify HMAC
-    const samplePaymentId = `pay_test_${Date.now().toString(36)}`;
-    const sampleSignature = signRazorpayPair(rzpOrderId, samplePaymentId);
+    const samplePaymentId = isRealGateway ? null : `pay_test_${Date.now().toString(36)}`;
+    const sampleSignature = isRealGateway ? null : signRazorpayPair(rzpOrderId, samplePaymentId);
 
     return res.status(201).json({
       order,
@@ -232,11 +251,16 @@ router.post('/orders', requireAuth, async (req, res) => {
         amount: quote.pricing.grandTotal,
         amountPaise,
         currency: 'INR',
-        testPayload: {
-          razorpay_order_id: rzpOrderId,
-          razorpay_payment_id: samplePaymentId,
-          razorpay_signature: sampleSignature,
-        },
+        isRealGateway,
+        ...(isRealGateway
+          ? {}
+          : {
+              testPayload: {
+                razorpay_order_id: rzpOrderId,
+                razorpay_payment_id: samplePaymentId,
+                razorpay_signature: sampleSignature,
+              },
+            }),
       },
     });
   } catch (err) {

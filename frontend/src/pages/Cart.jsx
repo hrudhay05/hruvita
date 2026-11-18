@@ -285,6 +285,61 @@ export default function Cart() {
         await refreshCatalog();
         showToast('Order placed successfully.');
         setConfirmedOrder(res.order);
+      } else if (res.razorpay?.isRealGateway && window.Razorpay) {
+        const rzpOptions = {
+          key: res.razorpay.keyId,
+          amount: res.razorpay.amountPaise,
+          currency: res.razorpay.currency || 'INR',
+          name: settings?.name || 'HRUVITA',
+          description: `Order ${res.order.id}`,
+          order_id: res.razorpay.orderId,
+          prefill: {
+            name: address.recipient || user.fullName || user.name || '',
+            email: user.email || '',
+            contact: address.phone || user.mobileNumber || '',
+          },
+          theme: {
+            color: '#245C45',
+          },
+          handler: async (rzpResponse) => {
+            setBusy(true);
+            try {
+              const verified = await apiRequest(`/api/orders/${res.order.id}/verify-payment`, {
+                method: 'POST',
+                body: JSON.stringify({
+                  razorpay_order_id: rzpResponse.razorpay_order_id,
+                  razorpay_payment_id: rzpResponse.razorpay_payment_id,
+                  razorpay_signature: rzpResponse.razorpay_signature,
+                }),
+              });
+              clear();
+              await refreshCatalog();
+              showToast('Payment verified. Order placed successfully.');
+              setConfirmedOrder(verified.order);
+            } catch (verifyErr) {
+              setError(verifyErr.message || 'Payment verification failed.');
+              showToast('Payment verification failed.', 'error');
+            } finally {
+              setBusy(false);
+            }
+          },
+          modal: {
+            ondismiss: () => {
+              setError(
+                `Payment cancelled or dismissed for order ${res.order.id}. Stock is reserved for 10 minutes — you can pay from your dashboard or retry.`
+              );
+            },
+          },
+        };
+        const rzp = new window.Razorpay(rzpOptions);
+        rzp.on('payment.failed', (failResp) => {
+          setError(
+            failResp?.error?.description ||
+              'Payment failed in Razorpay. Please try again or choose Cash on Delivery.'
+          );
+          showToast('Payment failed.', 'error');
+        });
+        rzp.open();
       } else {
         setRzpCheckout({
           order: res.order,

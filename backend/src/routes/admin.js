@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { ORDER_STATUSES } from '../models/Order.js';
 import { sendUserNotification } from '../utils/emailService.js';
+import { createRazorpayClient } from '../utils/razorpayClient.js';
 import {
   runDailySubscriptionGenerator,
   runLowStockCheck,
@@ -403,10 +404,28 @@ router.post('/orders/:id/refund', requireRole('admin'), async (req, res) => {
       by: req.user.email,
     });
 
+    let gatewayNote = 'Refund processed via payment gateway';
+    const rzpClient = createRazorpayClient();
+    if (
+      rzpClient &&
+      order.paymentMethod === 'razorpay' &&
+      order.razorpayPaymentId &&
+      !order.razorpayPaymentId.startsWith('pay_test_')
+    ) {
+      const rzpRefund = await rzpClient.payments.refund(order.razorpayPaymentId, {
+        speed: 'normal',
+        notes: {
+          hruvitaOrderId: order.id,
+          reason: req.body?.reason || 'Admin initiated refund',
+        },
+      });
+      gatewayNote = `Razorpay refund processed (${rzpRefund.id})`;
+    }
+
     const refunded = await transitionOrderStatus({
       orderId: order.id,
       status: 'refunded',
-      note: 'Refund processed via payment gateway',
+      note: gatewayNote,
       by: req.user.email,
     });
 
