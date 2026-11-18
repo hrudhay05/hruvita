@@ -257,7 +257,21 @@ const TOOL_DEFINITIONS = [
       required: ['confirmed'],
     },
   },
+  {
+    name: 'end_conversation',
+    description:
+      'End and close the assistant conversation when customer says goodbye, thank you, that is all, nothing else, sare bye, chalu, vellostha, etc.',
+    parameters: { type: 'object', properties: {} },
+  },
 ];
+
+function isClosingPhrase(text = '') {
+  const clean = String(text || '').trim().toLowerCase();
+  if (!clean) return false;
+  return /^(bye|goodbye|bye bye|thank you|thanks|thank you,?\s*bye|thanks,?\s*bye|that'?s all|nothing else|no more questions|see you|ok(ay)?,?\s*bye|sare,?\s*bye|inka emi vaddu|inka vaddu|chalu|vellostha|వెళ్ళొస్తా|చాలు|ధన్యవాదాలు|థాంక్స్|బై|ఇంకేమీ వద్దు)[.!?\s]*$/i.test(
+    clean
+  ) || /\b(goodbye|thank you,?\s*bye|that'?s all|nothing else|no more questions|sare,?\s*bye|inka emi vaddu|vellostha)\b/i.test(clean);
+}
 
 // ============================================================
 // SECURE BACKEND TOOL EXECUTOR
@@ -750,6 +764,17 @@ async function executeToolCall(
       break;
     }
 
+    case 'end_conversation': {
+      logAI('HRUVITA-VOICE', 'Customer ended conversation — closing assistant session');
+      stateAcc.actions.push({ type: 'END_CONVERSATION' });
+      result = {
+        closed: true,
+        instruction:
+          'Respond ONLY with a short, warm farewell (e.g. "You\'re most welcome! Thank you for choosing HRUVITA. Have a wonderful day! 😊" or Telugu equivalent). Do NOT ask "Would you like anything else?" or any follow-up question.',
+      };
+      break;
+    }
+
     default:
       result = { error: `Unknown tool: ${toolName}` };
   }
@@ -969,6 +994,7 @@ export async function processAssistantTurn({
     `2. Always call open_checkout for checkout requests, view_cart for cart requests, build_custom_bowl for ANY custom fruit bowl request or question, get_subscription_plans for subscription questions, get_business_info_and_offers for coupons/slots/delivery charges, and get_my_orders/track_order for order tracking. When proceeding to checkout/payment, ask: "${isTelugu ? 'మీరు ఏ పద్ధతిలో చెల్లించాలనుకుంటున్నారు? క్యాష్ ఆన్ డెలివరీనా లేదా ఆన్లైన్ పేమెంటా?' : 'Which payment method would you prefer: Cash on Delivery or Online Payment?'}"`,
     `3. When customer chooses COD/Cash, call select_payment_method({ method: "cod" }), show the summary, and ask confirmation before calling place_cod_order({ confirmed: true }). When customer chooses Online/UPI/GPay/PhonePe, call select_payment_method({ method: "razorpay" }) and reply politely that for security reasons we cannot guide through online payment and they should complete payment using the secure options on our website.`,
     `4. Never invent products, prices, stock, offers, or slots. Never collect UPI PIN, OTP, CVV, or card PIN. Never claim payment succeeded without backend gateway verification. NEVER output Markdown pipe tables (| ... |) in your reply — the chat UI renders clean order and product cards automatically.`,
+    `5. If the customer says any goodbye or ending phrase (bye, goodbye, thank you, thanks, that's all, nothing else, no more questions, see you, sare bye, chalu, inka emi vaddu, vellostha), ALWAYS call end_conversation and reply with a short warm farewell ONLY — NEVER ask "Would you like anything else?" or any follow-up question.`,
     settings.aiInstructions || '',
   ]
     .filter(Boolean)
@@ -1050,6 +1076,18 @@ export async function processAssistantTurn({
     reply = isTelugu
       ? 'క్షమించండి, ప్రస్తుతం AI సేవ తాత్కాలికంగా అందుబాటులో లేదు. దయచేసి కొద్దిసేపటి తర్వాత మళ్లీ ప్రయత్నించండి.'
       : 'Sorry, our AI assistant is temporarily busy right now. Please try again in a moment.';
+  }
+
+  // Ensure goodbye/ending phrases always emit END_CONVERSATION cleanly
+  if (
+    isClosingPhrase(cleanMsg) &&
+    !stateAcc.actions.some((a) => a.type === 'END_CONVERSATION')
+  ) {
+    stateAcc.toolsUsed.push('end_conversation');
+    stateAcc.actions.push({ type: 'END_CONVERSATION' });
+    reply = isTelugu
+      ? 'మీకు చాలా ధన్యవాదాలు! HRUVITA ను ఎంచుకున్నందుకు సంతోషం. మీ రోజు శుభప్రదంగా ఉండాలని కోరుకుంటున్నాను! 😊'
+      : "You're most welcome! Thank you for choosing HRUVITA. Have a wonderful day! 😊";
   }
 
   const totalDurationMs = Date.now() - totalStart;
