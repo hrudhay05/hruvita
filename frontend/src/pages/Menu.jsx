@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ProductCard from '../components/ProductCard.jsx';
 import Button from '../components/Button.jsx';
@@ -16,11 +16,16 @@ export default function Menu() {
   const { categories, products, loading } = useCatalog();
   const [params, setParams] = useSearchParams();
   const q = params.get('q') || '';
+  const [searchText, setSearchText] = useState(q);
   const category = params.get('category') || '';
   const veg = params.get('veg') === '1';
   const inStock = params.get('stock') === '1';
   const sort = params.get('sort') || 'popular';
   const maxPrice = Number(params.get('max')) || 0;
+
+  useEffect(() => {
+    setSearchText(q);
+  }, [q]);
 
   const set = (key, value) => {
     const next = new URLSearchParams(params);
@@ -29,8 +34,20 @@ export default function Menu() {
     setParams(next, { replace: true });
   };
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchText !== q) {
+        const next = new URLSearchParams(params);
+        if (searchText.trim()) next.set('q', searchText);
+        else next.delete('q');
+        setParams(next, { replace: true });
+      }
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [searchText, q, params, setParams]);
+
   const list = useMemo(() => {
-    const term = q.trim().toLowerCase();
+    const term = searchText.trim().toLowerCase();
     return products
       .filter((p) => !category || p.category === category)
       .filter(
@@ -44,9 +61,12 @@ export default function Menu() {
       .filter((p) => !inStock || p.stock > 0)
       .filter((p) => !maxPrice || unitPrice(p) <= maxPrice)
       .sort(sorters[sort] || sorters.popular);
-  }, [products, q, category, veg, inStock, maxPrice, sort]);
+  }, [products, searchText, category, veg, inStock, maxPrice, sort]);
 
-  const reset = () => setParams({}, { replace: true });
+  const reset = () => {
+    setSearchText('');
+    setParams({}, { replace: true });
+  };
 
   return (
     <div className="container" style={{ paddingBottom: 48 }}>
@@ -86,8 +106,8 @@ export default function Menu() {
           name="q"
           type="search"
           className="menu-input"
-          value={q}
-          onChange={(e) => set('q', e.target.value)}
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
           placeholder="Search fruit bowls, tiffins, juices..."
           aria-label="Search the menu"
         />

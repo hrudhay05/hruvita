@@ -39,11 +39,16 @@ export function AuthProvider({ children }) {
 
   const refreshMe = useCallback(async () => {
     try {
-      const data = await apiRequest('/api/auth/me');
-      setUser(data.user);
-      syncAddressesState(data.user?.addresses || []);
-      fetchNotifications();
-      return data.user;
+      const data = await apiRequest('/api/auth/session');
+      if (data.authenticated && data.user) {
+        setUser(data.user);
+        syncAddressesState(data.user?.addresses || []);
+        fetchNotifications();
+        return data.user;
+      }
+      setUser(null);
+      setAddresses([]);
+      return null;
     } catch {
       setStoredToken('');
       setUser(null);

@@ -68,16 +68,27 @@ function detectLanguage(text, requestedLang = 'en-IN') {
 
 function matchProductsFromText(text, allProducts) {
   const lowered = text.toLowerCase();
+  const wantsCombo = /(combo|కాంబో|\+)/i.test(text);
   const matchedTerms = [];
   for (const [regex, term] of TELUGU_ALIASES) {
     if (regex.test(text)) matchedTerms.push(term);
   }
 
-  return allProducts.filter((p) => {
+  const hits = allProducts.filter((p) => {
     const hay = `${p.name} ${p.category} ${p.description}`.toLowerCase();
     if (matchedTerms.some((t) => hay.includes(t))) return true;
     const words = lowered.split(/\s+/).filter((w) => w.length >= 4);
     return words.some((w) => p.name.toLowerCase().includes(w));
+  });
+
+  // Prefer non-combo exact dish matches unless the user asked for a combo
+  return hits.sort((a, b) => {
+    const aCombo = a.category === 'combos' ? 1 : 0;
+    const bCombo = b.category === 'combos' ? 1 : 0;
+    if (!wantsCombo && aCombo !== bCombo) return aCombo - bCombo;
+    const aNameHit = matchedTerms.some((t) => a.name.toLowerCase().startsWith(t)) ? 1 : 0;
+    const bNameHit = matchedTerms.some((t) => b.name.toLowerCase().startsWith(t)) ? 1 : 0;
+    return bNameHit - aNameHit;
   });
 }
 

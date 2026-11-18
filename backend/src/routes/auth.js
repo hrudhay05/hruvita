@@ -594,4 +594,26 @@ router.get('/me', requireAuth, async (req, res) => {
   return res.json({ user: req.user });
 });
 
+// Quiet session probe so logged-out storefront visitors don't see 401 console errors
+router.get('/session', async (req, res) => {
+  try {
+    const header = req.headers.authorization || '';
+    const token =
+      req.cookies?.hruvita_access_token ||
+      (header.startsWith('Bearer ') ? header.slice(7).trim() : '');
+    if (!token) return res.json({ authenticated: false, user: null });
+
+    const jwtMod = await import('jsonwebtoken');
+    const decoded = jwtMod.default.verify(
+      token,
+      process.env.JWT_SECRET || 'hruvita-jwt-access-secret-2026-secure'
+    );
+    const user = await findUserById(decoded.id);
+    if (!user || user.blocked) return res.json({ authenticated: false, user: null });
+    return res.json({ authenticated: true, user: await sanitizeUser(user) });
+  } catch {
+    return res.json({ authenticated: false, user: null });
+  }
+});
+
 export default router;

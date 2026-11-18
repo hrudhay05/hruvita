@@ -105,12 +105,14 @@ async function seedMongoIfNeeded() {
 
   const initialUsers = buildInitialUsers();
   for (const u of initialUsers) {
-    const existing = await User.findOne({ email: u.email }).select('+password').lean();
+    const existing = await User.findOne({ $or: [{ email: u.email }, { id: u.id }] })
+      .select('+password')
+      .lean();
     if (!existing) {
       await User.create(u);
     } else if (!existing.password || !existing.fullName) {
       await User.updateOne(
-        { email: u.email },
+        { id: existing.id },
         {
           $set: {
             fullName: existing.fullName || existing.name || u.fullName,
