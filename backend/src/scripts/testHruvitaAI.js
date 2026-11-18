@@ -103,14 +103,26 @@ async function run() {
   assert.ok(s3c.data.actions.some((a) => a.type === 'ADD_TO_CART' && a.productId === 'p1' && a.qty === 2));
   console.log('3. Multi-turn Telugu Idli ordering OK');
 
-  // Scenario 4: Tenglish ("Naku tiffins kavali")
+  // Scenario 4: Tenglish ("Naku tiffins kavali") + "I need two plates of idly."
   const s4 = await api('/api/assistant/chat', {
     method: 'POST',
     token,
     body: JSON.stringify({ message: 'Naku tiffins kavali', language: 'en-IN' }),
   });
   assert.equal(s4.data.language, 'te-IN');
-  console.log('4. Tenglish auto-detection OK');
+  const s4b = await api('/api/assistant/chat', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ message: 'I need two plates of idly.' }),
+  });
+  assert.ok(s4b.data.reply.includes('2'));
+  const s4c = await api('/api/assistant/chat', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ message: 'Yes please', conversationId: s4b.data.conversationId }),
+  });
+  assert.ok(s4c.data.actions.some((a) => a.type === 'ADD_TO_CART' && a.productId === 'p1' && a.qty === 2));
+  console.log('4. Tenglish auto-detection & "I need two plates of idly" OK');
 
   // Scenario 5 & 6: Change quantity & remove product
   const s5 = await api('/api/assistant/chat', {
@@ -127,15 +139,32 @@ async function run() {
   assert.ok(s6.data.actions.some((a) => a.type === 'UPDATE_CART_QTY' && a.productId === 'p7' && a.qty === 1));
   console.log('5-6. Quantity update & item removal OK');
 
-  // Scenario 7: Mood-based recommendation
-  const s7 = await api('/api/assistant/chat', {
+  // Scenario 7: Mood-based recommendations (hungry, tired, spicy, confused)
+  const s7a = await api('/api/assistant/chat', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ message: "I'm feeling very hungry." }),
+  });
+  assert.ok(s7a.data.toolsUsed.includes('mood_recommendation'));
+  const s7b = await api('/api/assistant/chat', {
     method: 'POST',
     token,
     body: JSON.stringify({ message: 'నాకు ఈరోజు చాలా అలసటగా ఉంది', language: 'te-IN' }),
   });
-  assert.ok(s7.data.toolsUsed.includes('mood_recommendation'));
-  assert.ok(s7.data.recommendedProducts.length > 0);
-  console.log('7. Mood-based recommendation (Telugu tired -> bowls/juices) OK');
+  assert.ok(s7b.data.toolsUsed.includes('mood_recommendation'));
+  const s7c = await api('/api/assistant/chat', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ message: 'I want something spicy.' }),
+  });
+  assert.ok(s7c.data.toolsUsed.includes('mood_recommendation'));
+  const s7d = await api('/api/assistant/chat', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ message: "I'm confused. Suggest something." }),
+  });
+  assert.ok(s7d.data.recommendedProducts.length > 0);
+  console.log('7. All 4 Mood-based recommendations (hungry, tired, spicy, confused) OK');
 
   // Scenario 8: Custom Fruit Bowl multi-turn
   const s8a = await api('/api/assistant/chat', {
@@ -217,6 +246,23 @@ async function run() {
   });
   assert.ok(s13.data.reply.includes('ORD-'));
   console.log('13. Authenticated Telugu order tracking OK');
+
+  // Scenario 14-19: Empty message guard & duplicate confirmation guard
+  const s14 = await api('/api/assistant/chat', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ message: '   ' }),
+  });
+  assert.equal(s14.status, 400, 'Empty speech/text must ask politely (400)');
+
+  // Repeat confirmation after order already placed must NOT place a duplicate order
+  const s19 = await api('/api/assistant/chat', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ message: 'Yes, confirm my order', conversationId: s11a.data.conversationId, cartItems: { p1: 2 } }),
+  });
+  assert.ok(!s19.data.actions.some((a) => a.type === 'CLEAR_CART'), 'Repeated confirmation must not create duplicate order');
+  console.log('14-19. Empty input guard & duplicate order confirmation prevention OK');
 
   // Scenario 20: Guest cannot view another user's orders
   const s20 = await api('/api/assistant/chat', {

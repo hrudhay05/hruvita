@@ -39,13 +39,13 @@ export const DEFAULT_FAQS = [
 
 // Telugu / Tenglish / English keyword mapping to English search terms
 const TELUGU_ALIASES = [
-  [/ఇడ్లీ|idly|idli/i, 'idli'],
-  [/దోస|దోశ|dosa/i, 'dosa'],
+  [/ఇడ్లీలు|ఇడ్లీ|idlis|idlys|idly|idli/i, 'idli'],
+  [/దోసెలు|దోసలు|దోస|దోశ|dosas|dosa/i, 'dosa'],
   [/పొంగల్|pongal/i, 'pongal'],
   [/ఉప్మా|upma/i, 'upma'],
   [/మిక్స్‌డ్ ఫ్రూట్|mixed fruit/i, 'mixed fruit bowl'],
   [/ఎక్సోటిక్|exotic/i, 'exotic seasonal fruit bowl'],
-  [/ఫ్రూట్ బౌల్|పండ్ల|fruit bowl|bowl/i, 'fruit bowl'],
+  [/ఫ్రూట్ బౌల్స్|ఫ్రూట్ బౌల్|పండ్ల|fruit bowls|fruit bowl|bowls|bowl/i, 'fruit bowl'],
   [/ఆరెంజ్|నారింజ|orange/i, 'orange'],
   [/పుచ్చకాయ|watermelon/i, 'watermelon'],
   [/దానిమ్మ|pomegranate/i, 'pomegranate'],
@@ -55,11 +55,11 @@ const TELUGU_ALIASES = [
   [/పెరుగు|curd/i, 'curd'],
   [/పనీర్|paneer/i, 'paneer'],
   [/రాగి|ragi/i, 'ragi'],
-  [/కాంబో|combo/i, 'combo'],
+  [/కాంబో|combos|combo/i, 'combo'],
   [/మొలకలు|sprouts|salad/i, 'sprouts'],
   [/భోజనం|లంచ్|thali|lunch|meals/i, 'thali'],
-  [/జ్యూస్|juice/i, 'juice'],
-  [/స్మూతీ|smoothie/i, 'smoothie'],
+  [/జ్యూసులు|జ్యూస్|juices|juice/i, 'juice'],
+  [/స్మూతీలు|స్మూతీ|smoothies|smoothie/i, 'smoothie'],
 ];
 
 const CATEGORY_ALIASES = [
@@ -87,16 +87,20 @@ function extractQuantity(text) {
 
 export function detectLanguage(text, requestedLang = 'en-IN') {
   if (/[\u0C00-\u0C7F]/.test(text)) return 'te-IN';
-  if (/(cheyandi|kavali|enti|unnaya|entha|pettu|add chey|namaskaram|bagunda|naku|naa|avunu|vaddu|chalu|tiffin|pampandi)/i.test(text)) {
+  if (
+    /(cheyandi|kavali|enti|unnaya|entha|pettu|add chey|namaskaram|bagunda|naku|naa|avunu|vaddu|chalu|tiffin|pampandi|akali|karam|teliyatledu|em tinalo|okati|rendu|moodu)/i.test(
+      text
+    )
+  ) {
     return 'te-IN';
   }
   return requestedLang === 'te-IN' ? 'te-IN' : 'en-IN';
 }
 
 function isAffirmative(text) {
-  return /^(yes|yeah|yep|yup|ok|okay|sure|confirm|proceed|go ahead|do it|add it|అవును|సరే|కన్ఫర్మ్|ఓకే|చేయండి|యాడ్ చేయండి)(?=$|[\s.,!?])/i.test(
+  return /^(yes|yeah|yep|yup|ok|okay|sure|confirm|proceed|go ahead|do it|add it|ha|haa|అవును|సరే|కన్ఫర్మ్|ఓకే|చేయండి|యాడ్ చేయండి)(?=$|[\s.,!?])/i.test(
     text.trim()
-  ) || /(yes,?\s*confirm|confirm my order|అవును.*చేయండి|ఆర్డర్ కన్ఫర్మ్)/i.test(text);
+  ) || /(yes,?\s*confirm|confirm my order|yes please|అవును.*చేయండి|ఆర్డర్ కన్ఫర్మ్)/i.test(text);
 }
 
 function isNegative(text) {
@@ -787,7 +791,7 @@ export async function processAssistantTurn({
   // ------------------------------------------------------------------
   // 8. MOOD-BASED RECOMMENDATIONS
   // ------------------------------------------------------------------
-  else if (/(hungry|starving|ఆకలి|కడుపు నిండా)/i.test(cleanMsg)) {
+  else if (/(hungry|starving|akali|ఆకలి|కడుపు నిండా)/i.test(cleanMsg)) {
     toolsUsed.push('mood_recommendation');
     const picks = availableProducts.filter((p) => ['tiffins', 'lunch'].includes(p.category) && p.stock > 0).slice(0, 3);
     recommendedProducts = picks.map(formatProductCard);
@@ -805,7 +809,7 @@ export async function processAssistantTurn({
     fallbackReply = isTelugu
       ? `మీకు ఫ్రెష్‌గా అనిపించడానికి ఒక ఫ్రూట్ బౌల్ లేదా తాజా జ్యూస్ ట్రై చేయొచ్చు: ${picks.map((p) => `${p.name} (₹${p.discountPrice || p.price})`).join(', ')}. మీకు ఏది ఇష్టం?`
       : `To help you feel refreshed, you can try a fresh fruit bowl or cold-pressed juice: ${picks.map((p) => `${p.name} (₹${p.discountPrice || p.price})`).join(', ')}. Which one sounds good?`;
-  } else if (/(spicy|కారంగా|కారం)/i.test(cleanMsg)) {
+  } else if (/(spicy|karam|కారంగా|కారం)/i.test(cleanMsg)) {
     toolsUsed.push('mood_recommendation');
     const picks = availableProducts.filter((p) => ['tiffins', 'snacks'].includes(p.category) && p.stock > 0).slice(0, 3);
     recommendedProducts = picks.map(formatProductCard);
@@ -813,8 +817,8 @@ export async function processAssistantTurn({
     toolFacts.push(`Mood=Spicy. Picks: ${picks.map((p) => `${p.name} ₹${p.discountPrice || p.price}`).join(', ')}`);
     fallbackReply = isTelugu
       ? `తప్పకుండా! కారంగా, రుచిగా ఉండే టిఫిన్స్ ఇవిగో: ${picks.map((p) => `${p.name} (₹${p.discountPrice || p.price})`).join(', ')}.`
-      : `Sure! Here are our flavorful tiffin options: ${picks.map((p) => `${p.name} (₹${p.discountPrice || p.price})`).join(', ')}.`;
-  } else if (/(confused|suggest|recommend|what should i eat|ఏమి తినాలి|సలహా)/i.test(cleanMsg)) {
+      : `Sure! Here are our flavorful spicy tiffin options: ${picks.map((p) => `${p.name} (₹${p.discountPrice || p.price})`).join(', ')}.`;
+  } else if (/(confused|suggest|recommend|what should i eat|bestseller|popular|ఏమి తినాలి|సలహా|teliyatledu|em tinalo)/i.test(cleanMsg)) {
     toolsUsed.push('mood_recommendation');
     const picks = availableProducts.filter((p) => p.bestseller && p.stock > 0).slice(0, 3);
     recommendedProducts = picks.map(formatProductCard);
@@ -830,7 +834,7 @@ export async function processAssistantTurn({
     const matchedProducts = matchProductsFromText(cleanMsg, availableProducts);
     const matchedCat = CATEGORY_ALIASES.find((c) => c.regex.test(cleanMsg));
     const hasSpecificDishWord =
-      /(idli|idly|ఇడ్లీ|dosa|దోస|దోశ|pongal|పొంగల్|upma|ఉప్మా|orange|ఆరెంజ్|నారింజ|watermelon|పుచ్చకాయ|pomegranate|దానిమ్మ|banana|అరటి|mango|మామిడి|milk|పాలు|curd|పెరుగు|paneer|పనీర్|ragi|రాగి|sprouts|మొలకలు|thali|భోజనం|mixed fruit|exotic)/i.test(
+      /(idli|idly|idlis|idlys|ఇడ్లీ|dosa|dosas|దోస|దోశ|pongal|పొంగల్|upma|ఉప్మా|orange|ఆరెంజ్|నారింజ|watermelon|పుచ్చకాయ|pomegranate|దానిమ్మ|banana|అరటి|mango|మామిడి|milk|పాలు|curd|పెరుగు|paneer|పనీర్|ragi|రాగి|sprouts|మొలకలు|thali|భోజనం|mixed fruit|exotic)/i.test(
         cleanMsg
       );
 
@@ -862,6 +866,13 @@ export async function processAssistantTurn({
         fallbackReply = isTelugu
           ? `అలాగే! ${qty} × ${primary.name} (₹${unitP * qty}) మీ కార్ట్‌లో యాడ్ చేశాను. చెకౌట్ ఓపెన్ చేయాలా?`
           : `Added ${qty} × ${primary.name} (₹${unitP * qty}) to your cart! Would you like to open checkout or add anything else?`;
+      } else if (qty && qty > 0) {
+        preserveExactReply = true;
+        nextSessionState.pendingIntent = { type: 'confirm_add', productId: primary.id, qty };
+        actions.push({ type: 'NAVIGATE', to: `/product/${primary.id}`, label: `View ${primary.name}` });
+        fallbackReply = isTelugu
+          ? `సరే! ${qty} × ${primary.name} (₹${unitP * qty}) ను మీ కార్ట్‌లో యాడ్ చేయనా?`
+          : `Sure! Should I add ${qty} × ${primary.name} (₹${unitP * qty}) to your cart?`;
       } else {
         // Multi-turn product inquiry -> navigate to Product Detail & ask quantity
         preserveExactReply = true;

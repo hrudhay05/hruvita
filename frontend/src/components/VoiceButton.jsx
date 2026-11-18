@@ -42,7 +42,7 @@ export default function VoiceButton() {
   const [open, setOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [lang, setLang] = useState('en-IN');
-  const [mode, setMode] = useState('ptt'); // 'text' | 'ptt' | 'handsfree'
+  const [mode, setMode] = useState('handsfree'); // 'text' | 'ptt' | 'handsfree' (auto-listen after reply)
   const [personalization, setPersonalization] = useState(() => {
     try {
       return localStorage.getItem('hruvita_ai_personalize') !== '0';
@@ -211,8 +211,13 @@ export default function VoiceButton() {
         (v) => FEMALE_VOICE_HINTS.test(v.name) && !MALE_VOICE_HINTS.test(v.name) && v.lang.includes('IN')
       );
 
-    // Never silently switch to a male voice
-    if (!chosen) return;
+    // Never silently switch to a male voice — still continue hands-free listening
+    if (!chosen) {
+      if (handsFreeRef.current && openRef.current) {
+        setTimeout(() => startListening(speechLang), 250);
+      }
+      return;
+    }
 
     const utter = new SpeechSynthesisUtterance(text);
     utter.voice = chosen;
@@ -257,7 +262,7 @@ export default function VoiceButton() {
         setSpeaking(false);
         setPausedAudio(false);
         if (handsFreeRef.current && openRef.current) {
-          startListening(speechLang);
+          setTimeout(() => startListening(speechLang), 250);
         }
       };
       await audio.play();
