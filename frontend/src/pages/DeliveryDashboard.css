@@ -395,7 +395,22 @@
 
 @media (max-width: 899px) {
   .del-main {
-    padding-bottom: 76px;
+    padding: 12px 12px 86px;
+    gap: 12px;
+  }
+
+  .del-topbar {
+    padding: 12px;
+  }
+
+  .del-card {
+    padding: 14px 12px;
+  }
+
+  .del-pay-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
   }
 }
 

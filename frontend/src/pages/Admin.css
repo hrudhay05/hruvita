@@ -1374,3 +1374,141 @@
     width: 100%;
   }
 }
+
+/* ---------- Mobile & Tablet Responsiveness ---------- */
+@media (max-width: 899px) {
+  .admin-sidebar {
+    padding: 12px 12px 10px;
+    gap: 10px;
+    box-shadow: 0 4px 16px rgba(11, 36, 25, 0.14);
+  }
+
+  .admin-brand-row {
+    padding: 0 2px 10px;
+  }
+
+  .admin-nav {
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+
+  .admin-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .admin-nav-btn {
+    padding: 8px 11px;
+    font-size: 0.8rem;
+  }
+
+  .admin-nav-icon-wrap {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+  }
+
+  .admin-sidebar-foot {
+    padding-top: 10px;
+    gap: 8px;
+  }
+
+  .admin-sidebar-user {
+    padding: 6px 10px;
+    font-size: 0.74rem;
+  }
+
+  .admin-topbar {
+    padding: 10px 14px;
+    min-height: auto;
+    gap: 10px;
+  }
+
+  .admin-topbar-title h1 {
+    font-size: 1.06rem;
+  }
+
+  .admin-topbar-title p {
+    font-size: 0.72rem;
+  }
+
+  .admin-content {
+    padding: 14px 12px 28px;
+    gap: 14px;
+  }
+
+  .admin-hero-banner {
+    padding: 16px 14px;
+    border-radius: 14px;
+  }
+
+  .admin-hero-banner h2 {
+    font-size: 1.08rem;
+  }
+
+  .admin-hero-btn {
+    padding: 7px 11px;
+    font-size: 0.78rem;
+  }
+
+  .admin-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .admin-kpi-card {
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .admin-kpi-card strong {
+    font-size: 1.18rem;
+  }
+
+  .admin-kpi-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+  }
+
+  .admin-panel {
+    padding: 14px 12px;
+    border-radius: 14px;
+  }
+
+  .admin-panel-head {
+    padding-bottom: 12px;
+    margin-bottom: 12px;
+  }
+
+  .admin-subtabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-subtabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .admin-subtab-btn {
+    flex-shrink: 0;
+    padding: 7px 11px;
+    font-size: 0.79rem;
+  }
+
+  .admin-form {
+    padding: 12px;
+  }
+
+  .admin-order-drawer {
+    width: 96vw;
+    max-height: 92vh;
+    border-radius: 16px;
+  }
+
+  .admin-custom-menu {
+    max-width: 88vw;
+  }
+}

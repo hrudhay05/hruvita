@@ -607,3 +607,36 @@
     align-items: start;
   }
 }
+
+@media (max-width: 639px) {
+  .account-page {
+    padding: 16px 0 36px;
+  }
+
+  .account-card {
+    padding: 16px 14px;
+  }
+
+  .account-tabs {
+    margin-bottom: 14px;
+  }
+
+  .account-tab {
+    padding: 8px 10px;
+    font-size: 0.82rem;
+  }
+
+  .account-order-stepper {
+    gap: 4px;
+    padding: 8px 4px;
+  }
+
+  .account-step {
+    font-size: 0.64rem;
+  }
+
+  .account-order-item-row {
+    font-size: 0.82rem;
+    gap: 6px;
+  }
+}

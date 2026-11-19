@@ -501,3 +501,28 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+@media (max-width: 639px) {
+  .ana-main {
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .ana-topbar {
+    padding: 10px 12px;
+  }
+
+  .ana-topbar-left h1 {
+    font-size: 1.06rem;
+  }
+
+  .ana-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .ana-bell-pop {
+    right: -10px;
+    width: min(92vw, 330px);
+  }
+}
