@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   FiBell,
   FiCheckCircle,
@@ -44,7 +44,13 @@ const FAILED_SET = new Set([
 ]);
 
 export default function DeliveryDashboard() {
+  const navigate = useNavigate();
   const { user, login, logout } = useAuth();
+
+  const handleSignOut = async () => {
+    await logout();
+    navigate('/');
+  };
   const { showToast } = useToast();
 
   const [section, setSection] = useState('dashboard');
@@ -260,7 +266,7 @@ export default function DeliveryDashboard() {
               </button>
             );
           })}
-          <button type="button" className="del-nav-btn" onClick={logout}>
+          <button type="button" className="del-nav-btn" onClick={handleSignOut}>
             <FiLogOut size={16} />
             <span>Logout</span>
           </button>
@@ -289,7 +295,7 @@ export default function DeliveryDashboard() {
               <option value="busy">Busy</option>
               <option value="offline">Offline</option>
             </select>
-            <button type="button" className="del-btn" onClick={logout}>
+            <button type="button" className="del-btn" onClick={handleSignOut}>
               <FiLogOut size={14} /> Logout
             </button>
           </div>

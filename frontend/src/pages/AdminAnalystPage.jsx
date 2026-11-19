@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { FiBarChart2 } from 'react-icons/fi';
 import AdminAnalystDashboard from '../components/AdminAnalystDashboard.jsx';
 import Button from '../components/Button.jsx';
@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import './Admin.css';
 
 export default function AdminAnalystPage() {
+  const navigate = useNavigate();
   const { user, login, logout } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -89,5 +90,10 @@ export default function AdminAnalystPage() {
     );
   }
 
-  return <AdminAnalystDashboard user={user} onLogout={handleLogout} />;
+  const handleSignOut = async () => {
+    await logout();
+    navigate('/');
+  };
+
+  return <AdminAnalystDashboard user={user} onLogout={handleSignOut} />;
 }

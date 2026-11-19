@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   FiActivity,
   FiBarChart2,
@@ -71,7 +71,13 @@ const emptyProductForm = {
 };
 
 export default function Admin() {
+  const navigate = useNavigate();
   const { user, isAdmin, login, logout } = useAuth();
+
+  const handleSignOut = async () => {
+    await logout();
+    navigate('/');
+  };
   const { categories, products, refreshCatalog } = useCatalog();
   const { showToast } = useToast();
 
@@ -346,7 +352,7 @@ export default function Admin() {
   };
 
   if (user?.role === 'admin_analyser') {
-    return <AdminAnalystDashboard user={user} onLogout={logout} />;
+    return <AdminAnalystDashboard user={user} onLogout={handleSignOut} />;
   }
 
   if (!user || !isAdmin) {
@@ -901,7 +907,7 @@ export default function Admin() {
           </Link>
           <button
             type="button"
-            onClick={logout}
+            onClick={handleSignOut}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
