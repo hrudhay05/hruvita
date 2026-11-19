@@ -13,6 +13,7 @@ import {
   FiGrid,
   FiLayers,
   FiLogOut,
+  FiMenu,
   FiPhone,
   FiPlus,
   FiPrinter,
@@ -289,6 +290,7 @@ export default function Admin() {
   const { showToast } = useToast();
 
   const [activeTab, setActiveTab] = useState('overview');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [email, setEmail] = useState('admin@hruvita.com');
   const [password, setPassword] = useState('Admin@123');
   const [error, setError] = useState('');
@@ -1172,10 +1174,27 @@ export default function Admin() {
 
   return (
     <div className="admin-shell">
-      <aside className="admin-sidebar">
+      {mobileNavOpen && (
+        <div
+          className="admin-mobile-backdrop"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      <aside className={`admin-sidebar ${mobileNavOpen ? 'admin-sidebar-open' : ''}`.trim()}>
         <div className="admin-brand-row">
           <Logo light />
-          <span className="admin-brand-badge">Admin</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="admin-brand-badge">Admin</span>
+            <button
+              type="button"
+              className="admin-mobile-close-btn"
+              aria-label="Close admin menu"
+              onClick={() => setMobileNavOpen(false)}
+            >
+              <FiX size={18} />
+            </button>
+          </div>
         </div>
 
         <nav className="admin-nav" aria-label="Admin sections">
@@ -1189,6 +1208,7 @@ export default function Admin() {
                   className={`admin-nav-btn ${item.active ? 'admin-nav-btn-active' : ''}`.trim()}
                   onClick={() => {
                     setActiveTab(item.id);
+                    setMobileNavOpen(false);
                     setError('');
                   }}
                 >
@@ -1229,9 +1249,19 @@ export default function Admin() {
 
       <div className="admin-main">
         <header className="admin-topbar">
-          <div className="admin-topbar-title">
-            <h1>{allTabTitles.find((n) => n.id === activeTab)?.label || 'Dashboard'}</h1>
-            <p>HRUVITA Operations &bull; Live Store Management</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <button
+              type="button"
+              className="admin-mobile-menu-btn"
+              aria-label="Open admin menu"
+              onClick={() => setMobileNavOpen(true)}
+            >
+              <FiMenu size={20} />
+            </button>
+            <div className="admin-topbar-title">
+              <h1>{allTabTitles.find((n) => n.id === activeTab)?.label || 'Dashboard'}</h1>
+              <p>HRUVITA Operations &bull; Live Store Management</p>
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <RealtimeBadge />
