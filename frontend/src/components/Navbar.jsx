@@ -12,7 +12,7 @@ import {
 } from 'react-icons/fi';
 import Logo from './Logo.jsx';
 import { useCart } from '../context/CartContext.jsx';
-import { useAuth } from '../context/AuthContext.jsx';
+import { useAuth, getDashboardPathForRole } from '../context/AuthContext.jsx';
 import './Navbar.css';
 
 const NAV_LINKS = [
@@ -137,7 +137,7 @@ export default function Navbar() {
           </Link>
 
           <Link
-            to={user ? '/dashboard' : '/login'}
+            to={user ? getDashboardPathForRole(user.role) : '/login'}
             className="navbar-profile-btn"
             aria-label={user ? `Profile (${user.fullName || user.name})` : 'Login'}
           >
@@ -193,7 +193,7 @@ export default function Navbar() {
             ))}
             <div className="navbar-mobile-footer">
               <Link
-                to={user ? '/dashboard' : '/login'}
+                to={user ? getDashboardPathForRole(user.role) : '/login'}
                 className="btn btn-primary btn-sm"
                 onClick={() => setMobileOpen(false)}
               >

@@ -1,7 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { apiRequest, setStoredToken } from '../lib/api.js';
+import { disconnectAllHruvitaSockets } from '../lib/socket.js';
 
 const AuthContext = createContext(null);
+
+export function getDashboardPathForRole(role) {
+  if (role === 'admin' || role === 'staff') return '/admin';
+  if (role === 'admin_analyser') return '/admin-analyser';
+  if (role === 'delivery_boy') return '/delivery';
+  return '/dashboard';
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -132,6 +140,7 @@ export function AuthProvider({ children }) {
     } catch {
       // ignore logout network errors
     }
+    disconnectAllHruvitaSockets();
     setStoredToken('');
     setUser(null);
     setAddresses([]);
@@ -257,6 +266,10 @@ export function AuthProvider({ children }) {
         setSelectedAddressId,
         loading,
         isAdmin: user?.role === 'admin' || user?.role === 'staff',
+        getCurrentUser: () => user,
+        isAuthenticated: () => Boolean(user),
+        hasRole: (role) => user?.role === role,
+        getDashboardPathForRole,
         notifications,
         unreadCount,
         refreshMe,

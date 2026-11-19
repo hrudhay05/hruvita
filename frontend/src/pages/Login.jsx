@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { FiEye, FiEyeOff, FiLogIn } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
-import { useAuth } from '../context/AuthContext.jsx';
+import { useAuth, getDashboardPathForRole } from '../context/AuthContext.jsx';
 import './AuthFlow.css';
 
 export default function Login() {
@@ -18,23 +18,11 @@ export default function Login() {
 
   const handleUserRedirect = (loggedUser) => {
     if (!loggedUser) return;
-    if (loggedUser.role === 'admin_analyser') {
-      navigate('/admin-analyst');
+    if (loggedUser.role === 'customer' && !loggedUser.isProfileCompleted) {
+      navigate('/complete-profile', { replace: true });
       return;
     }
-    if (loggedUser.role === 'delivery_boy') {
-      navigate('/delivery');
-      return;
-    }
-    if (loggedUser.role === 'admin' || loggedUser.role === 'staff') {
-      navigate('/admin');
-      return;
-    }
-    if (!loggedUser.isProfileCompleted) {
-      navigate('/complete-profile');
-      return;
-    }
-    navigate('/dashboard');
+    navigate(getDashboardPathForRole(loggedUser.role), { replace: true });
   };
 
   const handleSubmit = async (e) => {

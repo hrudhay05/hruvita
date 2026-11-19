@@ -1,5 +1,6 @@
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout.jsx';
+import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Home from './pages/Home.jsx';
 import Menu from './pages/Menu.jsx';
 import BuildBowl from './pages/BuildBowl.jsx';
@@ -26,10 +27,32 @@ import NotFound from './pages/NotFound.jsx';
 export default function App() {
   return (
     <Routes>
-      {/* Dedicated Admin & Delivery Workspaces */}
-      <Route path="admin" element={<Admin />} />
-      <Route path="admin-analyst" element={<AdminAnalystPage />} />
-      <Route path="delivery" element={<DeliveryDashboard />} />
+      {/* Dedicated Role-Protected Workspaces */}
+      <Route
+        path="admin"
+        element={
+          <ProtectedRoute allowedRoles={['admin', 'staff']}>
+            <Admin />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="admin-analyser"
+        element={
+          <ProtectedRoute allowedRoles={['admin_analyser', 'admin']}>
+            <AdminAnalystPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="admin-analyst" element={<Navigate to="/admin-analyser" replace />} />
+      <Route
+        path="delivery"
+        element={
+          <ProtectedRoute allowedRoles={['delivery_boy']}>
+            <DeliveryDashboard />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Customer Brand Website */}
       <Route element={<Layout />}>

@@ -161,7 +161,10 @@ export default function Account() {
     return <Login />;
   }
   if (user.role === 'admin_analyser') {
-    return <Navigate to="/admin-analyst" replace />;
+    return <Navigate to="/admin-analyser" replace />;
+  }
+  if (user.role === 'admin' || user.role === 'staff') {
+    return <Navigate to="/admin" replace />;
   }
   if (user.role === 'delivery_boy') {
     return <Navigate to="/delivery" replace />;
@@ -328,7 +331,7 @@ export default function Account() {
             size="sm"
             onClick={async () => {
               await logout();
-              navigate('/');
+              navigate('/', { replace: true });
             }}
           >
             <FiLogOut size={15} /> Logout

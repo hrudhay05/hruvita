@@ -75,7 +75,7 @@ async function issueSessionAndCookies(req, res, userObj, rememberMe = false) {
   });
 
   setAuthCookies(res, accessToken, refreshToken, rememberMe);
-  return { user: clean, token: accessToken };
+  return { success: true, user: clean, token: accessToken };
 }
 
 // PART 1: USER SIGNUP (POST /api/auth/signup & /api/auth/register)

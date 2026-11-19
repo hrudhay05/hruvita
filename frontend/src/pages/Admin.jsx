@@ -76,7 +76,7 @@ export default function Admin() {
 
   const handleSignOut = async () => {
     await logout();
-    navigate('/');
+    navigate('/', { replace: true });
   };
   const { categories, products, refreshCatalog } = useCatalog();
   const { showToast } = useToast();
@@ -882,7 +882,7 @@ export default function Admin() {
         <div className="admin-sidebar-foot">
           <div style={{ opacity: 0.8 }}>{user.email}</div>
           <Link
-            to="/admin-analyst"
+            to="/admin-analyser"
             style={{
               display: 'inline-flex',
               alignItems: 'center',

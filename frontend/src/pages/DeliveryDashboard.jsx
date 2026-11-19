@@ -49,7 +49,7 @@ export default function DeliveryDashboard() {
 
   const handleSignOut = async () => {
     await logout();
-    navigate('/');
+    navigate('/', { replace: true });
   };
   const { showToast } = useToast();
 
