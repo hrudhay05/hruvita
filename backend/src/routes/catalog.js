@@ -13,6 +13,7 @@ import {
   recordAudit,
 } from '../store/repository.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { emitProductUpdated } from '../services/realtimeService.js';
 
 const router = Router();
 
@@ -118,6 +119,7 @@ router.post('/products', requireAuth, requireRole('admin', 'staff'), async (req,
     entityId: product.id,
     details: { name: product.name, price: product.price },
   });
+  emitProductUpdated(product, 'product:created');
   res.status(201).json({ product });
 });
 
@@ -134,6 +136,8 @@ router.put('/products/:id', requireAuth, requireRole('admin', 'staff'), async (r
     entityId: product.id,
     details: { name: product.name, stock: product.stock, price: product.price },
   });
+  const evName = req.body?.price !== undefined || req.body?.discountPrice !== undefined ? 'product:price-updated' : 'product:updated';
+  emitProductUpdated(product, evName);
   res.json({ product });
 });
 
@@ -149,6 +153,7 @@ router.delete('/products/:id', requireAuth, requireRole('admin'), async (req, re
     entity: 'product',
     entityId: req.params.id,
   });
+  emitProductUpdated({ id: req.params.id }, 'product:deleted');
   res.json({ deleted: true });
 });
 

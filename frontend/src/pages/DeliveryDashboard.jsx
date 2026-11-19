@@ -18,11 +18,12 @@ import {
 } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
 import Logo from '../components/Logo.jsx';
+import RealtimeBadge from '../components/RealtimeBadge.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useSocketEvents } from '../context/SocketContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { apiRequest } from '../lib/api.js';
 import { money } from '../lib/format.js';
-import { createHruvitaSocket } from '../lib/socket.js';
 import './DeliveryDashboard.css';
 
 const NAV_ITEMS = [
@@ -101,29 +102,32 @@ export default function DeliveryDashboard() {
     loadDeliveryOrders();
   }, [loadDeliveryOrders]);
 
-  // Real-time Socket.IO updates
-  useEffect(() => {
-    if (!isDeliveryBoy) return undefined;
-    const sock = createHruvitaSocket();
-    const onNew = (payload) => {
-      showToast(`New assignment: Order ${payload.orderId}`);
-      setLiveNotifs((prev) => [
-        { id: Date.now(), title: `New Assignment: ${payload.orderId}`, desc: `${payload.customerName} (${money(payload.grandTotal)})`, at: new Date().toLocaleTimeString() },
-        ...prev,
-      ]);
-      loadDeliveryOrders();
-    };
-    const onCancelled = (payload) => {
-      showToast(`Assignment updated/reassigned: ${payload.orderId}`);
-      loadDeliveryOrders();
-    };
-    sock.on('delivery:new-assignment', onNew);
-    sock.on('delivery:assignment-cancelled', onCancelled);
-    sock.on('delivery:order-updated', loadDeliveryOrders);
-    return () => {
-      sock.disconnect();
-    };
-  }, [isDeliveryBoy, loadDeliveryOrders, showToast]);
+  useSocketEvents(
+    isDeliveryBoy
+      ? {
+          'delivery:assigned': (payload) => {
+            showToast(`New assignment: Order ${payload.orderId}`);
+            setLiveNotifs((prev) => [
+              { id: Date.now(), title: `New Assignment: ${payload.orderId}`, desc: `${payload.customerName} (${money(payload.grandTotal)})`, at: new Date().toLocaleTimeString() },
+              ...prev,
+            ]);
+            loadDeliveryOrders();
+          },
+          'delivery:reassigned': (payload) => {
+            showToast(`Assigned order: ${payload.orderId}`);
+            loadDeliveryOrders();
+          },
+          'delivery:assignment-cancelled': (payload) => {
+            showToast(`Assignment updated: ${payload.orderId}`);
+            loadDeliveryOrders();
+          },
+          'delivery:order-updated': () => loadDeliveryOrders(),
+          'order:updated': () => loadDeliveryOrders(),
+          'order:cancelled': () => loadDeliveryOrders(),
+        }
+      : null,
+    [isDeliveryBoy, loadDeliveryOrders]
+  );
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -285,6 +289,7 @@ export default function DeliveryDashboard() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <RealtimeBadge />
             <select
               className="del-select"
               value={profile?.availability || 'available'}

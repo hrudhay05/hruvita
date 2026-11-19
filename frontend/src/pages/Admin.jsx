@@ -30,7 +30,9 @@ import {
 import Button from '../components/Button.jsx';
 import AdminAnalystDashboard from '../components/AdminAnalystDashboard.jsx';
 import Logo from '../components/Logo.jsx';
+import RealtimeBadge from '../components/RealtimeBadge.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useSocketEvents } from '../context/SocketContext.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { apiRequest, getStoredToken } from '../lib/api.js';
@@ -214,6 +216,51 @@ export default function Admin() {
       loadKitchen(kitchenDate);
     }
   }, [isAdmin, activeTab, kitchenDate, loadKitchen]);
+
+  useSocketEvents(
+    isAdmin
+      ? {
+          'order:created': (p) => {
+            showToast(`New order received: ${p?.orderId || ''}`);
+            loadOverview();
+          },
+          'order:updated': () => loadOverview(),
+          'order:cancelled': (p) => {
+            showToast(`Order cancelled: ${p?.orderId || ''}`);
+            loadOverview();
+          },
+          'payment:successful': () => loadOverview(),
+          'payment:refunded': () => loadOverview(),
+          'inventory:updated': () => {
+            loadOverview();
+            refreshCatalog();
+          },
+          'inventory:low-stock': (p) => {
+            showToast(`Low stock alert: ${p?.item?.name || p?.productId || ''}`);
+            loadOverview();
+          },
+          'inventory:out-of-stock': (p) => {
+            showToast(`Out of stock: ${p?.item?.name || p?.productId || ''}`, 'error');
+            loadOverview();
+          },
+          'delivery:assigned': () => loadOverview(),
+          'delivery:accepted': () => loadOverview(),
+          'delivery:started': () => loadOverview(),
+          'delivery:completed': (p) => {
+            showToast(`Order delivered: ${p?.orderId || ''}`);
+            loadOverview();
+          },
+          'delivery:failed': (p) => {
+            showToast(`Delivery failed: ${p?.orderId || ''}`, 'error');
+            loadOverview();
+          },
+          'customer:registered': () => loadOverview(),
+          'subscription:created': () => loadOverview(),
+          'subscription:updated': () => loadOverview(),
+        }
+      : null,
+    [isAdmin, loadOverview, refreshCatalog]
+  );
 
   const [team, setTeam] = useState([]);
   const [teamForm, setTeamForm] = useState({ fullName: '', email: '', password: '', role: 'admin_analyser' });
@@ -929,6 +976,7 @@ export default function Admin() {
         <header className="admin-topbar">
           <h1>{navItems.find((n) => n.id === activeTab)?.label || 'Dashboard'}</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <RealtimeBadge />
             <Button
               type="button"
               size="sm"

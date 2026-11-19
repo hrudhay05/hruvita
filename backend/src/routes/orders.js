@@ -4,6 +4,12 @@ import { requireAuth } from '../middleware/auth.js';
 import { sendUserNotification } from '../utils/emailService.js';
 import { notifyAdmins } from '../utils/adminNotifier.js';
 import {
+  emitOrderCreated,
+  emitOrderUpdated,
+  emitOrderCancelled,
+  emitPaymentUpdated,
+} from '../services/realtimeService.js';
+import {
   getRazorpayKeyId,
   getRazorpaySecret,
   getWebhookSecret,
@@ -180,6 +186,7 @@ router.post('/orders', requireAuth, async (req, res) => {
         entityId: order.id,
       }).catch(() => {});
 
+      emitOrderCreated(order);
       return res.status(201).json({ order, payment });
     }
 
@@ -307,6 +314,8 @@ router.post('/orders/:id/verify-payment', requireAuth, async (req, res) => {
       razorpayPaymentId: razorpay_payment_id,
       by: req.user.email,
     });
+    emitPaymentUpdated(confirmed, 'payment:successful');
+    emitOrderUpdated(confirmed, 'order:confirmed');
 
     await sendUserNotification({
       userId: order.userId,
@@ -458,6 +467,7 @@ router.post('/orders/:id/cancel', requireAuth, async (req, res) => {
       entityType: 'order',
       entityId: order.id,
     }).catch(() => {});
+    emitOrderCancelled(updated);
     return res.json({ order: updated });
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Could not cancel order.' });

@@ -21,6 +21,7 @@ import {
 } from '../utils/emailService.js';
 import { notifyAdmins } from '../utils/adminNotifier.js';
 import { emitToAdmins, emitToDeliveryPartner, emitToUser } from '../utils/socketServer.js';
+import { emitDeliveryUpdated, emitOrderUpdated, emitPaymentUpdated } from '../services/realtimeService.js';
 
 const router = Router();
 
@@ -413,6 +414,12 @@ router.patch('/orders/:id/status', otpVerifyLimiter, async (req, res) => {
     ).lean();
 
     emitToDeliveryPartner(req.user.id, 'delivery:order-updated', { orderId: orderDoc.id, deliveryStatus });
+    const finalOrd = updated || orderDoc;
+    emitDeliveryUpdated(finalOrd, `delivery:${deliveryStatus === 'out_for_delivery' ? 'started' : deliveryStatus === 'delivered' ? 'completed' : deliveryStatus === 'accepted' ? 'accepted' : FAILED_STATUSES.has(deliveryStatus) ? 'failed' : 'updated'}`);
+    emitOrderUpdated(finalOrd);
+    if (deliveryStatus === 'delivered' && assignmentPatch.codCollected) {
+      emitPaymentUpdated(finalOrd, 'payment:cod-collected');
+    }
 
     await recordAudit({
       actorId: req.user.id,

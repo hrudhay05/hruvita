@@ -18,6 +18,8 @@ import {
   FiUsers,
 } from 'react-icons/fi';
 import { BarTrendChart, DonutBreakdownChart, LineTrendChart } from './AnalyticsCharts.jsx';
+import RealtimeBadge from './RealtimeBadge.jsx';
+import { useSocketEvents } from '../context/SocketContext.jsx';
 import { API_BASE, apiRequest } from '../lib/api.js';
 import { money } from '../lib/format.js';
 import './AdminAnalystDashboard.css';
@@ -96,18 +98,23 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
     loadAnalytics();
   }, [loadAnalytics]);
 
-  // Poll notifications reliably every 30s
-  useEffect(() => {
-    const timer = setInterval(() => {
-      apiRequest('/api/analyst/notifications')
-        .then((res) => {
-          setNotifications(res.notifications || []);
-          setUnreadCount(res.unreadCount || 0);
-        })
-        .catch(() => {});
-    }, 30_000);
-    return () => clearInterval(timer);
-  }, []);
+  useSocketEvents(
+    {
+      'analytics:updated': () => loadAnalytics(),
+      'analytics:sales-updated': () => loadAnalytics(),
+      'analytics:inventory-updated': () => loadAnalytics(),
+      'analytics:delivery-updated': () => loadAnalytics(),
+      'inventory:low-stock': () => loadAnalytics(),
+      'inventory:out-of-stock': () => loadAnalytics(),
+      'notification:new': (p) => {
+        if (p?.notification) {
+          setNotifications((prev) => [p.notification, ...prev.filter((n) => n.id !== p.notification.id)]);
+          setUnreadCount((c) => c + 1);
+        }
+      },
+    },
+    [loadAnalytics]
+  );
 
   const loadReport = useCallback(async () => {
     try {
@@ -248,6 +255,7 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
           </div>
 
           <div className="ana-topbar-actions">
+            <RealtimeBadge />
             <div className="ana-bell-wrap">
               <button
                 type="button"

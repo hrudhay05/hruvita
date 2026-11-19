@@ -1,4 +1,5 @@
 import { AdminNotification } from '../models/AdminNotification.js';
+import { emitNotificationCreated } from '../services/realtimeService.js';
 
 const memAdminNotifications = [];
 
@@ -40,6 +41,7 @@ export async function notifyAdmins({
       memAdminNotifications.unshift(doc);
       if (memAdminNotifications.length > 200) memAdminNotifications.pop();
     }
+    emitNotificationCreated(doc, 'admin');
     return doc;
   } catch {
     return null;

@@ -24,14 +24,15 @@ import {
 import Button from '../components/Button.jsx';
 import OrderDetailModal from '../components/OrderDetailModal.jsx';
 import ProductCard from '../components/ProductCard.jsx';
+import RealtimeBadge from '../components/RealtimeBadge.jsx';
 import Login from './Login.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useSocketEvents } from '../context/SocketContext.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
 import { useCart } from '../context/CartContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { apiRequest } from '../lib/api.js';
 import { money } from '../lib/format.js';
-import { createHruvitaSocket } from '../lib/socket.js';
 import './Account.css';
 import './AuthFlow.css';
 
@@ -125,16 +126,35 @@ export default function Account() {
     return () => window.removeEventListener('hruvita:order-placed', onOrderPlaced);
   }, [loadDashboardData]);
 
-  useEffect(() => {
-    if (!user || user.role !== 'customer') return undefined;
-    const sock = createHruvitaSocket();
-    const refresh = () => loadDashboardData();
-    sock.on('order:delivery-assigned', refresh);
-    sock.on('order:out-for-delivery', refresh);
-    sock.on('order:delivered', refresh);
-    sock.on('order:delivery-failed', refresh);
-    return () => sock.disconnect();
-  }, [user, loadDashboardData]);
+  useSocketEvents(
+    user?.role === 'customer'
+      ? {
+          'order:created': () => loadDashboardData(),
+          'order:updated': (p) => {
+            loadDashboardData();
+            if (p?.orderId) showToast(`Order ${p.orderId} updated.`);
+          },
+          'order:out-for-delivery': (p) => {
+            loadDashboardData();
+            showToast(`Order ${p?.orderId || ''} is out for delivery!`);
+          },
+          'order:delivered': (p) => {
+            loadDashboardData();
+            showToast(`Order ${p?.orderId || ''} delivered!`);
+          },
+          'order:cancelled': () => loadDashboardData(),
+          'delivery:assigned': () => {
+            loadDashboardData();
+            showToast('Delivery partner assigned to your order.');
+          },
+          'payment:successful': () => loadDashboardData(),
+          'payment:refunded': () => loadDashboardData(),
+          'subscription:created': () => loadDashboardData(),
+          'subscription:updated': () => loadDashboardData(),
+        }
+      : null,
+    [user?.id, loadDashboardData]
+  );
 
   useEffect(() => {
     if (user) {

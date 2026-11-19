@@ -10,6 +10,13 @@ import {
 } from '../utils/emailService.js';
 import { notifyAdmins } from '../utils/adminNotifier.js';
 import { emitToAdmins, emitToDeliveryPartner, emitToUser } from '../utils/socketServer.js';
+import {
+  emitOrderUpdated,
+  emitOrderCancelled,
+  emitPaymentUpdated,
+  emitInventoryUpdated,
+  emitDeliveryAssigned,
+} from '../services/realtimeService.js';
 import { createRazorpayClient } from '../utils/razorpayClient.js';
 import {
   runDailySubscriptionGenerator,
@@ -428,13 +435,14 @@ router.patch('/orders/:id/status', async (req, res) => {
       entityId: updated.id,
       details: { status: updated.status, note },
     });
-    await sendUserNotification({
+    emitOrderUpdated(updated);
+    sendUserNotification({
       userId: updated.userId,
       email: updated.customerEmail,
       type: 'order',
       title: `Order ${updated.id} Status: ${updated.status.replace(/_/g, ' ').toUpperCase()}`,
       message: `Your HRUVITA order ${updated.id} is now "${updated.status.replace(/_/g, ' ')}".`,
-    });
+    }).catch(() => {});
     return res.json({ order: updated });
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Failed to update order status.' });
@@ -578,6 +586,8 @@ router.post('/inventory/products/:id/adjust', requireRole('admin'), async (req, 
       entityId: product.id,
       details: { delta: Number(delta), stockAfter: product.stock, note },
     });
+    const invEv = product.stock <= 0 ? 'inventory:out-of-stock' : product.stock <= Number(product.lowStockThreshold ?? 5) ? 'inventory:low-stock' : Number(delta) > 0 ? 'inventory:restocked' : 'inventory:updated';
+    emitInventoryUpdated(product, invEv);
     res.json({ product });
   } catch (err) {
     res.status(400).json({ error: err.message || 'Could not adjust stock.' });
@@ -1115,6 +1125,7 @@ router.post('/orders/:id/assign-delivery', async (req, res) => {
       entityId: order.id,
     }).catch(() => {});
 
+    emitDeliveryAssigned(updated || order, boy.id, isReassign, order.deliveryAssignment?.deliveryBoyId || '');
     return res.json({ order: updated || order });
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Could not assign delivery partner.' });

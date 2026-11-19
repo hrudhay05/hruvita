@@ -15,6 +15,7 @@ import {
   listReferralsByUser,
 } from '../store/repository.js';
 import { sendUserNotification } from '../utils/emailService.js';
+import { emitSubscriptionUpdated } from '../services/realtimeService.js';
 
 const router = Router();
 
@@ -117,6 +118,7 @@ router.post('/subscriptions', requireAuth, async (req, res) => {
       message: `Your ${plan.name} (${plan.days} days) starts on ${subscription.startDate} (${subscription.slotLabel}) with ${subscription.preferredBreakfast}.`,
     });
 
+    emitSubscriptionUpdated(subscription, 'subscription:created');
     return res.status(201).json({ subscription });
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Could not create subscription.' });
@@ -129,6 +131,7 @@ router.patch('/subscriptions/:id/toggle', requireAuth, async (req, res) => {
     if (!updated) {
       return res.status(404).json({ error: 'Subscription not found.' });
     }
+    emitSubscriptionUpdated(updated, 'subscription:updated');
     return res.json({ subscription: updated });
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Could not update subscription.' });
@@ -141,6 +144,7 @@ router.post('/subscriptions/:id/pause-date', requireAuth, async (req, res) => {
     if (!updated) {
       return res.status(404).json({ error: 'Subscription not found.' });
     }
+    emitSubscriptionUpdated(updated, 'subscription:updated');
     return res.json({ subscription: updated });
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Could not pause delivery date.' });

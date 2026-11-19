@@ -4,6 +4,7 @@ import { products as fallbackProducts } from '../data/products.js';
 import { plans as fallbackPlans } from '../data/plans.js';
 import { brand as fallbackBrand } from '../config/brand.js';
 import { apiRequest } from '../lib/api.js';
+import { useSocketEvents } from './SocketContext.jsx';
 
 const CatalogContext = createContext(null);
 
@@ -39,6 +40,26 @@ export function CatalogProvider({ children }) {
   useEffect(() => {
     refreshCatalog();
   }, [refreshCatalog]);
+
+  useSocketEvents({
+    'product:created': (p) => {
+      if (p?.product) setProducts((prev) => [p.product, ...prev.filter((x) => x.id !== p.product.id)]);
+    },
+    'product:updated': (p) => {
+      if (p?.product) setProducts((prev) => prev.map((x) => (x.id === p.product.id ? p.product : x)));
+    },
+    'product:price-updated': (p) => {
+      if (p?.product) setProducts((prev) => prev.map((x) => (x.id === p.product.id ? p.product : x)));
+    },
+    'product:deleted': (p) => {
+      if (p?.productId) setProducts((prev) => prev.filter((x) => x.id !== p.productId));
+    },
+    'inventory:updated': (p) => {
+      if (p?.productId && p.stock !== undefined) {
+        setProducts((prev) => prev.map((x) => (x.id === p.productId ? { ...x, stock: p.stock } : x)));
+      }
+    },
+  });
 
   const categoryBySlug = useMemo(
     () => Object.fromEntries(categories.map((c) => [c.slug, c])),
