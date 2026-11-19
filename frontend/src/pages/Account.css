@@ -655,12 +655,52 @@
 }
 
 @media (max-width: 639px) {
+  .account-page,
+  .account-grid,
+  .account-card,
+  .account-orders-list,
+  .account-order-card,
+  .account-order-main {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .account-page {
-    padding: 16px 0 36px;
+    padding: 14px 0 36px;
+    overflow-x: hidden;
+  }
+
+  .account-header {
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .account-header h1 {
+    font-size: 1.3rem;
+  }
+
+  .account-nav-pills {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+  }
+
+  .account-nav-pills::-webkit-scrollbar {
+    display: none;
+  }
+
+  .account-nav-pill {
+    flex-shrink: 0;
+    padding: 7px 12px;
+    font-size: 0.8rem;
   }
 
   .account-card {
-    padding: 16px 14px;
+    padding: 14px 12px;
+    overflow: hidden;
   }
 
   .account-tabs {
@@ -670,6 +710,47 @@
   .account-tab {
     padding: 8px 10px;
     font-size: 0.82rem;
+  }
+
+  .account-order-filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+
+  .account-order-filters::-webkit-scrollbar {
+    display: none;
+  }
+
+  .account-filter-pill {
+    flex-shrink: 0;
+    padding: 5px 10px;
+    font-size: 0.74rem;
+  }
+
+  .account-order-card {
+    padding: 13px 12px;
+    overflow: hidden;
+  }
+
+  .account-order-visual-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .account-order-collage {
+    width: 56px;
+    height: 56px;
+  }
+
+  .account-order-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 6px;
   }
 
   .account-order-stepper {
@@ -684,5 +765,30 @@
   .account-order-item-row {
     font-size: 0.82rem;
     gap: 6px;
+  }
+
+  .account-order-foot {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .account-order-actions {
+    width: 100%;
+    gap: 6px;
+  }
+
+  .account-mini-btn,
+  .account-page .admin-mini-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+    padding: 8px 10px;
+    font-size: 0.78rem;
+  }
+
+  .account-address-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
   }
 }
