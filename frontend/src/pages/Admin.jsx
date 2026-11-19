@@ -1644,7 +1644,7 @@ export default function Admin() {
                 </p>
               ) : (
                 <div className="admin-table-wrap admin-orders-table-wrap">
-                  <table className="admin-table admin-orders-table">
+                  <table className="admin-table admin-orders-table admin-orders-mobile-cards">
                     <thead>
                       <tr>
                         <th>Order &amp; Slot</th>

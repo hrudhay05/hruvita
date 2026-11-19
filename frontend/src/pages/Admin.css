@@ -1586,3 +1586,120 @@
     max-width: 86vw;
   }
 }
+
+/* ---------- Mobile Card Layout for Orders Queue (< 768px) ---------- */
+@media (max-width: 767px) {
+  .admin-orders-table-wrap {
+    border: 0;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .admin-orders-mobile-cards,
+  .admin-orders-mobile-cards tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .admin-orders-mobile-cards thead {
+    display: none;
+  }
+
+  .admin-orders-mobile-cards tbody tr {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+    border-radius: 14px;
+    border: 1px solid #dce8e0;
+    background: #ffffff;
+    box-shadow: 0 3px 12px rgba(18, 55, 40, 0.06);
+  }
+
+  .admin-orders-mobile-cards tbody td {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border-bottom: 0;
+    font-size: 0.84rem;
+  }
+
+  .admin-orders-mobile-cards tbody td:nth-child(1) {
+    padding-bottom: 8px;
+    border-bottom: 1px solid #edf2ee;
+  }
+
+  .admin-orders-mobile-cards tbody td:nth-child(2)::before {
+    content: 'Customer';
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748b;
+    margin-bottom: 2px;
+  }
+
+  .admin-orders-mobile-cards tbody td:nth-child(3)::before {
+    content: 'Items';
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748b;
+    margin-bottom: 2px;
+  }
+
+  .admin-orders-mobile-cards tbody td:nth-child(4)::before {
+    content: 'Amount & Payment';
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748b;
+    margin-bottom: 2px;
+  }
+
+  .admin-orders-mobile-cards tbody td:nth-child(5)::before {
+    content: 'Order Status';
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748b;
+    margin-bottom: 4px;
+  }
+
+  .admin-orders-mobile-cards tbody td:nth-child(6)::before {
+    content: 'Delivery Partner';
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748b;
+    margin-bottom: 4px;
+  }
+
+  .admin-orders-mobile-cards .admin-status-stack,
+  .admin-orders-mobile-cards .admin-partner-box {
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .admin-orders-mobile-cards .admin-custom-menu {
+    left: 0;
+    right: 0;
+    min-width: 100%;
+    max-width: 100%;
+  }
+
+  .admin-orders-mobile-cards tbody td:nth-child(7) {
+    padding-top: 8px;
+    border-top: 1px dashed #e2ebe5;
+  }
+}
