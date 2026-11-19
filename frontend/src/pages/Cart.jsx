@@ -5,6 +5,7 @@ import Button from '../components/Button.jsx';
 import { useCart } from '../context/CartContext.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useSocketEvents } from '../context/SocketContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { apiRequest } from '../lib/api.js';
 import { detectCurrentLocation } from '../lib/location.js';
@@ -169,10 +170,18 @@ export default function Cart() {
   useEffect(() => {
     apiRequest('/api/coupons')
       .then((d) => {
-        if (d.coupons?.length) setCoupons(d.coupons);
+        setCoupons(d.coupons || []);
       })
       .catch(() => {});
-  }, []);
+  }, [user?.id]);
+
+  useSocketEvents({
+    'coupon:updated': () => {
+      apiRequest('/api/coupons')
+        .then((d) => setCoupons(d.coupons || []))
+        .catch(() => {});
+    },
+  });
 
   useEffect(() => {
     if (user) {
@@ -749,7 +758,7 @@ export default function Cart() {
           </div>
 
           {coupons.length > 0 && (
-            <div className="cart-coupon-chips">
+            <div className="cart-coupon-chips" style={{ display: 'grid', gap: 6 }}>
               {coupons.map((c) => (
                 <button
                   key={c.code}
@@ -757,8 +766,25 @@ export default function Cart() {
                   className="cart-coupon-chip"
                   onClick={() => handleApplyCoupon(c.code)}
                   title={c.title}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '7px 10px',
+                  }}
                 >
-                  {c.code}
+                  <span>
+                    <strong>{c.code}</strong> &bull;{' '}
+                    {c.type === 'percent' ? `${c.value}% OFF` : `Flat ₹${c.value} OFF`}
+                    {c.minOrder > 0 ? ` (Min ₹${c.minOrder})` : ''}
+                    {c.firstOrderOnly ? ' • First Order' : ''}
+                  </span>
+                  {c.validUntil && (
+                    <span style={{ fontSize: '0.72rem', opacity: 0.78 }}>Exp {c.validUntil}</span>
+                  )}
                 </button>
               ))}
             </div>

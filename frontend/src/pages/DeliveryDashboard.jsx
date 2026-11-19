@@ -338,7 +338,21 @@ export default function DeliveryDashboard() {
 
         {section === 'notifications' && (
           <section className="del-card">
-            <h2>Real-Time Notifications ({liveNotifs.length})</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+              <h2 style={{ margin: 0 }}>Real-Time Notifications ({liveNotifs.length})</h2>
+              {liveNotifs.length > 0 && (
+                <button
+                  type="button"
+                  className="del-btn del-btn-danger"
+                  onClick={async () => {
+                    setLiveNotifs([]);
+                    await apiRequest('/api/profile/notifications', { method: 'DELETE' }).catch(() => {});
+                  }}
+                >
+                  Clear Notifications
+                </button>
+              )}
+            </div>
             {liveNotifs.length === 0 ? (
               <p className="del-sub">No new alerts right now. You will be notified instantly on new assignments.</p>
             ) : (
@@ -424,8 +438,36 @@ export default function DeliveryDashboard() {
                     </div>
 
                     <div className="del-pay-row">
-                      <span>
-                        <strong>{ord.paymentMethod.toUpperCase()}</strong> ({ord.paymentStatus === 'paid' ? 'Payment Successful' : ord.paymentStatus}) &bull;{' '}
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        {ord.paymentStatus === 'paid' ? (
+                          <span
+                            style={{
+                              background: '#dcfce7',
+                              color: '#166534',
+                              border: '1px solid #86efac',
+                              borderRadius: 999,
+                              padding: '3px 10px',
+                              fontSize: '0.75rem',
+                              fontWeight: 800,
+                            }}
+                          >
+                            PREPAID &ndash; DO NOT COLLECT CASH
+                          </span>
+                        ) : (
+                          <span
+                            style={{
+                              background: '#fef3c7',
+                              color: '#92400e',
+                              border: '1px solid #fcd34d',
+                              borderRadius: 999,
+                              padding: '3px 10px',
+                              fontSize: '0.75rem',
+                              fontWeight: 800,
+                            }}
+                          >
+                            COLLECT CASH: {money(ord.grandTotal)}
+                          </span>
+                        )}
                         <strong>{money(ord.grandTotal)}</strong>
                       </span>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -446,9 +488,18 @@ export default function DeliveryDashboard() {
                     {!isDone && !isFailed && (
                       <div className="del-actions">
                         {ord.deliveryStatus === 'assigned' && (
-                          <button type="button" className="del-btn del-btn-primary" onClick={() => handleStatusUpdate(ord, 'accepted')}>
-                            Accept Order
-                          </button>
+                          <>
+                            <button type="button" className="del-btn del-btn-primary" onClick={() => handleStatusUpdate(ord, 'accepted')}>
+                              Accept Order
+                            </button>
+                            <button
+                              type="button"
+                              className="del-btn del-btn-danger"
+                              onClick={() => handleStatusUpdate(ord, 'rejected', 'Rejected by delivery partner')}
+                            >
+                              Reject
+                            </button>
+                          </>
                         )}
                         {ord.deliveryStatus === 'accepted' && (
                           <button type="button" className="del-btn del-btn-primary" onClick={() => handleStatusUpdate(ord, 'picked_up')}>

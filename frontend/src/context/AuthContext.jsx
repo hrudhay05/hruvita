@@ -247,6 +247,11 @@ export function AuthProvider({ children }) {
     setNotifications(data.notifications || []);
   };
 
+  const clearNotifications = async () => {
+    await apiRequest('/api/profile/notifications', { method: 'DELETE' });
+    setNotifications([]);
+  };
+
   const deleteAccount = async () => {
     await apiRequest('/api/profile', { method: 'DELETE' });
     setStoredToken('');
@@ -277,6 +282,7 @@ export function AuthProvider({ children }) {
         getAddressById,
         fetchNotifications,
         markNotificationsRead,
+        clearNotifications,
         signup,
         register,
         verifyEmailOtp,

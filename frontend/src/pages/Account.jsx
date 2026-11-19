@@ -582,7 +582,12 @@ export default function Account() {
                       <div className="account-order-foot">
                         <div className="account-order-pay">
                           <span className="account-pay-chip">
-                            {totalQty} item{totalQty === 1 ? '' : 's'} &bull; {ord.paymentMethod.toUpperCase()} ({ord.paymentStatus})
+                            {totalQty} item{totalQty === 1 ? '' : 's'} &bull;{' '}
+                            {ord.originalPaymentMethod === 'COD' && (ord.currentPaymentMethod === 'Online' || ord.paymentMethod === 'razorpay') && ord.paymentStatus === 'paid'
+                              ? 'COD → Online Payment (Prepaid) • PAID'
+                              : ord.paymentMethod === 'cod' && ord.paymentStatus !== 'paid'
+                              ? 'COD – Payment Pending'
+                              : `${ord.paymentMethod.toUpperCase()} (${ord.paymentStatus})`}
                           </span>
                           <strong className="account-order-total">
                             {money(ord.pricing?.grandTotal)}

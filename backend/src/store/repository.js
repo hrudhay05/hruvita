@@ -11,6 +11,7 @@ import { AuditLog } from '../models/AuditLog.js';
 import { Order, ORDER_STATUSES } from '../models/Order.js';
 import { Payment } from '../models/Payment.js';
 import { Coupon } from '../models/Coupon.js';
+import { CouponRedemption } from '../models/CouponRedemption.js';
 import { DeliverySlot } from '../models/DeliverySlot.js';
 import { Notification } from '../models/Notification.js';
 import { Review } from '../models/Review.js';
@@ -58,6 +59,7 @@ const mem = {
   refreshSessions: [],
   orders: [],
   payments: [],
+  couponRedemptions: [],
   reviews: [],
   subscriptions: [],
   conversations: [],
@@ -674,12 +676,72 @@ export async function updateSlotConfig(id, patch) {
   return { ...mem.slots[idx] };
 }
 
-export async function listCoupons() {
+const NON_CONSUMING_ORDER_STATUSES = new Set([
+  'cancelled',
+  'refunded',
+  'refund_initiated',
+  'payment_pending',
+]);
+
+function isCouponWithinValidity(coupon, todayStr) {
+  if (coupon.validFrom && todayStr < coupon.validFrom) return false;
+  if (coupon.validUntil && todayStr > coupon.validUntil) return false;
+  return true;
+}
+
+export async function listCoupons({ userId = null, userEmail = '' } = {}) {
+  const { todayStr } = getBusinessDateParts();
+  let rows;
   if (mongoConnected) {
     const docs = await Coupon.find({ active: true }).lean();
-    return docs.map(stripMongo);
+    rows = docs.map(stripMongo);
+  } else {
+    rows = mem.coupons.filter((c) => c.active !== false).map((c) => ({ ...c }));
   }
-  return mem.coupons.filter((c) => c.active !== false).map((c) => ({ ...c }));
+
+  let userValidOrders = null;
+  let resolvedEmail = String(userEmail || '').trim().toLowerCase();
+  if (userId) {
+    const [orders, userDoc] = await Promise.all([
+      listOrdersByUser(userId),
+      resolvedEmail ? Promise.resolve(null) : findUserById(userId),
+    ]);
+    userValidOrders = orders.filter((o) => !NON_CONSUMING_ORDER_STATUSES.has(o.status));
+    if (!resolvedEmail && userDoc?.email) {
+      resolvedEmail = String(userDoc.email).trim().toLowerCase();
+    }
+  }
+
+  const allRedemptions = await listCouponRedemptions();
+  const activeRedemptions = allRedemptions.filter((r) => r.status === 'redeemed');
+
+  return rows.filter((c) => {
+    if (c.visibility === 'private') return false;
+    if (!isCouponWithinValidity(c, todayStr)) return false;
+    const allowedEmails = Array.isArray(c.allowedUserEmails) ? c.allowedUserEmails : [];
+    if (allowedEmails.length > 0) {
+      if (!resolvedEmail || !allowedEmails.includes(resolvedEmail)) return false;
+    }
+    const gLimit = Number(c.globalUsageLimit || 0);
+    if (gLimit > 0) {
+      const globalUsed = activeRedemptions.filter((r) => r.couponCode === c.code).length;
+      if (globalUsed >= gLimit) return false;
+    }
+    if (userId) {
+      if (c.firstOrderOnly && userValidOrders && userValidOrders.length > 0) return false;
+      const limit = c.firstOrderOnly ? 1 : Number(c.perUserLimit || 0);
+      if (limit > 0) {
+        const usedByRedemption = activeRedemptions.filter(
+          (r) => r.couponCode === c.code && r.customerId === userId
+        ).length;
+        const usedByOrders = userValidOrders
+          ? userValidOrders.filter((o) => o.pricing?.couponCode === c.code).length
+          : 0;
+        if (Math.max(usedByRedemption, usedByOrders) >= limit) return false;
+      }
+    }
+    return true;
+  });
 }
 
 export async function listAllCoupons() {
@@ -690,6 +752,73 @@ export async function listAllCoupons() {
   return mem.coupons.map((c) => ({ ...c }));
 }
 
+export async function listCouponRedemptions(limit = 300) {
+  if (mongoConnected) {
+    const docs = await CouponRedemption.find().sort({ createdAt: -1 }).limit(limit).lean();
+    return docs.map(stripMongo);
+  }
+  return mem.couponRedemptions.slice(0, limit).map((r) => ({ ...r }));
+}
+
+export async function recordCouponRedemption({
+  couponCode,
+  customerId,
+  customerEmail = '',
+  orderId,
+  discountAmount = 0,
+  status = 'redeemed',
+}) {
+  const code = String(couponCode || '').trim().toUpperCase();
+  if (!code || !orderId || !customerId) return null;
+  const payload = {
+    id: `CRED-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    couponCode: code,
+    customerId,
+    customerEmail: String(customerEmail || '').toLowerCase(),
+    orderId,
+    discountAmount: Math.max(0, Number(discountAmount) || 0),
+    status,
+    redeemedAt: new Date().toISOString(),
+  };
+  if (mongoConnected) {
+    const doc = await CouponRedemption.findOneAndUpdate(
+      { orderId, couponCode: code },
+      { $set: { discountAmount: payload.discountAmount, status: payload.status, customerEmail: payload.customerEmail }, $setOnInsert: { id: payload.id, customerId: payload.customerId, redeemedAt: payload.redeemedAt } },
+      { new: true, upsert: true }
+    ).lean();
+    return stripMongo(doc);
+  }
+  const idx = mem.couponRedemptions.findIndex((r) => r.orderId === orderId && r.couponCode === code);
+  if (idx >= 0) {
+    mem.couponRedemptions[idx] = { ...mem.couponRedemptions[idx], discountAmount: payload.discountAmount, status };
+    return { ...mem.couponRedemptions[idx] };
+  }
+  mem.couponRedemptions.unshift(payload);
+  return { ...payload };
+}
+
+export async function updateCouponRedemptionForOrder(orderId, couponCode, nextStatus) {
+  const code = String(couponCode || '').trim().toUpperCase();
+  if (!orderId || !code) return null;
+  if (nextStatus === 'restored') {
+    const coupon = await findCouponByCode(code);
+    if (coupon && coupon.restoreOnCancel === false) {
+      return null;
+    }
+  }
+  if (mongoConnected) {
+    const doc = await CouponRedemption.findOneAndUpdate(
+      { orderId, couponCode: code },
+      { $set: { status: nextStatus } },
+      { new: true }
+    ).lean();
+    return stripMongo(doc);
+  }
+  const row = mem.couponRedemptions.find((r) => r.orderId === orderId && r.couponCode === code);
+  if (row) row.status = nextStatus;
+  return row ? { ...row } : null;
+}
+
 export async function upsertCoupon(data) {
   const code = String(data.code || '')
     .toUpperCase()
@@ -697,14 +826,35 @@ export async function upsertCoupon(data) {
     .trim();
   if (!code) throw new Error('Coupon code is required.');
 
+  const allowedTypes = new Set(['percent', 'flat', 'fixed_total']);
+  const normalizeList = (val) =>
+    Array.isArray(val)
+      ? val.map((x) => String(x).trim()).filter(Boolean)
+      : String(val || '')
+          .split(',')
+          .map((x) => x.trim())
+          .filter(Boolean);
+
+  const eligibleProductIds = normalizeList(data.eligibleProductIds);
+  const eligibleCategories = normalizeList(data.eligibleCategories).map((c) => c.toLowerCase());
+  const allowedUserEmails = normalizeList(data.allowedUserEmails).map((e) => e.toLowerCase());
   const payload = {
     code,
     title: String(data.title || `${code} Offer`).trim(),
-    type: data.type === 'flat' ? 'flat' : 'percent',
+    type: allowedTypes.has(data.type) ? data.type : 'percent',
     value: Math.max(1, Number(data.value) || 10),
     minOrder: Math.max(0, Number(data.minOrder) || 0),
     maxDiscount: Math.max(1, Number(data.maxDiscount) || 100),
     firstOrderOnly: Boolean(data.firstOrderOnly),
+    visibility: data.visibility === 'private' ? 'private' : 'public',
+    validFrom: String(data.validFrom || '').slice(0, 10),
+    validUntil: String(data.validUntil || '').slice(0, 10),
+    eligibleProductIds,
+    eligibleCategories,
+    allowedUserEmails,
+    perUserLimit: Math.max(0, Number(data.perUserLimit) || 0),
+    globalUsageLimit: Math.max(0, Number(data.globalUsageLimit) || 0),
+    restoreOnCancel: data.restoreOnCancel !== undefined ? Boolean(data.restoreOnCancel) : true,
     active: data.active !== undefined ? Boolean(data.active) : true,
   };
 
@@ -900,60 +1050,128 @@ export async function calculateCheckoutQuote({
 
   let couponDiscount = 0;
   let appliedCoupon = '';
+  let appliedCouponDoc = null;
   let couponMessage = '';
   if (couponCode && String(couponCode).trim()) {
+    const { todayStr } = getBusinessDateParts();
     const coupon = await findCouponByCode(couponCode);
-    if (!coupon) {
+    if (!coupon || coupon.active === false) {
       couponMessage = 'Invalid or expired coupon code.';
-    } else if (coupon.firstOrderOnly && userId) {
-      const pastOrders = await listOrdersByUser(userId);
-      const hasValidOrder = pastOrders.some(
-        (o) => !['cancelled', 'refunded', 'payment_pending'].includes(o.status)
+    } else if (!isCouponWithinValidity(coupon, todayStr)) {
+      couponMessage =
+        coupon.validFrom && todayStr < coupon.validFrom
+          ? `Coupon ${coupon.code} starts on ${coupon.validFrom}.`
+          : `Coupon ${coupon.code} has expired.`;
+    } else {
+      let userValidOrders = null;
+      let customerEmail = '';
+      if (userId) {
+        const [pastOrders, userDoc] = await Promise.all([
+          listOrdersByUser(userId),
+          findUserById(userId),
+        ]);
+        userValidOrders = pastOrders.filter((o) => !NON_CONSUMING_ORDER_STATUSES.has(o.status));
+        customerEmail = String(userDoc?.email || '').trim().toLowerCase();
+      }
+
+      const eligibleIds = Array.isArray(coupon.eligibleProductIds) ? coupon.eligibleProductIds : [];
+      const eligibleCats = Array.isArray(coupon.eligibleCategories)
+        ? coupon.eligibleCategories.map((c) => String(c).toLowerCase())
+        : [];
+      const allowedEmails = Array.isArray(coupon.allowedUserEmails)
+        ? coupon.allowedUserEmails.map((e) => String(e).toLowerCase())
+        : [];
+
+      const catalogProducts = eligibleCats.length > 0 ? await listProducts() : [];
+      const productCatMap = new Map(
+        catalogProducts.map((p) => [p.id, String(p.category || '').toLowerCase()])
       );
-      if (hasValidOrder) {
-        couponMessage = `Coupon ${coupon.code} is valid on first order only.`;
-      } else if (subtotal < (coupon.minOrder || 0)) {
+
+      const hasProductFilter = eligibleIds.length > 0 || eligibleCats.length > 0;
+      const eligibleSubtotal = !hasProductFilter
+        ? subtotal
+        : lineItems
+            .filter((li) => {
+              if (li.isCustomBowl) return false;
+              const matchProd = eligibleIds.length === 0 || eligibleIds.includes(li.productId);
+              const cat = productCatMap.get(li.productId) || '';
+              const matchCat = eligibleCats.length === 0 || eligibleCats.includes(cat);
+              return matchProd && matchCat;
+            })
+            .reduce((sum, li) => sum + (li.lineTotal || 0), 0);
+
+      const allRedemptions = await listCouponRedemptions(500);
+      const redeemedRows = allRedemptions.filter(
+        (r) => r.couponCode === coupon.code && r.status === 'redeemed'
+      );
+      const globalLimit = Number(coupon.globalUsageLimit || 0);
+      const perUserLimit = coupon.firstOrderOnly ? 1 : Number(coupon.perUserLimit || 0);
+      const alreadyUsedCount = userId
+        ? Math.max(
+            redeemedRows.filter((r) => r.customerId === userId).length,
+            userValidOrders ? userValidOrders.filter((o) => o.pricing?.couponCode === coupon.code).length : 0
+          )
+        : 0;
+
+      if (allowedEmails.length > 0 && (!customerEmail || !allowedEmails.includes(customerEmail))) {
+        couponMessage = `Coupon ${coupon.code} is not valid for your account.`;
+      } else if (globalLimit > 0 && redeemedRows.length >= globalLimit) {
+        couponMessage = `Coupon ${coupon.code} has reached its maximum usage limit.`;
+      } else if (coupon.firstOrderOnly && !userId) {
+        couponMessage = `Please sign in to use first-order coupon ${coupon.code}.`;
+      } else if (coupon.firstOrderOnly && userValidOrders && userValidOrders.length > 0) {
+        couponMessage = `Coupon ${coupon.code} is valid on your first order only.`;
+      } else if (perUserLimit > 0 && !userId) {
+        couponMessage = `Please sign in to use coupon ${coupon.code}.`;
+      } else if (perUserLimit > 0 && alreadyUsedCount >= perUserLimit) {
+        couponMessage = `You have already used coupon ${coupon.code}.`;
+      } else if (hasProductFilter && eligibleSubtotal <= 0) {
+        couponMessage = `Coupon ${coupon.code} is not valid for the items in your cart.`;
+      } else if (eligibleSubtotal < (coupon.minOrder || 0)) {
         couponMessage = `Coupon ${coupon.code} requires a minimum order of ₹${coupon.minOrder}.`;
       } else {
         appliedCoupon = coupon.code;
-        couponDiscount =
-          coupon.type === 'percent'
-            ? Math.min(Math.round((subtotal * coupon.value) / 100), coupon.maxDiscount || subtotal)
-            : Math.min(coupon.value, subtotal);
+        appliedCouponDoc = coupon;
+        if (coupon.type === 'percent') {
+          couponDiscount = Math.min(
+            Math.round((eligibleSubtotal * coupon.value) / 100),
+            coupon.maxDiscount || eligibleSubtotal
+          );
+        } else if (coupon.type === 'flat') {
+          couponDiscount = Math.min(coupon.value, eligibleSubtotal, coupon.maxDiscount || coupon.value);
+        }
         couponMessage = `Coupon ${coupon.code} applied (saved ₹${couponDiscount}).`;
       }
-    } else if (subtotal < (coupon.minOrder || 0)) {
-      couponMessage = `Coupon ${coupon.code} requires a minimum order of ₹${coupon.minOrder}.`;
-    } else {
-      appliedCoupon = coupon.code;
-      if (coupon.type === 'percent') {
-        couponDiscount = Math.min(
-          Math.round((subtotal * coupon.value) / 100),
-          coupon.maxDiscount || subtotal
-        );
-      } else {
-        couponDiscount = Math.min(coupon.value, subtotal);
-      }
-      couponMessage = `Coupon ${coupon.code} applied (saved ₹${couponDiscount}).`;
     }
   }
 
   let rewardPointsUsed = 0;
-  if (useRewards && userId) {
-    const user = await findUserById(userId);
-    if (user && user.rewardPoints > 0) {
-      const remainingAfterCoupon = Math.max(0, subtotal - couponDiscount);
-      rewardPointsUsed = Math.min(user.rewardPoints, 50, remainingAfterCoupon);
-    }
-  }
-
-  const discountedSubtotal = Math.max(0, subtotal - couponDiscount - rewardPointsUsed);
+  let deliveryCharge = 0;
+  let taxAmount = 0;
+  let grandTotal = 0;
   const freeAbove = Number(settings.freeDeliveryAbove ?? 199);
   const baseDelivery = Number(settings.deliveryCharge ?? 25);
-  const deliveryCharge = subtotal >= freeAbove ? 0 : baseDelivery;
   const taxRate = Number(settings.taxPercent ?? 5);
-  const taxAmount = Math.round((discountedSubtotal * taxRate) / 100);
-  const grandTotal = Math.max(0, discountedSubtotal + deliveryCharge + taxAmount);
+
+  if (appliedCouponDoc?.type === 'fixed_total') {
+    const targetPayable = Math.max(1, Number(appliedCouponDoc.value) || 2);
+    grandTotal = Math.min(subtotal, targetPayable);
+    couponDiscount = Math.max(0, subtotal - grandTotal);
+    couponMessage = `Coupon ${appliedCouponDoc.code} applied (final payable ₹${grandTotal}).`;
+  } else {
+    if (useRewards && userId) {
+      const user = await findUserById(userId);
+      if (user && user.rewardPoints > 0) {
+        const remainingAfterCoupon = Math.max(0, subtotal - couponDiscount);
+        rewardPointsUsed = Math.min(user.rewardPoints, 50, remainingAfterCoupon);
+      }
+    }
+
+    const discountedSubtotal = Math.max(0, subtotal - couponDiscount - rewardPointsUsed);
+    deliveryCharge = subtotal >= freeAbove ? 0 : baseDelivery;
+    taxAmount = Math.round((discountedSubtotal * taxRate) / 100);
+    grandTotal = Math.max(0, discountedSubtotal + deliveryCharge + taxAmount);
+  }
 
   return {
     items: lineItems,
@@ -1368,23 +1586,32 @@ export async function confirmOrderPayment({ orderId, razorpayPaymentId, by = 'cu
   }
 
   const now = new Date().toISOString();
+  const isCodConversion =
+    order.originalPaymentMethod === 'COD' || order.paymentMethod === 'cod';
+  const nextStatus = order.status === 'payment_pending' ? 'confirmed' : order.status;
   const nextHistory = [
     ...(order.statusHistory || []),
     {
-      status: 'confirmed',
-      note: `Online payment verified (${razorpayPaymentId})`,
+      status: nextStatus,
+      note: isCodConversion
+        ? `COD converted to Online payment (${razorpayPaymentId})`
+        : `Online payment verified (${razorpayPaymentId})`,
       by,
       at: now,
     },
   ];
 
   const patch = {
-    status: 'confirmed',
+    status: nextStatus,
+    paymentMethod: 'razorpay',
+    originalPaymentMethod: order.originalPaymentMethod || (isCodConversion ? 'COD' : 'Online'),
+    currentPaymentMethod: 'Online',
     paymentStatus: 'paid',
     razorpayPaymentId,
     stockDeducted: true,
     stockReserved: false,
     reservationExpiresAt: '',
+    'delivery.cashCollectionStatus': 'not_applicable',
     statusHistory: nextHistory,
     updatedAt: now,
   };
@@ -1393,7 +1620,16 @@ export async function confirmOrderPayment({ orderId, razorpayPaymentId, by = 'cu
   if (mongoConnected) {
     await Payment.findOneAndUpdate(
       { orderId },
-      { $set: { razorpayPaymentId, status: 'captured', updatedAt: now } }
+      {
+        $set: {
+          method: 'razorpay',
+          razorpayOrderId: order.razorpayOrderId || '',
+          razorpayPaymentId,
+          status: 'captured',
+          updatedAt: now,
+        },
+      },
+      { upsert: true }
     );
     const updated = await Order.findOneAndUpdate({ id: orderId }, { $set: patch }, { new: true }).lean();
     confirmedOrder = stripMongo(updated);
@@ -1402,13 +1638,18 @@ export async function confirmOrderPayment({ orderId, razorpayPaymentId, by = 'cu
     if (payIdx >= 0) {
       mem.payments[payIdx] = {
         ...mem.payments[payIdx],
+        method: 'razorpay',
         razorpayPaymentId,
         status: 'captured',
         updatedAt: now,
       };
     }
     const ordIdx = mem.orders.findIndex((o) => o.id === orderId);
-    mem.orders[ordIdx] = { ...mem.orders[ordIdx], ...patch };
+    mem.orders[ordIdx] = {
+      ...mem.orders[ordIdx],
+      ...patch,
+      delivery: { ...(mem.orders[ordIdx].delivery || {}), cashCollectionStatus: 'not_applicable' },
+    };
     confirmedOrder = { ...mem.orders[ordIdx] };
   }
 
@@ -2111,6 +2352,15 @@ export async function markAllNotificationsRead(userId) {
     if (n.userId === userId) n.read = true;
   }
   return listUserNotifications(userId);
+}
+
+export async function clearUserNotifications(userId) {
+  if (mongoConnected) {
+    await Notification.deleteMany({ userId });
+    return [];
+  }
+  mem.notifications = mem.notifications.filter((n) => n.userId !== userId);
+  return [];
 }
 
 // Genuine Reviews Repository

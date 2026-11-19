@@ -15,10 +15,10 @@ import {
   sendUserNotification,
   sendDeliveryAcceptedEmail,
   sendOutForDeliveryEmail,
-  sendDeliveryOtpEmail,
   sendDeliveryCompletedEmail,
   sendDeliveryFailedEmail,
 } from '../utils/emailService.js';
+import { encryptDeliveryOtp } from '../utils/deliveryOtpCrypto.js';
 import { notifyAdmins } from '../utils/adminNotifier.js';
 import { emitToAdmins, emitToDeliveryPartner, emitToUser } from '../utils/socketServer.js';
 import { emitDeliveryUpdated, emitOrderUpdated, emitPaymentUpdated } from '../services/realtimeService.js';
@@ -44,6 +44,7 @@ const FAILED_STATUSES = new Set([
 
 const PERMITTED_STATUSES = new Set([
   'accepted',
+  'rejected',
   'picked_up',
   'out_for_delivery',
   'delivered',
@@ -70,6 +71,8 @@ function sanitizeOrderForDelivery(ord) {
       sizeLabel: it.sizeLabel || '',
     })),
     paymentMethod: ord.paymentMethod,
+    originalPaymentMethod: ord.originalPaymentMethod || (ord.paymentMethod === 'cod' ? 'COD' : 'Online'),
+    currentPaymentMethod: ord.currentPaymentMethod || (ord.paymentMethod === 'cod' ? 'COD' : 'Online'),
     paymentStatus: ord.paymentStatus,
     grandTotal: ord.pricing?.grandTotal || 0,
     scheduledDate: ord.scheduledDate,
@@ -215,6 +218,7 @@ router.post('/orders/:id/resend-otp', otpVerifyLimiter, async (req, res) => {
 
   const otp = generateNumericOtp();
   const otpHash = hashDeliveryOtp(otp);
+  const otpEncrypted = encryptDeliveryOtp(otp);
   const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
   await Order.updateOne(
@@ -222,21 +226,24 @@ router.post('/orders/:id/resend-otp', otpVerifyLimiter, async (req, res) => {
     {
       $set: {
         'delivery.deliveryOtpHash': otpHash,
+        'delivery.deliveryOtpEncrypted': otpEncrypted,
         'delivery.otpExpiry': otpExpiry,
         'delivery.otpAttempts': 0,
       },
     }
   );
 
-  sendDeliveryOtpEmail({
-    to: order.customerEmail,
-    customerName: order.customerName,
+  // Never send Delivery OTP via email; notify customer to view it in Order Details
+  sendUserNotification({
+    userId: order.userId,
+    email: '',
+    type: 'order',
+    title: `Delivery OTP Refreshed (${order.id})`,
+    message: 'Your order is out for delivery. Your delivery OTP is available in Order Details.',
     orderId: order.id,
-    otp,
-    partnerName: req.user.fullName || req.user.name,
   }).catch(() => {});
 
-  return res.json({ sent: true, message: 'Delivery OTP sent to customer email.' });
+  return res.json({ sent: true, message: 'New Delivery OTP generated in customer Order Details.' });
 });
 
 router.patch('/orders/:id/status', otpVerifyLimiter, async (req, res) => {
@@ -289,6 +296,48 @@ router.patch('/orders/:id/status', otpVerifyLimiter, async (req, res) => {
     let notifTitle = '';
     let notifMsg = '';
 
+    if (deliveryStatus === 'rejected') {
+      const rejectNote = String(reason || 'Rejected by delivery partner').trim();
+      const updatedRejected = await Order.findOneAndUpdate(
+        { id: orderDoc.id },
+        {
+          $set: {
+            deliveryStatus: 'unassigned',
+            'deliveryAssignment.deliveryBoyId': '',
+            'deliveryAssignment.deliveryBoyName': '',
+            'deliveryAssignment.deliveryBoyPhone': '',
+            'delivery.partnerId': '',
+            'delivery.partnerName': '',
+            'delivery.partnerPhone': '',
+          },
+          $push: {
+            assignmentHistory: {
+              deliveryBoyId: req.user.id,
+              deliveryBoyName: partnerName,
+              deliveryBoyPhone: partnerPhone,
+              assignedBy: req.user.email,
+              assignedAt: nowIso,
+              action: 'rejected',
+              note: rejectNote,
+            },
+          },
+        },
+        { new: true }
+      ).lean();
+
+      notifyAdmins({
+        dedupKey: `del-rej-${orderDoc.id}-${req.user.id}-${nowIso.slice(0, 16)}`,
+        category: 'order',
+        title: `Assignment Rejected: ${orderDoc.id}`,
+        description: `${partnerName} rejected assignment (${rejectNote}). Please reassign.`,
+        entityType: 'order',
+        entityId: orderDoc.id,
+      }).catch(() => {});
+      emitToAdmins('delivery:order-rejected', { orderId: orderDoc.id, partnerId: req.user.id, reason: rejectNote });
+      emitOrderUpdated(updatedRejected || orderDoc);
+      return res.json({ order: sanitizeOrderForDelivery(updatedRejected || orderDoc), rejected: true });
+    }
+
     if (deliveryStatus === 'accepted') {
       assignmentPatch.acceptedAt = nowIso;
       deliverySet['delivery.acceptedAt'] = nowDate;
@@ -305,17 +354,17 @@ router.patch('/orders/:id/status', otpVerifyLimiter, async (req, res) => {
       assignmentPatch.outForDeliveryAt = nowIso;
       nextOrderStatus = 'out_for_delivery';
 
-      // Generate secure 6-digit Delivery OTP & email to customer
+      // Generate secure 6-digit Delivery OTP (stored hashed + encrypted; displayed ONLY in customer Order Details, NOT emailed)
       const generatedOtp = generateNumericOtp();
       deliverySet['delivery.deliveryOtpHash'] = hashDeliveryOtp(generatedOtp);
+      deliverySet['delivery.deliveryOtpEncrypted'] = encryptDeliveryOtp(generatedOtp);
       deliverySet['delivery.otpExpiry'] = new Date(Date.now() + 10 * 60 * 1000);
       deliverySet['delivery.otpAttempts'] = 0;
 
       notifTitle = `Out for Delivery (${orderDoc.id})`;
-      notifMsg = `${partnerName} (${partnerPhone}) is on the way! Share your Delivery OTP sent by email upon receiving your order.`;
+      notifMsg = 'Your order is out for delivery. Your delivery OTP is available in Order Details.';
 
       sendOutForDeliveryEmail({ to: orderDoc.customerEmail, orderId: orderDoc.id, partnerName, partnerPhone }).catch(() => {});
-      sendDeliveryOtpEmail({ to: orderDoc.customerEmail, customerName: orderDoc.customerName, orderId: orderDoc.id, otp: generatedOtp, partnerName }).catch(() => {});
       emitToAdmins('delivery:order-started', { orderId: orderDoc.id, partnerId: req.user.id });
       emitToUser(orderDoc.userId, 'order:out-for-delivery', { orderId: orderDoc.id, partnerName, partnerPhone });
     } else if (deliveryStatus === 'delivered') {
@@ -360,8 +409,9 @@ router.patch('/orders/:id/status', otpVerifyLimiter, async (req, res) => {
         nextPaymentStatus = 'paid';
       }
 
-      // Invalidate OTP and record completion
+      // Invalidate OTP and record completion (prevents reuse)
       deliverySet['delivery.deliveryOtpHash'] = '';
+      deliverySet['delivery.deliveryOtpEncrypted'] = '';
       deliverySet['delivery.otpExpiry'] = null;
       deliverySet['delivery.deliveredAt'] = nowDate;
       assignmentPatch.deliveredAt = nowIso;

@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import { Router } from 'express';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, verifyToken } from '../middleware/auth.js';
+import { Order } from '../models/Order.js';
+import { decryptDeliveryOtp } from '../utils/deliveryOtpCrypto.js';
 import { sendUserNotification } from '../utils/emailService.js';
 import { notifyAdmins } from '../utils/adminNotifier.js';
 import {
@@ -21,6 +23,8 @@ import {
   getBookingAvailability,
   validateDeliverySchedule,
   listCoupons,
+  recordCouponRedemption,
+  updateCouponRedemptionForOrder,
   getSettings,
   calculateCheckoutQuote,
   deductOrderStockAtomically,
@@ -54,8 +58,18 @@ router.get('/slots', async (req, res) => {
   res.json(booking);
 });
 
-router.get('/coupons', async (_req, res) => {
-  const coupons = await listCoupons();
+router.get('/coupons', async (req, res) => {
+  let userId = null;
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Bearer ')) {
+    try {
+      const decoded = verifyToken(header.slice(7));
+      userId = decoded?.id || null;
+    } catch {
+      userId = null;
+    }
+  }
+  const coupons = await listCoupons({ userId });
   res.json({ coupons });
 });
 
@@ -116,6 +130,13 @@ router.post('/orders', requireAuth, async (req, res) => {
       userId: req.user.id,
     });
 
+    const normalizedCoupon = String(couponCode || '').trim().toUpperCase();
+    if (normalizedCoupon && quote.pricing.couponCode !== normalizedCoupon) {
+      return res.status(400).json({
+        error: quote.pricing.couponMessage || `Coupon ${normalizedCoupon} cannot be applied.`,
+      });
+    }
+
     if (paymentMethod === 'cod') {
       // Deduct product/combo/ingredient stock atomically for confirmed COD orders
       await deductOrderStockAtomically(quote.items, {
@@ -146,6 +167,8 @@ router.post('/orders', requireAuth, async (req, res) => {
         slotId: slot.id,
         slotLabel: `${slot.name} (${slot.window})`,
         paymentMethod: 'cod',
+        originalPaymentMethod: 'COD',
+        currentPaymentMethod: 'COD',
         paymentStatus: 'pending',
         status: 'confirmed',
         stockDeducted: true,
@@ -158,6 +181,17 @@ router.post('/orders', requireAuth, async (req, res) => {
           },
         ],
       });
+
+      if (quote.pricing.couponCode) {
+        await recordCouponRedemption({
+          couponCode: quote.pricing.couponCode,
+          customerId: req.user.id,
+          customerEmail: req.user.email,
+          orderId,
+          discountAmount: quote.pricing.couponDiscount,
+          status: 'redeemed',
+        });
+      }
 
       const payment = await createPaymentRecord({
         id: `PAY-${Date.now().toString(36).toUpperCase()}`,
@@ -232,6 +266,8 @@ router.post('/orders', requireAuth, async (req, res) => {
       slotId: slot.id,
       slotLabel: `${slot.name} (${slot.window})`,
       paymentMethod: 'razorpay',
+      originalPaymentMethod: 'Online',
+      currentPaymentMethod: 'Online',
       paymentStatus: 'pending',
       razorpayOrderId: rzpOrderId,
       status: 'payment_pending',
@@ -247,6 +283,17 @@ router.post('/orders', requireAuth, async (req, res) => {
         },
       ],
     });
+
+    if (quote.pricing.couponCode) {
+      await recordCouponRedemption({
+        couponCode: quote.pricing.couponCode,
+        customerId: req.user.id,
+        customerEmail: req.user.email,
+        orderId,
+        discountAmount: quote.pricing.couponDiscount,
+        status: 'pending',
+      });
+    }
 
     const payment = await createPaymentRecord({
       id: `PAY-${Date.now().toString(36).toUpperCase()}`,
@@ -288,6 +335,94 @@ router.post('/orders', requireAuth, async (req, res) => {
   }
 });
 
+// Initiate COD -> Online Payment Conversion on an existing order
+router.post('/orders/:id/pay-online', requireAuth, async (req, res) => {
+  try {
+    const order = await getOrderById(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
+    if (order.userId !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden.' });
+    }
+    if (order.paymentStatus === 'paid' || order.currentPaymentMethod === 'Online') {
+      return res.status(409).json({ error: 'This order is already paid online.' });
+    }
+    if (
+      ['delivered', 'cancelled', 'refund_initiated', 'refunded'].includes(order.status) ||
+      order.deliveryStatus === 'delivered'
+    ) {
+      return res.status(409).json({ error: 'Online payment conversion is not allowed after delivery or cancellation.' });
+    }
+    if (order.delivery?.cashCollectionStatus === 'collected') {
+      return res.status(409).json({ error: 'Cash has already been collected for this order.' });
+    }
+
+    const amountPaise = Math.round(Number(order.pricing?.grandTotal || 0) * 100);
+    if (amountPaise <= 0) {
+      return res.status(400).json({ error: 'Invalid order amount for online payment.' });
+    }
+
+    const rzpClient = createRazorpayClient();
+    let rzpOrderId = `order_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    let isRealGateway = false;
+
+    if (rzpClient) {
+      const rzpOrder = await rzpClient.orders.create({
+        amount: amountPaise,
+        currency: 'INR',
+        receipt: `${order.id}-ONL`,
+        notes: {
+          hruvitaOrderId: order.id,
+          userId: req.user.id,
+          conversion: 'cod_to_online',
+        },
+      });
+      rzpOrderId = rzpOrder.id;
+      isRealGateway = true;
+    }
+
+    const { Order } = await import('../models/Order.js');
+    await Order.updateOne({ id: order.id }, { $set: { razorpayOrderId: rzpOrderId } });
+
+    const payment = await createPaymentRecord({
+      id: `PAY-${Date.now().toString(36).toUpperCase()}`,
+      orderId: order.id,
+      userId: order.userId,
+      method: 'razorpay',
+      amount: order.pricing.grandTotal,
+      currency: 'INR',
+      razorpayOrderId: rzpOrderId,
+      status: 'created',
+    });
+
+    const samplePaymentId = isRealGateway ? null : `pay_test_${Date.now().toString(36)}`;
+    const sampleSignature = isRealGateway ? null : signRazorpayPair(rzpOrderId, samplePaymentId);
+
+    return res.json({
+      order: { ...order, razorpayOrderId: rzpOrderId },
+      payment,
+      razorpay: {
+        keyId: getRazorpayKeyId(),
+        orderId: rzpOrderId,
+        amount: order.pricing.grandTotal,
+        amountPaise,
+        currency: 'INR',
+        isRealGateway,
+        ...(isRealGateway
+          ? {}
+          : {
+              testPayload: {
+                razorpay_order_id: rzpOrderId,
+                razorpay_payment_id: samplePaymentId,
+                razorpay_signature: sampleSignature,
+              },
+            }),
+      },
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Could not initiate online payment.' });
+  }
+});
+
 // Verify Razorpay Payment Signature
 router.post('/orders/:id/verify-payment', requireAuth, async (req, res) => {
   try {
@@ -303,6 +438,12 @@ router.post('/orders/:id/verify-payment', requireAuth, async (req, res) => {
     if (order.userId !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Forbidden.' });
     }
+    if (order.paymentStatus === 'paid' && order.razorpayPaymentId && order.razorpayPaymentId !== razorpay_payment_id) {
+      return res.status(409).json({ error: 'Duplicate payment prevented: order is already paid.' });
+    }
+    if (order.razorpayOrderId && order.razorpayOrderId !== razorpay_order_id) {
+      return res.status(400).json({ error: 'Razorpay Order ID mismatch.' });
+    }
 
     const expectedSig = signRazorpayPair(razorpay_order_id, razorpay_payment_id);
     if (expectedSig !== razorpay_signature) {
@@ -314,6 +455,16 @@ router.post('/orders/:id/verify-payment', requireAuth, async (req, res) => {
       razorpayPaymentId: razorpay_payment_id,
       by: req.user.email,
     });
+    if (confirmed.pricing?.couponCode) {
+      await recordCouponRedemption({
+        couponCode: confirmed.pricing.couponCode,
+        customerId: confirmed.userId,
+        customerEmail: confirmed.customerEmail,
+        orderId: confirmed.id,
+        discountAmount: confirmed.pricing.couponDiscount,
+        status: 'redeemed',
+      });
+    }
     emitPaymentUpdated(confirmed, 'payment:successful');
     emitOrderUpdated(confirmed, 'order:confirmed');
 
@@ -375,13 +526,34 @@ router.post('/webhooks/razorpay', async (req, res) => {
   }
 });
 
-async function enrichOrdersWithCatalogAndPayments(orders, payments = []) {
+async function enrichOrdersWithCatalogAndPayments(orders, payments = [], viewerUserId = '') {
   const [products, combos] = await Promise.all([listProducts(), listCombos()]);
   const prodMap = new Map(products.map((p) => [p.id, p]));
   const comboMap = new Map(combos.map((c) => [c.id, c]));
   const payByOrder = new Map();
   for (const p of payments) {
     if (p.orderId) payByOrder.set(p.orderId, p);
+  }
+
+  // Fetch encrypted delivery OTPs ONLY for active out_for_delivery orders owned by viewerUserId
+  const otpMap = new Map();
+  if (viewerUserId) {
+    const outIds = orders
+      .filter((o) => o.userId === viewerUserId && o.deliveryStatus === 'out_for_delivery')
+      .map((o) => o.id);
+    if (outIds.length > 0) {
+      const otpDocs = await Order.find({ id: { $in: outIds } })
+        .select('id delivery.deliveryOtpEncrypted delivery.otpExpiry')
+        .lean()
+        .catch(() => []);
+      for (const d of otpDocs) {
+        const exp = d.delivery?.otpExpiry ? new Date(d.delivery.otpExpiry).getTime() : 0;
+        if (d.delivery?.deliveryOtpEncrypted && exp > Date.now()) {
+          const plain = decryptDeliveryOtp(d.delivery.deliveryOtpEncrypted);
+          if (plain) otpMap.set(d.id, plain);
+        }
+      }
+    }
   }
 
   return orders.map((ord) => {
@@ -410,10 +582,13 @@ async function enrichOrdersWithCatalogAndPayments(orders, payments = []) {
         }
       : null;
 
+    const customerDeliveryOtp = otpMap.get(ord.id) || '';
+
     return {
       ...ord,
       items: enrichedItems,
       paymentSummary,
+      ...(customerDeliveryOtp ? { customerDeliveryOtp } : {}),
     };
   });
 }
@@ -424,7 +599,7 @@ router.get('/orders/my', requireAuth, async (req, res) => {
     listOrdersByUser(req.user.id),
     listPaymentsByUser(req.user.id),
   ]);
-  const enriched = await enrichOrdersWithCatalogAndPayments(orders, payments);
+  const enriched = await enrichOrdersWithCatalogAndPayments(orders, payments, req.user.id);
   res.json({ orders: enriched, payments });
 });
 
@@ -437,7 +612,8 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'Forbidden.' });
   }
   const payments = await listPaymentsByUser(order.userId);
-  const [enriched] = await enrichOrdersWithCatalogAndPayments([order], payments);
+  const viewerId = req.user.id === order.userId ? req.user.id : '';
+  const [enriched] = await enrichOrdersWithCatalogAndPayments([order], payments, viewerId);
   res.json({ order: enriched });
 });
 
@@ -459,6 +635,9 @@ router.post('/orders/:id/cancel', requireAuth, async (req, res) => {
       note: req.body?.reason || 'Cancelled by customer',
       by: req.user.email,
     });
+    if (order.pricing?.couponCode) {
+      await updateCouponRedemptionForOrder(order.id, order.pricing.couponCode, 'restored');
+    }
     notifyAdmins({
       dedupKey: `cancel-${order.id}-${nextStatus}`,
       category: nextStatus === 'refund_initiated' ? 'payment' : 'cancellation',

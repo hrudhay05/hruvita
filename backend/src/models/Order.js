@@ -82,6 +82,8 @@ const orderSchema = new mongoose.Schema(
     slotId: { type: String, required: true },
     slotLabel: { type: String, required: true },
     paymentMethod: { type: String, enum: ['razorpay', 'cod'], required: true },
+    originalPaymentMethod: { type: String, enum: ['COD', 'Online'], default: 'COD' },
+    currentPaymentMethod: { type: String, enum: ['COD', 'Online'], default: 'COD' },
     paymentStatus: {
       type: String,
       enum: ['pending', 'paid', 'failed', 'refund_initiated', 'refunded'],
@@ -124,6 +126,7 @@ const orderSchema = new mongoose.Schema(
       failedAt: { type: Date, default: null },
       failureReason: { type: String, default: '' },
       deliveryOtpHash: { type: String, default: '', select: false },
+      deliveryOtpEncrypted: { type: String, default: '', select: false },
       otpExpiry: { type: Date, default: null },
       otpAttempts: { type: Number, default: 0 },
       collectedCash: { type: Number, default: 0 },

@@ -18,6 +18,7 @@ import {
   listAdminNotifications,
   markAdminNotificationRead,
   markAllAdminNotificationsRead,
+  clearAdminNotifications,
 } from '../utils/adminNotifier.js';
 
 const router = Router();
@@ -622,6 +623,11 @@ router.post('/notifications/:id/read', async (req, res) => {
 router.post('/notifications/read-all', async (req, res) => {
   await markAllAdminNotificationsRead(req.user.id);
   res.json({ ok: true });
+});
+
+router.delete('/notifications', async (_req, res) => {
+  await clearAdminNotifications();
+  res.json({ ok: true, notifications: [] });
 });
 
 router.get('/activity', async (req, res) => {

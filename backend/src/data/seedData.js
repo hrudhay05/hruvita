@@ -600,6 +600,21 @@ export const initialSlots = [
 
 export const initialCoupons = [
   {
+    code: 'FIRST50',
+    title: 'New Customer Offer: Flat ₹50 OFF on your first order',
+    type: 'flat',
+    value: 50,
+    minOrder: 0,
+    maxDiscount: 50,
+    firstOrderOnly: true,
+    visibility: 'public',
+    validFrom: '',
+    validUntil: '',
+    eligibleProductIds: [],
+    perUserLimit: 1,
+    active: true,
+  },
+  {
     code: 'WELCOME20',
     title: '20% OFF up to ₹60 on orders above ₹100',
     type: 'percent',
@@ -627,6 +642,18 @@ export const initialCoupons = [
     minOrder: 120,
     maxDiscount: 45,
     firstOrderOnly: false,
+    active: true,
+  },
+  {
+    code: 'SANJUFREE',
+    title: 'Pay only ₹2 total (Real Payment Test)',
+    type: 'fixed_total',
+    value: 2,
+    minOrder: 0,
+    maxDiscount: 10000,
+    firstOrderOnly: false,
+    visibility: 'private',
+    restoreOnCancel: true,
     active: true,
   },
 ];

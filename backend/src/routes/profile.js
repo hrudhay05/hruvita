@@ -12,6 +12,7 @@ import {
   updateProduct,
   listUserNotifications,
   markAllNotificationsRead,
+  clearUserNotifications,
   revokeAllUserRefreshSessions,
 } from '../store/repository.js';
 import { sendUserNotification } from '../utils/emailService.js';
@@ -244,6 +245,11 @@ router.get('/notifications', async (req, res) => {
 
 router.post('/notifications/read-all', async (req, res) => {
   const notifications = await markAllNotificationsRead(req.user.id);
+  return res.json({ notifications });
+});
+
+router.delete('/notifications', async (req, res) => {
+  const notifications = await clearUserNotifications(req.user.id);
   return res.json({ notifications });
 });
 

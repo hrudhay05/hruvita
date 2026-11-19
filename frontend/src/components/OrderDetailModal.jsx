@@ -68,11 +68,94 @@ export default function OrderDetailModal({
   const [comment, setComment] = useState('');
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewMsg, setReviewMsg] = useState('');
+  const [payBusy, setPayBusy] = useState(false);
+  const [payErr, setPayErr] = useState('');
+  const [payMsg, setPayMsg] = useState('');
 
   if (!order) return null;
 
   const isSameDay = order.slotId === 'same-day';
   const isCancelled = ['cancelled', 'refund_initiated', 'refunded'].includes(order.status);
+  const isConvertedToOnline =
+    order.originalPaymentMethod === 'COD' &&
+    (order.currentPaymentMethod === 'Online' || order.paymentMethod === 'razorpay') &&
+    order.paymentStatus === 'paid';
+  const canConvertToOnline =
+    order.paymentMethod === 'cod' &&
+    order.paymentStatus !== 'paid' &&
+    !['delivered', 'cancelled', 'refund_initiated', 'refunded'].includes(order.status) &&
+    order.deliveryStatus !== 'delivered' &&
+    order.delivery?.cashCollectionStatus !== 'collected';
+
+  const handlePayOnline = async () => {
+    setPayBusy(true);
+    setPayErr('');
+    setPayMsg('');
+    try {
+      const res = await apiRequest(`/api/orders/${order.id}/pay-online`, {
+        method: 'POST',
+      });
+      if (res.razorpay?.isRealGateway && window.Razorpay) {
+        const rzp = new window.Razorpay({
+          key: res.razorpay.keyId,
+          amount: res.razorpay.amountPaise,
+          currency: res.razorpay.currency || 'INR',
+          name: 'HRUVITA',
+          description: `Pay Online for Order ${order.id}`,
+          order_id: res.razorpay.orderId,
+          prefill: {
+            name: order.customerName || '',
+            email: order.customerEmail || '',
+            contact: order.customerPhone || '',
+          },
+          theme: { color: '#1b4d38' },
+          handler: async (rzpResponse) => {
+            try {
+              await apiRequest(`/api/orders/${order.id}/verify-payment`, {
+                method: 'POST',
+                body: JSON.stringify({
+                  razorpay_order_id: rzpResponse.razorpay_order_id,
+                  razorpay_payment_id: rzpResponse.razorpay_payment_id,
+                  razorpay_signature: rzpResponse.razorpay_signature,
+                }),
+              });
+              setPayMsg('Payment successful! Order converted to Prepaid.');
+              if (onReviewSubmitted) await onReviewSubmitted();
+            } catch (verErr) {
+              setPayErr(verErr.message || 'Payment verification failed. Order remains COD – Payment Pending.');
+            } finally {
+              setPayBusy(false);
+            }
+          },
+          modal: {
+            ondismiss: () => {
+              setPayBusy(false);
+              setPayErr('Payment cancelled. Your order remains COD – Payment Pending.');
+            },
+          },
+        });
+        rzp.on('payment.failed', () => {
+          setPayBusy(false);
+          setPayErr('Payment failed. Your order remains COD – Payment Pending.');
+        });
+        rzp.open();
+        return;
+      }
+
+      if (res.razorpay?.testPayload) {
+        await apiRequest(`/api/orders/${order.id}/verify-payment`, {
+          method: 'POST',
+          body: JSON.stringify(res.razorpay.testPayload),
+        });
+        setPayMsg('Payment successful! Order converted to Prepaid.');
+        if (onReviewSubmitted) await onReviewSubmitted();
+      }
+      setPayBusy(false);
+    } catch (err) {
+      setPayErr(err.message || 'Could not initiate online payment.');
+      setPayBusy(false);
+    }
+  };
   const paySum = order.paymentSummary || null;
   const rzpPaymentId = paySum?.razorpayPaymentId || order.razorpayPaymentId || '';
   const rzpOrderId = paySum?.razorpayOrderId || order.razorpayOrderId || '';
@@ -400,23 +483,45 @@ export default function OrderDetailModal({
             {/* D. Payment Details */}
             <section className="odm-card">
               <h3><FiShield size={16} /> Payment Details</h3>
-              {order.paymentMethod === 'cod' ? (
+              {order.paymentMethod === 'cod' && order.paymentStatus !== 'paid' ? (
                 <div className="odm-kv-list">
-                  <div><span>Payment Method</span><strong>Cash on Delivery</strong></div>
+                  <div><span>Payment Method</span><strong>COD – Payment Pending</strong></div>
                   <div><span>Amount Payable</span><strong>{money(order.pricing?.grandTotal || 0)}</strong></div>
-                  <div>
-                    <span>Collection Status</span>
-                    <strong>{order.paymentStatus === 'paid' ? 'Collected' : 'Payable on Delivery'}</strong>
-                  </div>
+                  <div><span>Collection Status</span><strong>Payable on Delivery</strong></div>
                   <div><span>Payment Status</span><strong>{order.paymentStatus}</strong></div>
                 </div>
               ) : (
                 <div className="odm-kv-list">
-                  <div><span>Payment Gateway</span><strong>Razorpay</strong></div>
-                  <div><span>Payment Method</span><strong>Online Payment</strong></div>
+                  <div>
+                    <span>Payment Method</span>
+                    <strong>
+                      {isConvertedToOnline ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          COD &rarr; Online Payment (Prepaid)
+                          <span
+                            style={{
+                              background: '#dcfce7',
+                              color: '#166534',
+                              border: '1px solid #86efac',
+                              borderRadius: 999,
+                              padding: '2px 8px',
+                              fontSize: '0.7rem',
+                              fontWeight: 800,
+                            }}
+                          >
+                            PAID
+                          </span>
+                        </span>
+                      ) : order.paymentMethod === 'cod' ? (
+                        'Cash on Delivery (Paid)'
+                      ) : (
+                        'Online Payment (Razorpay)'
+                      )}
+                    </strong>
+                  </div>
                   {rzpPaymentId && <div><span>Gateway Payment ID</span><strong>{rzpPaymentId}</strong></div>}
                   {rzpOrderId && <div><span>Gateway Order ID</span><strong>{rzpOrderId}</strong></div>}
-                  {paySum?.id && <div><span>Payment Reference</span><strong>{paySum.id}</strong></div>}
+                  {paySum?.id && <div><span>Transaction / Ref ID</span><strong>{paySum.id}</strong></div>}
                   {paySum?.createdAt && (
                     <div><span>Payment Date</span><strong>{formatDateTime(paySum.createdAt)}</strong></div>
                   )}
@@ -424,9 +529,34 @@ export default function OrderDetailModal({
                     <span>{order.paymentStatus === 'paid' ? 'Amount Paid' : 'Order Amount'}</span>
                     <strong>{money(paySum?.amount ?? order.pricing?.grandTotal ?? 0)}</strong>
                   </div>
-                  <div><span>Payment Status</span><strong>{order.paymentStatus}</strong></div>
+                  <div><span>Payment Status</span><strong style={{ textTransform: 'uppercase' }}>{order.paymentStatus}</strong></div>
                   {refundId && <div><span>Refund ID</span><strong>{refundId}</strong></div>}
                   {refundStatus && <div><span>Refund Status</span><strong>{refundStatus}</strong></div>}
+                </div>
+              )}
+
+              {payErr && (
+                <p style={{ marginTop: 8, fontSize: '0.82rem', color: '#dc2626', fontWeight: 600 }}>
+                  {payErr}
+                </p>
+              )}
+              {payMsg && (
+                <p style={{ marginTop: 8, fontSize: '0.82rem', color: '#166534', fontWeight: 700 }}>
+                  {payMsg}
+                </p>
+              )}
+
+              {canConvertToOnline && (
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className="odm-tool-btn odm-tool-primary"
+                    disabled={payBusy}
+                    onClick={handlePayOnline}
+                    style={{ width: '100%', justifyContent: 'center', padding: '10px 14px', fontSize: '0.9rem' }}
+                  >
+                    <FiShield size={15} /> {payBusy ? 'Opening Razorpay...' : `Pay Online (${money(order.pricing?.grandTotal || 0)})`}
+                  </button>
                 </div>
               )}
             </section>
@@ -448,6 +578,48 @@ export default function OrderDetailModal({
               </div>
               <div><span>Delivery Status</span><strong>{(order.deliveryStatus && order.deliveryStatus !== 'unassigned' ? order.deliveryStatus : order.status).replace(/_/g, ' ')}</strong></div>
             </div>
+
+            {order.customerDeliveryOtp && (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: '12px 14px',
+                  borderRadius: 12,
+                  background: '#fffbeb',
+                  border: '1px solid #fcd34d',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 10,
+                }}
+              >
+                <div>
+                  <strong style={{ display: 'block', color: '#92400e', fontSize: '0.88rem' }}>
+                    Delivery Verification OTP
+                  </strong>
+                  <span style={{ fontSize: '0.78rem', color: '#78350f' }}>
+                    Share this 6-digit OTP with your delivery partner only when receiving your order.
+                  </span>
+                </div>
+                <div
+                  data-testid="customer-delivery-otp"
+                  style={{
+                    fontFamily: 'monospace',
+                    fontSize: '1.35rem',
+                    fontWeight: 800,
+                    letterSpacing: '0.2em',
+                    color: '#92400e',
+                    background: '#ffffff',
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    border: '1px dashed #f59e0b',
+                  }}
+                >
+                  {order.customerDeliveryOtp}
+                </div>
+              </div>
+            )}
 
             <div
               style={{

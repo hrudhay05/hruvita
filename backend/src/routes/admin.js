@@ -40,6 +40,8 @@ import {
   transitionOrderStatus,
   getOrderById,
   listAllCoupons,
+  listCouponRedemptions,
+  updateCouponRedemptionForOrder,
   upsertCoupon,
   deleteCouponByCode,
   listAllSlots,
@@ -151,6 +153,7 @@ router.get('/overview', async (_req, res) => {
     settings,
     orderStatuses: ORDER_STATUSES,
     auditLogs,
+    couponRedemptions: await listCouponRedemptions(300),
   });
 });
 
@@ -424,12 +427,20 @@ router.get('/orders', async (req, res) => {
 router.patch('/orders/:id/status', async (req, res) => {
   try {
     const { status, note = '' } = req.body || {};
+    if (['out_for_delivery', 'delivered'].includes(status)) {
+      return res.status(403).json({
+        error: 'Admin cannot mark orders as Out for Delivery or Delivered. Only the assigned delivery partner can do so after OTP verification.',
+      });
+    }
     const updated = await transitionOrderStatus({
       orderId: req.params.id,
       status,
       note,
       by: req.user.email,
     });
+    if (status === 'cancelled' && updated?.pricing?.couponCode) {
+      await updateCouponRedemptionForOrder(updated.id, updated.pricing.couponCode, 'restored');
+    }
     await recordAudit({
       actorId: req.user.id,
       actorEmail: req.user.email,

@@ -48,10 +48,13 @@ async function main() {
   });
 
   // 1. Admin creates delivery boy 1 & 2
+  const phoneSeed = String(Date.now()).slice(-7);
+  const p1 = `91${phoneSeed}1`;
+  const p2 = `92${phoneSeed}2`;
   const r1 = await fetch(`${BASE}/api/admin/delivery-boys`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
-    body: JSON.stringify({ fullName: 'Boy One', phone: '9111111111', email: `boy1-${ts}@hruvita.com`, password: 'Password@123' }),
+    body: JSON.stringify({ fullName: 'Boy One', phone: p1, email: `boy1-${ts}@hruvita.com`, password: 'Password@123' }),
   });
   assert.equal(r1.status, 201);
   const { deliveryBoy: db1 } = await r1.json();
@@ -59,7 +62,7 @@ async function main() {
   const r2 = await fetch(`${BASE}/api/admin/delivery-boys`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
-    body: JSON.stringify({ fullName: 'Boy Two', phone: '9222222222', email: `boy2-${ts}@hruvita.com`, password: 'Password@123' }),
+    body: JSON.stringify({ fullName: 'Boy Two', phone: p2, email: `boy2-${ts}@hruvita.com`, password: 'Password@123' }),
   });
   assert.equal(r2.status, 201);
   const { deliveryBoy: db2 } = await r2.json();
@@ -78,14 +81,29 @@ async function main() {
   const db2Token = signToken({ id: db2.id, email: db2.email, role: 'delivery_boy' });
   console.log('PASS [2/10] Delivery boy logged in cleanly');
 
-  // 3. Admin assigns db1 to order
+  // 3. Admin can mark packed, is blocked (403) from out_for_delivery/delivered, and assigns db1
+  for (const forbiddenStatus of ['out_for_delivery', 'delivered']) {
+    const blockedRes = await fetch(`${BASE}/api/admin/orders/${ordId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ status: forbiddenStatus }),
+    });
+    assert.equal(blockedRes.status, 403);
+  }
+  const packedRes = await fetch(`${BASE}/api/admin/orders/${ordId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+    body: JSON.stringify({ status: 'packed' }),
+  });
+  assert.equal(packedRes.status, 200);
+
   const assign1 = await fetch(`${BASE}/api/admin/orders/${ordId}/assign-delivery`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
     body: JSON.stringify({ deliveryBoyId: db1.id }),
   });
   assert.equal(assign1.status, 200);
-  console.log('PASS [3/10] Admin assigned delivery boy 1');
+  console.log('PASS [3/10] Admin blocked from out_for_delivery/delivered (403) & assigned delivery boy 1');
 
   // 4. Customer sees db1 details in order history; unrelated customer blocked (403)
   const custOrdRes = await fetch(`${BASE}/api/orders/${ordId}`, {
@@ -94,7 +112,7 @@ async function main() {
   assert.equal(custOrdRes.status, 200);
   const custOrd = (await custOrdRes.json()).order;
   assert.equal(custOrd.deliveryAssignment.deliveryBoyName, 'Boy One');
-  assert.equal(custOrd.deliveryAssignment.deliveryBoyPhone, '9111111111');
+  assert.equal(custOrd.deliveryAssignment.deliveryBoyPhone, p1);
 
   const unauthRes = await fetch(`${BASE}/api/orders/${ordId}`, {
     headers: { Authorization: `Bearer ${db2Token}` },
@@ -117,7 +135,16 @@ async function main() {
   assert.equal(db2Forbid.status, 403);
   console.log('PASS [5/10] Delivery boys strictly isolated to own assigned orders');
 
-  // 6. Admin reassigns order to db2 & preserves assignmentHistory
+  // 6. db1 rejects assignment -> unassigned & recorded in history, then Admin assigns to db2
+  const rejectRes = await fetch(`${BASE}/api/delivery/orders/${ordId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${db1Token}` },
+    body: JSON.stringify({ deliveryStatus: 'rejected', reason: 'Too far' }),
+  });
+  assert.equal(rejectRes.status, 200);
+  const rejectedOrder = (await rejectRes.json()).order;
+  assert.equal(rejectedOrder.deliveryStatus, 'unassigned');
+
   const assign2 = await fetch(`${BASE}/api/admin/orders/${ordId}/assign-delivery`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
@@ -125,8 +152,9 @@ async function main() {
   });
   assert.equal(assign2.status, 200);
   const reassigned = (await assign2.json()).order;
-  assert.equal(reassigned.assignmentHistory.length, 2);
-  console.log('PASS [6/10] Admin reassigned to Boy Two & preserved assignmentHistory');
+  assert.equal(reassigned.assignmentHistory.length, 3);
+  assert.ok(reassigned.assignmentHistory.some((h) => h.action === 'rejected'));
+  console.log('PASS [6/10] Partner rejection resets to unassigned & Admin assigned Boy Two');
 
   // 7. Failed delivery requires reason
   const failNoReason = await fetch(`${BASE}/api/delivery/orders/${ordId}/status`, {
@@ -155,24 +183,42 @@ async function main() {
   });
   assert.equal(wrongOtpRes.status, 400);
 
-  // Set known test OTP hash in DB (simulating customer reading their email OTP) and verify COD mismatch vs exact match
-  const knownOtp = '654321';
-  const knownHash = crypto.createHash('sha256').update(knownOtp).digest('hex');
-  await Order.updateOne({ id: ordId }, { $set: { 'delivery.deliveryOtpHash': knownHash, 'delivery.otpExpiry': new Date(Date.now() + 600000), 'delivery.otpAttempts': 0 } });
+  // Verify OTP is visible ONLY to the owning customer in Order Details, never to Admin or Delivery Partner
+  const custOutRes = await fetch(`${BASE}/api/orders/${ordId}`, { headers: { Authorization: `Bearer ${custToken}` } });
+  assert.equal(custOutRes.status, 200);
+  const custOutOrd = (await custOutRes.json()).order;
+  assert.match(String(custOutOrd.customerDeliveryOtp || ''), /^\d{6}$/);
+  const realOtp = custOutOrd.customerDeliveryOtp;
+
+  const adminList = await (await fetch(`${BASE}/api/admin/orders`, { headers: { Authorization: `Bearer ${adminToken}` } })).json();
+  const adminOrd = adminList.orders.find((o) => o.id === ordId);
+  assert.equal(adminOrd?.customerDeliveryOtp, undefined);
+
+  const db2OutList = await (await fetch(`${BASE}/api/delivery/orders`, { headers: { Authorization: `Bearer ${db2Token}` } })).json();
+  const db2Ord = db2OutList.orders.find((o) => o.id === ordId);
+  assert.equal(db2Ord?.customerDeliveryOtp, undefined);
 
   const badCashRes = await fetch(`${BASE}/api/delivery/orders/${ordId}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${db2Token}` },
-    body: JSON.stringify({ deliveryStatus: 'delivered', otp: knownOtp, codCollected: true, collectedCash: 10 }),
+    body: JSON.stringify({ deliveryStatus: 'delivered', otp: realOtp, codCollected: true, collectedCash: 10 }),
   });
   assert.equal(badCashRes.status, 400);
 
   const delivRes = await fetch(`${BASE}/api/delivery/orders/${ordId}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${db2Token}` },
-    body: JSON.stringify({ deliveryStatus: 'delivered', otp: knownOtp, codCollected: true, collectedCash: 88 }),
+    body: JSON.stringify({ deliveryStatus: 'delivered', otp: realOtp, codCollected: true, collectedCash: 88 }),
   });
   assert.equal(delivRes.status, 200);
+
+  // Verify OTP is expired/cleared and cannot be reused (409 terminal state)
+  const reuseOtpRes = await fetch(`${BASE}/api/delivery/orders/${ordId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${db2Token}` },
+    body: JSON.stringify({ deliveryStatus: 'delivered', otp: realOtp, codCollected: true, collectedCash: 88 }),
+  });
+  assert.equal(reuseOtpRes.status, 409);
 
   // Verify delivery reports & earnings
   const repRes = await fetch(`${BASE}/api/admin/delivery-reports`, { headers: { Authorization: `Bearer ${adminToken}` } });

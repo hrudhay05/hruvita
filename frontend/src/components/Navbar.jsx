@@ -27,7 +27,7 @@ const NAV_LINKS = [
 export default function Navbar() {
   const navigate = useNavigate();
   const { count } = useCart();
-  const { user, notifications, unreadCount, markNotificationsRead } = useAuth();
+  const { user, notifications, unreadCount, markNotificationsRead, clearNotifications } = useAuth();
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -86,15 +86,27 @@ export default function Navbar() {
                 <div className="navbar-notif-dropdown" role="dialog" aria-label="Notifications">
                   <div className="navbar-notif-head">
                     <strong>Notifications</strong>
-                    {unreadCount > 0 && (
-                      <button
-                        type="button"
-                        className="navbar-notif-read"
-                        onClick={markNotificationsRead}
-                      >
-                        <FiCheck size={13} /> Mark all read
-                      </button>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {unreadCount > 0 && (
+                        <button
+                          type="button"
+                          className="navbar-notif-read"
+                          onClick={markNotificationsRead}
+                        >
+                          <FiCheck size={13} /> Mark all read
+                        </button>
+                      )}
+                      {notifications.length > 0 && (
+                        <button
+                          type="button"
+                          className="navbar-notif-read"
+                          onClick={clearNotifications}
+                          style={{ color: '#dc2626' }}
+                        >
+                          Clear all
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {notifications.length === 0 ? (
                     <p className="navbar-notif-empty">No notifications yet.</p>

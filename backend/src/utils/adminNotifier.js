@@ -93,3 +93,11 @@ export async function markAllAdminNotificationsRead(userId) {
     }
   }
 }
+
+export async function clearAdminNotifications() {
+  try {
+    await AdminNotification.deleteMany({});
+  } catch {
+    memAdminNotifications.length = 0;
+  }
+}

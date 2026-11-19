@@ -197,6 +197,12 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
     setUnreadCount(0);
   };
 
+  const handleClearNotifications = async () => {
+    await apiRequest('/api/analyst/notifications', { method: 'DELETE' }).catch(() => {});
+    setNotifications([]);
+    setUnreadCount(0);
+  };
+
   const ov = analytics?.overview || {};
   const rev = analytics?.revenueAnalytics || {};
   const ord = analytics?.orderAnalytics || {};
@@ -268,11 +274,18 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
               </button>
               {bellOpen && (
                 <div className="ana-bell-pop">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <strong>Notifications ({unreadCount} unread)</strong>
-                    <button type="button" className="ana-btn" onClick={handleMarkAllRead}>
-                      Mark all read
-                    </button>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" className="ana-btn" onClick={handleMarkAllRead}>
+                        Mark all read
+                      </button>
+                      {notifications.length > 0 && (
+                        <button type="button" className="ana-btn" onClick={handleClearNotifications} style={{ color: '#dc2626' }}>
+                          Clear all
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {notifications.length === 0 ? (
                     <p className="ana-empty">No notifications yet.</p>
@@ -575,6 +588,11 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
                   <option value="cancellation">Cancellations</option>
                 </select>
                 <button type="button" className="ana-btn" onClick={handleMarkAllRead}>Mark all read</button>
+                {notifications.length > 0 && (
+                  <button type="button" className="ana-btn" onClick={handleClearNotifications} style={{ color: '#dc2626' }}>
+                    Clear notifications
+                  </button>
+                )}
               </div>
             </div>
             {notifications

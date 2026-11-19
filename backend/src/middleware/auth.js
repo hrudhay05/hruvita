@@ -34,6 +34,10 @@ export function signRefreshToken(user, rememberMe = false) {
   );
 }
 
+export function verifyToken(token) {
+  return jwt.verify(token, getAccessSecret());
+}
+
 export function verifyRefreshTokenJwt(token) {
   return jwt.verify(token, getRefreshSecret());
 }
