@@ -323,7 +323,14 @@ export default function Account() {
               <FiShield size={15} /> Admin Portal
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={logout}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              await logout();
+              navigate('/');
+            }}
+          >
             <FiLogOut size={15} /> Logout
           </Button>
         </div>
