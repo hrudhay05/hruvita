@@ -2,8 +2,10 @@ node_modules/
 dist/
 backups/
 .env
+.env.*
 .env.local
 .env.*.local
+.env.example
 *.log
 .DS_Store
 Thumbs.db
