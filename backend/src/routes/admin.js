@@ -9,13 +9,14 @@ import {
   sendDeliveryReassignedEmail,
 } from '../utils/emailService.js';
 import { notifyAdmins } from '../utils/adminNotifier.js';
-import { emitToAdmins, emitToDeliveryPartner, emitToUser } from '../utils/socketServer.js';
+import { emitToAdmins, emitToDeliveryPartner, emitToUser, emitPublicCatalog } from '../utils/socketServer.js';
 import {
   emitOrderUpdated,
   emitOrderCancelled,
   emitPaymentUpdated,
   emitInventoryUpdated,
   emitDeliveryAssigned,
+  emitAnalyticsUpdated,
 } from '../services/realtimeService.js';
 import { createRazorpayClient } from '../utils/razorpayClient.js';
 import {
@@ -247,6 +248,8 @@ router.post('/coupons', requireRole('admin'), async (req, res) => {
       entityId: coupon.code,
       details: { type: coupon.type, value: coupon.value, active: coupon.active },
     });
+    emitPublicCatalog('coupon:updated', { code: coupon.code, active: coupon.active });
+    emitAnalyticsUpdated('analytics:updated');
     res.status(201).json({ coupon });
   } catch (err) {
     res.status(400).json({ error: err.message || 'Could not save coupon.' });
@@ -502,7 +505,8 @@ router.post('/orders/:id/refund', requireRole('admin'), async (req, res) => {
       title: `Refund Processed for Order ${refunded.id}`,
       message: `A refund of ₹${refunded.pricing?.grandTotal} has been processed for your order ${refunded.id}.`,
     });
-
+    emitPaymentUpdated(refunded, 'payment:refunded');
+    emitOrderCancelled(refunded);
     return res.json({ order: refunded });
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Refund failed.' });

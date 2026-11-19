@@ -85,8 +85,10 @@ export function emitPaymentUpdated(orderOrPayment, eventName = 'payment:successf
   });
   if (orderOrPayment.userId) {
     emitToUser(orderOrPayment.userId, eventName, payload);
+    if (eventName !== 'payment:updated') emitToUser(orderOrPayment.userId, 'payment:updated', payload);
   }
   emitToAdmins(eventName, payload);
+  if (eventName !== 'payment:updated') emitToAdmins('payment:updated', payload);
   emitAnalyticsUpdated('analytics:sales-updated');
 }
 

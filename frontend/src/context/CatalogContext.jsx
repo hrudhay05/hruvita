@@ -4,7 +4,7 @@ import { products as fallbackProducts } from '../data/products.js';
 import { plans as fallbackPlans } from '../data/plans.js';
 import { brand as fallbackBrand } from '../config/brand.js';
 import { apiRequest } from '../lib/api.js';
-import { useSocketEvents } from './SocketContext.jsx';
+import { useSocket, useSocketEvents } from './SocketContext.jsx';
 
 const CatalogContext = createContext(null);
 
@@ -37,9 +37,10 @@ export function CatalogProvider({ children }) {
     }
   }, []);
 
+  const sockCtx = useSocket();
   useEffect(() => {
     refreshCatalog();
-  }, [refreshCatalog]);
+  }, [refreshCatalog, sockCtx?.lastSyncAt]);
 
   useSocketEvents({
     'product:created': (p) => {

@@ -625,7 +625,7 @@ export default function Account() {
 
       {selectedOrder && (
         <OrderDetailModal
-          order={selectedOrder}
+          order={myOrders.find((o) => o.id === selectedOrder.id) || selectedOrder}
           onClose={() => setSelectedOrder(null)}
           onReorder={handleRepeatOrder}
           onCancel={async (id) => {
