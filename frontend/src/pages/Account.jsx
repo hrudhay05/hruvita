@@ -596,22 +596,22 @@ export default function Account() {
                         <div className="account-order-actions" onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
-                            className="admin-mini-btn"
+                            className="account-mini-btn account-mini-primary"
                             onClick={() => setSelectedOrder(ord)}
                           >
-                            <FiEye size={12} /> View Details
+                            <FiEye size={13} /> View Details
                           </button>
                           <button
                             type="button"
-                            className="admin-mini-btn"
+                            className="account-mini-btn"
                             onClick={() => handleRepeatOrder(ord)}
                           >
-                            <FiRefreshCw size={12} /> Order Again
+                            <FiRefreshCw size={13} /> Order Again
                           </button>
                           {['pending', 'payment_pending', 'confirmed', 'placed'].includes(ord.status) && (
                             <button
                               type="button"
-                              className="admin-mini-btn admin-mini-danger"
+                              className="account-mini-btn account-mini-danger"
                               onClick={() => handleCancelOrder(ord.id)}
                             >
                               Cancel

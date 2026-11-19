@@ -9,6 +9,7 @@ import { useSocketEvents } from '../context/SocketContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { apiRequest } from '../lib/api.js';
 import { detectCurrentLocation } from '../lib/location.js';
+import { loadRazorpayScript } from '../lib/razorpay.js';
 import { money, unitPrice } from '../lib/format.js';
 import './Cart.css';
 
@@ -357,7 +358,7 @@ export default function Cart() {
         await refreshCatalog();
         showToast('Order placed successfully.');
         setConfirmedOrder(res.order);
-      } else if (res.razorpay?.isRealGateway && window.Razorpay) {
+      } else if (res.razorpay?.isRealGateway && (await loadRazorpayScript()) && window.Razorpay) {
         const rzpOptions = {
           key: res.razorpay.keyId,
           amount: res.razorpay.amountPaise,

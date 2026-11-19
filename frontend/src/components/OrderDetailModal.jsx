@@ -16,6 +16,7 @@ import {
   FiX,
 } from 'react-icons/fi';
 import { apiRequest } from '../lib/api.js';
+import { loadRazorpayScript } from '../lib/razorpay.js';
 import { money } from '../lib/format.js';
 import './OrderDetailModal.css';
 
@@ -95,7 +96,7 @@ export default function OrderDetailModal({
       const res = await apiRequest(`/api/orders/${order.id}/pay-online`, {
         method: 'POST',
       });
-      if (res.razorpay?.isRealGateway && window.Razorpay) {
+      if (res.razorpay?.isRealGateway && (await loadRazorpayScript()) && window.Razorpay) {
         const rzp = new window.Razorpay({
           key: res.razorpay.keyId,
           amount: res.razorpay.amountPaise,

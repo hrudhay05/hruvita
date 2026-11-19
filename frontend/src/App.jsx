@@ -1,32 +1,41 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Home from './pages/Home.jsx';
-import Menu from './pages/Menu.jsx';
-import BuildBowl from './pages/BuildBowl.jsx';
-import ProductDetail from './pages/ProductDetail.jsx';
-import Subscriptions from './pages/Subscriptions.jsx';
-import About from './pages/About.jsx';
-import Contact from './pages/Contact.jsx';
-import LegalPage from './pages/LegalPage.jsx';
-import Cart from './pages/Cart.jsx';
-import Signup from './pages/Signup.jsx';
-import VerifyEmail from './pages/VerifyEmail.jsx';
-import Login from './pages/Login.jsx';
-import ForgotPassword from './pages/ForgotPassword.jsx';
-import ResetPassword from './pages/ResetPassword.jsx';
-import CompleteProfile from './pages/CompleteProfile.jsx';
-import AddressFormPage from './pages/AddressFormPage.jsx';
-import SavedAddresses from './pages/SavedAddresses.jsx';
-import Account from './pages/Account.jsx';
-import Admin from './pages/Admin.jsx';
-import AdminAnalystPage from './pages/AdminAnalystPage.jsx';
-import DeliveryDashboard from './pages/DeliveryDashboard.jsx';
-import NotFound from './pages/NotFound.jsx';
+
+const Menu = lazy(() => import('./pages/Menu.jsx'));
+const BuildBowl = lazy(() => import('./pages/BuildBowl.jsx'));
+const ProductDetail = lazy(() => import('./pages/ProductDetail.jsx'));
+const Subscriptions = lazy(() => import('./pages/Subscriptions.jsx'));
+const About = lazy(() => import('./pages/About.jsx'));
+const Contact = lazy(() => import('./pages/Contact.jsx'));
+const LegalPage = lazy(() => import('./pages/LegalPage.jsx'));
+const Cart = lazy(() => import('./pages/Cart.jsx'));
+const Signup = lazy(() => import('./pages/Signup.jsx'));
+const VerifyEmail = lazy(() => import('./pages/VerifyEmail.jsx'));
+const Login = lazy(() => import('./pages/Login.jsx'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword.jsx'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword.jsx'));
+const CompleteProfile = lazy(() => import('./pages/CompleteProfile.jsx'));
+const AddressFormPage = lazy(() => import('./pages/AddressFormPage.jsx'));
+const SavedAddresses = lazy(() => import('./pages/SavedAddresses.jsx'));
+const Account = lazy(() => import('./pages/Account.jsx'));
+const Admin = lazy(() => import('./pages/Admin.jsx'));
+const AdminAnalystPage = lazy(() => import('./pages/AdminAnalystPage.jsx'));
+const DeliveryDashboard = lazy(() => import('./pages/DeliveryDashboard.jsx'));
+const NotFound = lazy(() => import('./pages/NotFound.jsx'));
 
 export default function App() {
   return (
-    <Routes>
+    <Suspense
+      fallback={
+        <div style={{ minHeight: '60vh', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: '0.92rem' }}>
+          Loading...
+        </div>
+      }
+    >
+      <Routes>
       {/* Dedicated Role-Protected Workspaces */}
       <Route
         path="admin"
@@ -81,5 +90,6 @@ export default function App() {
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
+    </Suspense>
   );
 }

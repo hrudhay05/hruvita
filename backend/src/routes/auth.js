@@ -40,6 +40,9 @@ import {
 } from '../utils/emailService.js';
 
 const router = Router();
+
+// TEMPORARY: Set to false to re-enable Login/Signup OTP, verification, and welcome emails.
+const TEMP_DISABLE_AUTH_EMAILS = true;
 const loginAttempts = new Map();
 
 export function validateStrongPassword(password) {
@@ -172,6 +175,23 @@ async function handleSignup(req, res) {
       });
     }
 
+    if (TEMP_DISABLE_AUTH_EMAILS) {
+      const verifiedUser = user.isEmailVerified ? user : await updateUser(user.id, { isEmailVerified: true });
+      await createNotification({
+        userId: verifiedUser.id,
+        type: 'welcome',
+        title: 'Welcome to HRUVITA!',
+        message: `Welcome ${verifiedUser.fullName}! Your account (${verifiedUser.email}) is active with ${verifiedUser.rewardPoints || 25} reward points.`,
+        emailSent: false,
+      });
+      const session = await issueSessionAndCookies(req, res, verifiedUser, false);
+      return res.status(201).json({
+        ...session,
+        requiresEmailVerification: false,
+        message: 'Account created and signed in.',
+      });
+    }
+
     // Generate 6-digit OTP and store plain 6-digit OTP in EmailVerification collection (10m expiry)
     const otp = generateSixDigitOtp();
     await createOrUpdateOtpRecord({
@@ -249,21 +269,23 @@ router.post('/verify-email', async (req, res) => {
       : user;
 
     if (wasFirstTimeVerification) {
-      await sendAccountCreatedCongratsEmail({
-        to: verifiedUser.email,
-        fullName: verifiedUser.fullName || verifiedUser.name || 'Customer',
-        referralCode: verifiedUser.referralCode || '',
-        rewardPoints: verifiedUser.rewardPoints || 25,
-      });
+      if (!TEMP_DISABLE_AUTH_EMAILS) {
+        await sendAccountCreatedCongratsEmail({
+          to: verifiedUser.email,
+          fullName: verifiedUser.fullName || verifiedUser.name || 'Customer',
+          referralCode: verifiedUser.referralCode || '',
+          rewardPoints: verifiedUser.rewardPoints || 25,
+        });
+      }
 
       await createNotification({
         userId: verifiedUser.id,
         type: 'welcome',
         title: '🎉 Congratulations! Your HRUVITA Account is Created',
         message: `Welcome ${verifiedUser.fullName}! Your email (${verifiedUser.email}) is verified and ${verifiedUser.rewardPoints || 25} reward points are ready in your wallet.`,
-        emailSent: true,
+        emailSent: !TEMP_DISABLE_AUTH_EMAILS,
       });
-    } else {
+    } else if (!TEMP_DISABLE_AUTH_EMAILS) {
       await sendUserNotification({
         userId: verifiedUser.id,
         email: verifiedUser.email,
@@ -377,6 +399,12 @@ router.post('/login', async (req, res) => {
     }
 
     loginAttempts.delete(attemptKey);
+
+    if (TEMP_DISABLE_AUTH_EMAILS) {
+      const readyUser = user.isEmailVerified === false ? await updateUser(user.id, { isEmailVerified: true }) : user;
+      const session = await issueSessionAndCookies(req, res, readyUser, Boolean(rememberMe));
+      return res.json(session);
+    }
 
     // Unverified user: send signup verification OTP and block direct login
     if (user.isEmailVerified === false) {
@@ -611,15 +639,27 @@ router.post('/google', async (req, res) => {
 
     const session = await issueSessionAndCookies(req, res, user, true);
 
-    await sendUserNotification({
-      userId: session.user.id,
-      email: session.user.email,
-      type: isNew ? 'welcome' : 'security',
-      title: isNew ? 'Welcome to HRUVITA via Google!' : 'Google Sign-In Successful',
-      message: isNew
-        ? `Welcome ${session.user.fullName}! We added 25 reward points to your account.`
-        : `Signed in with Google (${session.user.email}).`,
-    });
+    if (TEMP_DISABLE_AUTH_EMAILS) {
+      await createNotification({
+        userId: session.user.id,
+        type: isNew ? 'welcome' : 'security',
+        title: isNew ? 'Welcome to HRUVITA via Google!' : 'Google Sign-In Successful',
+        message: isNew
+          ? `Welcome ${session.user.fullName}! We added 25 reward points to your account.`
+          : `Signed in with Google (${session.user.email}).`,
+        emailSent: false,
+      });
+    } else {
+      await sendUserNotification({
+        userId: session.user.id,
+        email: session.user.email,
+        type: isNew ? 'welcome' : 'security',
+        title: isNew ? 'Welcome to HRUVITA via Google!' : 'Google Sign-In Successful',
+        message: isNew
+          ? `Welcome ${session.user.fullName}! We added 25 reward points to your account.`
+          : `Signed in with Google (${session.user.email}).`,
+      });
+    }
 
     return res.json(session);
   } catch (err) {

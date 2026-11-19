@@ -88,7 +88,11 @@ export async function initDatabase() {
   }
 
   try {
-    await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000 });
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 5000,
+      maxPoolSize: 10,
+      minPoolSize: 2,
+    });
     mongoConnected = true;
     console.log('[DB] Connected to MongoDB Atlas.');
     await seedMongoIfNeeded();
@@ -186,16 +190,41 @@ export async function sanitizeUser(user) {
   return clean;
 }
 
+// Short-lived in-memory read cache for hot catalog/settings endpoints (30s TTL)
+const CACHE_TTL_MS = 30000;
+const fastCache = new Map();
+function getCached(key) {
+  const entry = fastCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.exp) {
+    fastCache.delete(key);
+    return null;
+  }
+  return entry.val;
+}
+function setCached(key, val) {
+  fastCache.set(key, { val, exp: Date.now() + CACHE_TTL_MS });
+  return val;
+}
+export function invalidateCatalogCache() {
+  fastCache.clear();
+}
+
 // Settings
 export async function getSettings() {
   if (mongoConnected) {
+    const hit = getCached('settings');
+    if (hit) return { ...hit };
     const doc = await BusinessSettings.findOne({ key: 'default' }).lean();
-    return stripMongo(doc) || { ...initialSettings };
+    const val = stripMongo(doc) || { ...initialSettings };
+    setCached('settings', val);
+    return { ...val };
   }
   return { ...mem.settings };
 }
 
 export async function updateSettings(patch) {
+  invalidateCatalogCache();
   if (mongoConnected) {
     const doc = await BusinessSettings.findOneAndUpdate(
       { key: 'default' },
@@ -211,13 +240,16 @@ export async function updateSettings(patch) {
 // Categories
 export async function listCategories() {
   if (mongoConnected) {
+    const hit = getCached('categories');
+    if (hit) return hit;
     const list = await Category.find({ active: true }).sort({ sortOrder: 1, name: 1 }).lean();
-    return list.map(stripMongo);
+    return setCached('categories', list.map(stripMongo));
   }
   return mem.categories.filter((c) => c.active !== false).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 }
 
 export async function upsertCategory(catData) {
+  invalidateCatalogCache();
   const slug = String(catData.slug || catData.name || '')
     .toLowerCase()
     .trim()
@@ -252,12 +284,20 @@ export async function listProducts(filters = {}) {
   const { q = '', category = '', veg = '', stock = '', max = 0, sort = 'popular', includeInactive = false } = filters;
   let items;
   if (mongoConnected) {
-    const query = includeInactive ? {} : { active: true };
-    if (category) query.category = category;
-    if (veg === '1' || veg === true) query.veg = true;
-    if (stock === '1' || stock === true) query.stock = { $gt: 0 };
-    const docs = await Product.find(query).lean();
-    items = docs.map(stripMongo);
+    const isUnfilteredActive = !includeInactive && !category && !veg && !stock;
+    if (isUnfilteredActive) {
+      const hit = getCached('products:active');
+      if (hit) items = [...hit];
+    }
+    if (!items) {
+      const query = includeInactive ? {} : { active: true };
+      if (category) query.category = category;
+      if (veg === '1' || veg === true) query.veg = true;
+      if (stock === '1' || stock === true) query.stock = { $gt: 0 };
+      const docs = await Product.find(query).lean();
+      items = docs.map(stripMongo);
+      if (isUnfilteredActive) setCached('products:active', items);
+    }
   } else {
     items = mem.products
       .filter((p) => includeInactive || p.active !== false)
@@ -303,6 +343,7 @@ export async function getProductById(id) {
 }
 
 export async function createProduct(data) {
+  invalidateCatalogCache();
   const id = data.id || `p${Date.now().toString(36)}`;
   const product = {
     id,
@@ -357,6 +398,7 @@ export async function createProduct(data) {
 }
 
 export async function updateProduct(id, patch) {
+  invalidateCatalogCache();
   const existing = await getProductById(id);
   if (!existing) return null;
 
@@ -425,6 +467,7 @@ export async function updateProduct(id, patch) {
 }
 
 export async function deleteProduct(id) {
+  invalidateCatalogCache();
   if (mongoConnected) {
     const res = await Product.findOneAndDelete({ id }).lean();
     return Boolean(res);

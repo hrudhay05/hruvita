@@ -151,21 +151,27 @@ export default function Home() {
           <div className="home-hero-visual">
             <div className="home-hero-main-img">
               <img
-                src="https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=900&q=80"
+                src="https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=75&fm=webp"
                 alt="Fresh colorful seasonal fruit bowl with seeds"
+                fetchPriority="high"
+                decoding="async"
               />
             </div>
             <div className="home-hero-side-stack">
               <div className="home-hero-side-img">
                 <img
-                  src="https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80"
+                  src="https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=500&q=75&fm=webp"
                   alt="Wholesome South Indian steamed breakfast"
+                  loading="lazy"
+                  decoding="async"
                 />
               </div>
               <div className="home-hero-side-img">
                 <img
-                  src="https://images.unsplash.com/photo-1613478223719-2ab802602423?auto=format&fit=crop&w=600&q=80"
+                  src="https://images.unsplash.com/photo-1613478223719-2ab802602423?auto=format&fit=crop&w=500&q=75&fm=webp"
                   alt="Cold-pressed fresh orange juice"
+                  loading="lazy"
+                  decoding="async"
                 />
               </div>
             </div>

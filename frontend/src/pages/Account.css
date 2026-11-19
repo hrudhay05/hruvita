@@ -580,6 +580,52 @@
   gap: 8px;
 }
 
+.account-mini-btn,
+.account-page .admin-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  border: 1px solid #d5e1d8;
+  background: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--green-900);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.account-mini-btn:hover,
+.account-page .admin-mini-btn:hover {
+  background: #edf7f0;
+  border-color: #2f7d4d;
+}
+
+.account-mini-primary {
+  background: #143c2b;
+  border-color: #143c2b;
+  color: #ffffff;
+}
+
+.account-mini-primary:hover {
+  background: #1b4d38;
+  border-color: #1b4d38;
+}
+
+.account-mini-danger,
+.account-page .admin-mini-danger {
+  color: #dc2626;
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+
+.account-mini-danger:hover,
+.account-page .admin-mini-danger:hover {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+
 .account-status-badge {
   padding: 4px 12px;
   border-radius: 999px;

@@ -70,10 +70,17 @@ export function AuthProvider({ children }) {
   }, [refreshMe]);
 
   const signup = async (payload) => {
-    return apiRequest('/api/auth/signup', {
+    const data = await apiRequest('/api/auth/signup', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    if (!data.requiresEmailVerification && data.token && data.user) {
+      setStoredToken(data.token);
+      setUser(data.user);
+      syncAddressesState(data.user.addresses || []);
+      await fetchNotifications();
+    }
+    return data;
   };
 
   const verifyEmailOtp = async ({ email, otp, rememberMe = false }) => {

@@ -171,4 +171,8 @@ const orderSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+orderSchema.index({ userId: 1, createdAt: -1 });
+orderSchema.index({ scheduledDate: 1, status: 1 });
+orderSchema.index({ 'deliveryAssignment.deliveryBoyId': 1, createdAt: -1 });
+
 export const Order = mongoose.models.Order || mongoose.model('Order', orderSchema);
