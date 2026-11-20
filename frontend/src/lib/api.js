@@ -39,11 +39,25 @@ export async function apiRequest(path, options = {}, isRetry = false) {
     ...(options.headers || {}),
   };
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    credentials: 'include',
-    headers,
-  });
+  const controller = !options.signal ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), 25000) : null;
+
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      credentials: 'include',
+      headers,
+      signal: options.signal || controller?.signal,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('Request timed out. The server may be waking up — please try again.');
+    }
+    throw err;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 
   if (
     res.status === 401 &&

@@ -201,11 +201,16 @@ async function handleSignup(req, res) {
       isResend: false,
     });
 
-    await sendOtpEmail({
+    const mailRes = await sendOtpEmail({
       to: emailClean,
       fullName: finalFullName,
       otp,
     });
+    if (!mailRes?.sent) {
+      return res.status(503).json({
+        error: 'Unable to send verification email right now. Please check SMTP configuration or try again.',
+      });
+    }
 
     return res.status(201).json({
       message: 'Account created! A 6-digit verification OTP has been sent to your email.',
@@ -455,12 +460,17 @@ router.post('/login', async (req, res) => {
       isResend: false,
     });
 
-    await sendOtpEmail({
+    const mailRes = await sendOtpEmail({
       to: user.email,
       fullName: user.fullName || user.name || 'Customer',
       otp,
       mode: 'login',
     });
+    if (!mailRes?.sent) {
+      return res.status(503).json({
+        error: 'Unable to send verification email right now. Please check SMTP configuration or try again.',
+      });
+    }
 
     return res.json({
       requiresOtpVerification: true,

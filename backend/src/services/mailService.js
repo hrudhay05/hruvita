@@ -29,6 +29,9 @@ async function getTransporter() {
       port,
       secure: port === 465,
       auth: { user, pass },
+      connectionTimeout: 7000,
+      greetingTimeout: 7000,
+      socketTimeout: 10000,
     });
     return cachedTransporter;
   }
@@ -60,6 +63,46 @@ export async function sendMailViaNodemailer({ to, subject, html, text }) {
   if (TEMP_PAUSE_ALL_EMAILS) {
     return { sent: false, skipped: true };
   }
+
+  const brevoApiKey = process.env.BREVO_API_KEY?.trim();
+  if (brevoApiKey) {
+    try {
+      const fromRaw = process.env.EMAIL_FROM || process.env.SMTP_USER || 'no-reply@hruvita.com';
+      const match = fromRaw.match(/^(?:"?([^"]*)"?\s*)?<([^>]+)>$/);
+      const sender = match
+        ? { name: (match[1] || 'HRUVITA').trim(), email: match[2].trim() }
+        : { name: 'HRUVITA', email: fromRaw.trim() };
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': brevoApiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          sender,
+          to: [{ email: to }],
+          subject,
+          htmlContent: html,
+          textContent: text,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        console.log(`[Brevo API] Email sent to ${to} (${subject})`);
+        return { sent: true, messageId: data.messageId || '' };
+      }
+      const errTxt = await res.text().catch(() => res.statusText);
+      console.warn(`[Brevo API Warning] ${res.status}: ${errTxt}`);
+    } catch (apiErr) {
+      console.warn(`[Brevo API Warning] ${apiErr.message}`);
+    }
+  }
+
   try {
     const transporter = await getTransporter();
     const info = await transporter.sendMail({
@@ -78,6 +121,7 @@ export async function sendMailViaNodemailer({ to, subject, html, text }) {
     );
     return { sent: true, messageId: info.messageId, previewUrl };
   } catch (err) {
+    cachedTransporter = null;
     console.warn(`[Nodemailer Warning] Could not send email to ${to}: ${err.message}`);
     return { sent: false, error: err.message };
   }
