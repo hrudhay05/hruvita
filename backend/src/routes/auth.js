@@ -42,7 +42,7 @@ import {
 const router = Router();
 
 // TEMPORARY: Set to false to re-enable Login/Signup OTP, verification, and welcome emails.
-const TEMP_DISABLE_AUTH_EMAILS = true;
+const TEMP_DISABLE_AUTH_EMAILS = false;
 const loginAttempts = new Map();
 
 export function validateStrongPassword(password) {

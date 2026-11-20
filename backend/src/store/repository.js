@@ -112,43 +112,66 @@ export function getDbStatus() {
 }
 
 async function seedMongoIfNeeded() {
-  if ((await BusinessSettings.countDocuments()) === 0) await BusinessSettings.create(initialSettings);
-  if ((await Category.countDocuments()) === 0) await Category.insertMany(initialCategories);
-  if ((await Product.countDocuments()) === 0) await Product.insertMany(initialProducts);
-  if ((await SubscriptionPlan.countDocuments()) === 0) await SubscriptionPlan.insertMany(initialPlans);
-  if ((await DeliverySlot.countDocuments()) === 0) await DeliverySlot.insertMany(initialSlots);
-  if ((await Coupon.countDocuments()) === 0) await Coupon.insertMany(initialCoupons);
-  if ((await Ingredient.countDocuments()) === 0) await Ingredient.insertMany(initialIngredients);
-  if ((await Combo.countDocuments()) === 0) await Combo.insertMany(initialCombos);
+  const [
+    settingsCount,
+    catCount,
+    prodCount,
+    planCount,
+    slotCount,
+    couponCount,
+    ingCount,
+    comboCount,
+    addrCount,
+  ] = await Promise.all([
+    BusinessSettings.countDocuments(),
+    Category.countDocuments(),
+    Product.countDocuments(),
+    SubscriptionPlan.countDocuments(),
+    DeliverySlot.countDocuments(),
+    Coupon.countDocuments(),
+    Ingredient.countDocuments(),
+    Combo.countDocuments(),
+    Address.countDocuments(),
+  ]);
+
+  await Promise.all([
+    settingsCount === 0 ? BusinessSettings.create(initialSettings) : null,
+    catCount === 0 ? Category.insertMany(initialCategories) : null,
+    prodCount === 0 ? Product.insertMany(initialProducts) : null,
+    planCount === 0 ? SubscriptionPlan.insertMany(initialPlans) : null,
+    slotCount === 0 ? DeliverySlot.insertMany(initialSlots) : null,
+    couponCount === 0 ? Coupon.insertMany(initialCoupons) : null,
+    ingCount === 0 ? Ingredient.insertMany(initialIngredients) : null,
+    comboCount === 0 ? Combo.insertMany(initialCombos) : null,
+    addrCount === 0 ? Address.insertMany(initialAddresses) : null,
+  ]);
 
   const initialUsers = buildInitialUsers();
-  for (const u of initialUsers) {
-    const existing = await User.findOne({ $or: [{ email: u.email }, { id: u.id }] })
-      .select('+password')
-      .lean();
-    if (!existing) {
-      await User.create(u);
-    } else if (!existing.password || !existing.fullName) {
-      await User.updateOne(
-        { id: existing.id },
-        {
-          $set: {
-            fullName: existing.fullName || existing.name || u.fullName,
-            name: existing.name || existing.fullName || u.name,
-            password: existing.password || existing.passwordHash || u.password,
-            isEmailVerified: true,
-            isProfileCompleted: true,
-            username: existing.username || u.username,
-            mobileNumber: existing.mobileNumber || u.mobileNumber,
-          },
-        }
-      );
-    }
-  }
-
-  if ((await Address.countDocuments()) === 0) {
-    await Address.insertMany(initialAddresses);
-  }
+  await Promise.all(
+    initialUsers.map(async (u) => {
+      const existing = await User.findOne({ $or: [{ email: u.email }, { id: u.id }] })
+        .select('+password')
+        .lean();
+      if (!existing) {
+        await User.create(u);
+      } else if (!existing.password || !existing.fullName) {
+        await User.updateOne(
+          { id: existing.id },
+          {
+            $set: {
+              fullName: existing.fullName || existing.name || u.fullName,
+              name: existing.name || existing.fullName || u.name,
+              password: existing.password || existing.passwordHash || u.password,
+              isEmailVerified: true,
+              isProfileCompleted: true,
+              username: existing.username || u.username,
+              mobileNumber: existing.mobileNumber || u.mobileNumber,
+            },
+          }
+        );
+      }
+    })
+  );
 }
 
 function stripMongo(doc) {
@@ -1948,8 +1971,29 @@ export async function deleteUser(id) {
 
 export async function listUsers() {
   if (mongoConnected) {
-    const docs = await User.find().sort({ createdAt: -1 }).lean();
-    return Promise.all(docs.map(sanitizeUser));
+    const [docs, allAddresses] = await Promise.all([
+      User.find().sort({ createdAt: -1 }).lean(),
+      Address.find().sort({ isDefault: -1, createdAt: -1 }).lean(),
+    ]);
+    const addrMap = new Map();
+    for (const a of allAddresses) {
+      const uid = a.userId;
+      if (!addrMap.has(uid)) addrMap.set(uid, []);
+      addrMap.get(uid).push(formatAddressForLegacy(stripMongo(a)));
+    }
+    return docs.map((u) => {
+      const clean = stripMongo(u);
+      delete clean.password;
+      delete clean.passwordHash;
+      delete clean.resetPasswordTokenHash;
+      delete clean.resetPasswordExpiresAt;
+      clean.fullName = clean.fullName || clean.name || 'Customer';
+      clean.name = clean.name || clean.fullName;
+      clean.mobileNumber = clean.mobileNumber || clean.phone || '';
+      clean.phone = clean.phone || clean.mobileNumber || '';
+      clean.addresses = addrMap.get(clean.id) || [];
+      return clean;
+    });
   }
   return Promise.all(mem.users.map(sanitizeUser));
 }

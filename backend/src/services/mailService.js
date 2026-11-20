@@ -51,7 +51,15 @@ async function getTransporter() {
   }
 }
 
+// TEMPORARY: Set to false to resume outgoing Nodemailer emails once SMTP is ready.
+const TEMP_PAUSE_ALL_EMAILS = false;
+// Send emails ONLY for Signup/Login OTP, Order Confirmation, and Order Delivered.
+const RESTRICTED_EMAIL_MODE = true;
+
 export async function sendMailViaNodemailer({ to, subject, html, text }) {
+  if (TEMP_PAUSE_ALL_EMAILS) {
+    return { sent: false, skipped: true };
+  }
   try {
     const transporter = await getTransporter();
     const info = await transporter.sendMail({
@@ -86,11 +94,13 @@ export async function sendAccountCreatedCongratsEmail({
   referralCode = '',
   rewardPoints = 25,
 }) {
+  if (RESTRICTED_EMAIL_MODE) return { sent: false, skipped: true };
   const { subject, text, html } = buildWelcomeEmail({ to, fullName, referralCode, rewardPoints });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
 
 export async function sendPasswordResetEmail({ to, fullName, resetUrl }) {
+  if (RESTRICTED_EMAIL_MODE) return { sent: false, skipped: true };
   const { subject, text, html } = buildPasswordResetEmail({ fullName, resetUrl });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
@@ -101,31 +111,37 @@ export async function sendOrderConfirmationEmail({ to, order }) {
 }
 
 export async function sendDeliveryPartnerWelcomeEmail({ to, fullName }) {
+  if (RESTRICTED_EMAIL_MODE) return { sent: false, skipped: true };
   const { subject, text, html } = buildDeliveryPartnerWelcomeEmail({ fullName, email: to });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
 
 export async function sendDeliveryAssignmentEmail({ to, orderId, partnerName, partnerPhone, address = '' }) {
+  if (RESTRICTED_EMAIL_MODE) return { sent: false, skipped: true };
   const { subject, text, html } = buildDeliveryPartnerEmail({ orderId, partnerName, partnerPhone, isReassign: false, address });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
 
 export async function sendDeliveryReassignedEmail({ to, orderId, partnerName, partnerPhone, address = '' }) {
+  if (RESTRICTED_EMAIL_MODE) return { sent: false, skipped: true };
   const { subject, text, html } = buildDeliveryPartnerEmail({ orderId, partnerName, partnerPhone, isReassign: true, address });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
 
 export async function sendDeliveryAcceptedEmail({ to, orderId, partnerName, partnerPhone }) {
+  if (RESTRICTED_EMAIL_MODE) return { sent: false, skipped: true };
   const { subject, text, html } = buildDeliveryLifecycleEmail({ orderId, stage: 'accepted', partnerName, partnerPhone });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
 
 export async function sendOutForDeliveryEmail({ to, orderId, partnerName, partnerPhone }) {
+  if (RESTRICTED_EMAIL_MODE) return { sent: false, skipped: true };
   const { subject, text, html } = buildDeliveryLifecycleEmail({ orderId, stage: 'out_for_delivery', partnerName, partnerPhone });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
 
 export async function sendDeliveryOtpEmail({ to, customerName, orderId, otp, partnerName = '' }) {
+  if (RESTRICTED_EMAIL_MODE) return { sent: false, skipped: true };
   const { subject, text, html } = buildDeliveryOtpEmail({ customerName, orderId, otp, partnerName });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
@@ -136,16 +152,19 @@ export async function sendDeliveryCompletedEmail({ to, orderId, partnerName }) {
 }
 
 export async function sendDeliveryFailedEmail({ to, orderId, partnerName, reason }) {
+  if (RESTRICTED_EMAIL_MODE) return { sent: false, skipped: true };
   const { subject, text, html } = buildDeliveryLifecycleEmail({ orderId, stage: 'failed', partnerName, reason });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
 
 export async function sendDeliveryPartnerEmail({ to, orderId, partnerName, partnerPhone, isReassign = false }) {
+  if (RESTRICTED_EMAIL_MODE) return { sent: false, skipped: true };
   const { subject, text, html } = buildDeliveryPartnerEmail({ orderId, partnerName, partnerPhone, isReassign });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
 
 export async function sendAdminAlertEmail({ to, title, description, category = 'system', entityId = '' }) {
+  if (RESTRICTED_EMAIL_MODE) return { sent: false, skipped: true };
   const { subject, text, html } = buildAdminAlertEmail({ title, description, category, entityId });
   return sendMailViaNodemailer({ to, subject, text, html });
 }
@@ -158,7 +177,10 @@ export async function sendUserNotification({
   message,
   orderId = '',
 }) {
-  if (email) {
+  const allowEmail =
+    !RESTRICTED_EMAIL_MODE ||
+    (type === 'order' && /order placed|order confirmed|payment received/i.test(String(title || '')));
+  if (email && allowEmail) {
     const { subject, text, html } = buildOrderStatusEmail({
       title,
       message,
