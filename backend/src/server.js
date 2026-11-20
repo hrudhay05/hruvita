@@ -26,6 +26,7 @@ if (!process.env.MONGODB_URI) {
 }
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT) || 5000;
 
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173,http://localhost:5174')
@@ -67,9 +68,11 @@ app.use(sanitizeNoSqlInput);
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 500,
+  max: 3000,
   standardHeaders: true,
   legacyHeaders: false,
+  message: { error: 'Too many requests. Please wait a moment and try again.' },
+  skip: (req) => req.method === 'GET' && req.path === '/health',
 });
 app.use('/api', apiLimiter);
 

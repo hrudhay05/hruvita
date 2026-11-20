@@ -594,7 +594,7 @@ export default function Admin() {
       if (document.visibilityState === 'visible') {
         loadOverview();
       }
-    }, 8000);
+    }, 15000);
     window.addEventListener('focus', onFocusSync);
     document.addEventListener('visibilitychange', onFocusSync);
     return () => {

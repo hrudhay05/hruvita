@@ -166,7 +166,7 @@ export default function Account() {
         loadDashboardData();
       }
     };
-    const intervalMs = selectedOrder || section === 'orders' ? 5000 : 12000;
+    const intervalMs = selectedOrder || section === 'orders' ? 10000 : 30000;
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') {
         loadDashboardData();

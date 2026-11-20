@@ -142,7 +142,7 @@ export default function DeliveryDashboard() {
       if (document.visibilityState === 'visible') {
         loadDeliveryOrders();
       }
-    }, 8000);
+    }, 15000);
     window.addEventListener('focus', onFocusSync);
     document.addEventListener('visibilitychange', onFocusSync);
     return () => {
