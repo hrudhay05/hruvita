@@ -377,10 +377,11 @@ export default function Home() {
 
         {user && (
           <form className="home-review-form" onSubmit={handleReviewSubmit}>
-            <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.25rem' }}>
-              Share Your HRUVITA Experience
-            </h3>
-            <div className="auth-field">
+            <div className="home-review-form-head">
+              <h3>Share Your HRUVITA Experience</h3>
+              <p>Tell us what you loved about the freshness, taste, or delivery.</p>
+            </div>
+            <div className="home-review-field">
               <label htmlFor="home-rev-rating">Rating</label>
               <select
                 id="home-rev-rating"
@@ -394,7 +395,7 @@ export default function Home() {
                 <option value={1}>1 Star — Needs Improvement</option>
               </select>
             </div>
-            <div className="auth-field">
+            <div className="home-review-field">
               <label htmlFor="home-rev-comment">Your Review</label>
               <textarea
                 id="home-rev-comment"
@@ -406,7 +407,7 @@ export default function Home() {
                 placeholder="Tell us about the freshness, taste, or delivery experience..."
               />
             </div>
-            <div>
+            <div className="home-review-actions">
               <Button type="submit" size="sm" disabled={submittingReview}>
                 {submittingReview ? 'Submitting...' : 'Submit Review'}
               </Button>

@@ -2822,7 +2822,7 @@ export default function Admin() {
                   <h2>Coupons &amp; Offers ({coupons.length})</h2>
                 </div>
                 <div className="admin-table-wrap admin-orders-table-wrap">
-                  <table className="admin-table admin-orders-table">
+                  <table className="admin-table admin-orders-table admin-coupons-mobile-cards">
                     <thead>
                       <tr>
                         <th>Code &amp; Visibility</th>
@@ -2833,7 +2833,13 @@ export default function Admin() {
                       </tr>
                     </thead>
                     <tbody>
-                      {coupons.map((c) => {
+                      {coupons.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="admin-empty-cell">
+                            No coupons created yet. Use the form below to create one.
+                          </td>
+                        </tr>
+                      ) : coupons.map((c) => {
                         const isScheduled = Boolean(c.validFrom && todayIso < c.validFrom);
                         const isExpired = Boolean(c.validUntil && todayIso > c.validUntil);
                         const statusLabel = c.active === false

@@ -2034,4 +2034,59 @@
     padding-top: 8px;
     border-top: 1px dashed #e2ebe5;
   }
+
+  .admin-coupons-mobile-cards,
+  .admin-coupons-mobile-cards tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .admin-coupons-mobile-cards thead {
+    display: none;
+  }
+
+  .admin-coupons-mobile-cards tbody tr {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+    border-radius: 14px;
+    border: 1px solid #dce8e0;
+    background: #ffffff;
+    box-shadow: 0 3px 12px rgba(18, 55, 40, 0.06);
+  }
+
+  .admin-coupons-mobile-cards tbody td {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border-bottom: 0;
+    font-size: 0.84rem;
+  }
+
+  .admin-coupons-mobile-cards tbody td:nth-child(1) {
+    padding-bottom: 8px;
+    border-bottom: 1px solid #edf2ee;
+  }
+
+  .admin-coupons-mobile-cards tbody td:nth-child(2)::before,
+  .admin-coupons-mobile-cards tbody td:nth-child(3)::before,
+  .admin-coupons-mobile-cards tbody td:nth-child(4)::before {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748b;
+    margin-bottom: 2px;
+  }
+
+  .admin-coupons-mobile-cards tbody td:nth-child(2)::before { content: 'Discount'; }
+  .admin-coupons-mobile-cards tbody td:nth-child(3)::before { content: 'Eligibility & Validity'; }
+  .admin-coupons-mobile-cards tbody td:nth-child(4)::before { content: 'Usage & Status'; }
+
+  .admin-coupons-mobile-cards tbody td:nth-child(5) {
+    padding-top: 8px;
+    border-top: 1px dashed #e2ebe5;
+  }
 }
