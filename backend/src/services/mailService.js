@@ -54,10 +54,8 @@ async function getTransporter() {
   }
 }
 
-// Pause outgoing emails only in local development; enabled automatically in production (Render / Vercel).
-const TEMP_PAUSE_ALL_EMAILS =
-  process.env.DISABLE_EMAILS === 'true' ||
-  (process.env.NODE_ENV !== 'production' && !process.env.RENDER);
+// Pause all outgoing emails in both local and deployed environments.
+const TEMP_PAUSE_ALL_EMAILS = true;
 // Send emails ONLY for Signup/Login OTP, Order Confirmation, and Order Delivered.
 const RESTRICTED_EMAIL_MODE = true;
 

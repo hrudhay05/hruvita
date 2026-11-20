@@ -590,9 +590,15 @@ export default function Admin() {
         loadOverview();
       }
     };
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadOverview();
+      }
+    }, 8000);
     window.addEventListener('focus', onFocusSync);
     document.addEventListener('visibilitychange', onFocusSync);
     return () => {
+      clearInterval(timer);
       window.removeEventListener('focus', onFocusSync);
       document.removeEventListener('visibilitychange', onFocusSync);
     };

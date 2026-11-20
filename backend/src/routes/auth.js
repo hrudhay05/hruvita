@@ -41,10 +41,8 @@ import {
 
 const router = Router();
 
-// Disable auth emails only in local development; enabled automatically in production (Render / Vercel).
-const TEMP_DISABLE_AUTH_EMAILS =
-  process.env.DISABLE_EMAILS === 'true' ||
-  (process.env.NODE_ENV !== 'production' && !process.env.RENDER);
+// Disable auth emails in both local and deployed environments.
+const TEMP_DISABLE_AUTH_EMAILS = true;
 const loginAttempts = new Map();
 
 export function validateStrongPassword(password) {

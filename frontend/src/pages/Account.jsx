@@ -166,13 +166,20 @@ export default function Account() {
         loadDashboardData();
       }
     };
+    const intervalMs = selectedOrder || section === 'orders' ? 5000 : 12000;
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadDashboardData();
+      }
+    }, intervalMs);
     window.addEventListener('focus', onFocusSync);
     document.addEventListener('visibilitychange', onFocusSync);
     return () => {
+      clearInterval(timer);
       window.removeEventListener('focus', onFocusSync);
       document.removeEventListener('visibilitychange', onFocusSync);
     };
-  }, [user, loadDashboardData]);
+  }, [user, section, selectedOrder, loadDashboardData]);
 
   useEffect(() => {
     if (user) {
@@ -596,6 +603,42 @@ export default function Account() {
                               )}
                             </div>
                           </div>
+
+                          {ord.customerDeliveryOtp && (
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                margin: '6px 0 4px',
+                                padding: '8px 12px',
+                                borderRadius: 10,
+                                background: '#fffbeb',
+                                border: '1px solid #fcd34d',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                flexWrap: 'wrap',
+                                gap: 8,
+                              }}
+                            >
+                              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#92400e' }}>
+                                Delivery OTP (share on arrival):
+                              </span>
+                              <strong
+                                style={{
+                                  fontFamily: 'monospace',
+                                  fontSize: '1.08rem',
+                                  letterSpacing: '0.18em',
+                                  color: '#92400e',
+                                  background: '#ffffff',
+                                  padding: '3px 9px',
+                                  borderRadius: 6,
+                                  border: '1px dashed #f59e0b',
+                                }}
+                              >
+                                {ord.customerDeliveryOtp}
+                              </strong>
+                            </div>
+                          )}
 
                       <div className="account-order-foot">
                         <div className="account-order-pay">
