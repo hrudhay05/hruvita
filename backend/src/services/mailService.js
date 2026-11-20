@@ -54,8 +54,10 @@ async function getTransporter() {
   }
 }
 
-// TEMPORARY: Set to false to resume outgoing Nodemailer emails once SMTP is ready.
-const TEMP_PAUSE_ALL_EMAILS = false;
+// Pause outgoing emails only in local development; enabled automatically in production (Render / Vercel).
+const TEMP_PAUSE_ALL_EMAILS =
+  process.env.DISABLE_EMAILS === 'true' ||
+  (process.env.NODE_ENV !== 'production' && !process.env.RENDER);
 // Send emails ONLY for Signup/Login OTP, Order Confirmation, and Order Delivered.
 const RESTRICTED_EMAIL_MODE = true;
 

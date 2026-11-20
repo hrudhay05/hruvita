@@ -538,9 +538,12 @@ async function enrichOrdersWithCatalogAndPayments(orders, payments = [], viewerU
   // Fetch encrypted delivery OTPs ONLY for active out_for_delivery orders owned by viewerUserId
   const otpMap = new Map();
   if (viewerUserId) {
-    const outIds = orders
-      .filter((o) => o.userId === viewerUserId && o.deliveryStatus === 'out_for_delivery')
-      .map((o) => o.id);
+    const outOrders = orders.filter(
+      (o) =>
+        o.userId === viewerUserId &&
+        (o.deliveryStatus === 'out_for_delivery' || o.status === 'out_for_delivery')
+    );
+    const outIds = outOrders.map((o) => o.id);
     if (outIds.length > 0) {
       const otpDocs = await Order.find({ id: { $in: outIds } })
         .select('id delivery.deliveryOtpEncrypted delivery.otpExpiry')
@@ -551,6 +554,15 @@ async function enrichOrdersWithCatalogAndPayments(orders, payments = [], viewerU
         if (d.delivery?.deliveryOtpEncrypted && exp > Date.now()) {
           const plain = decryptDeliveryOtp(d.delivery.deliveryOtpEncrypted);
           if (plain) otpMap.set(d.id, plain);
+        }
+      }
+      // Fallback for in-memory store orders if Mongo query returned no rows
+      for (const ord of outOrders) {
+        if (otpMap.has(ord.id)) continue;
+        const exp = ord.delivery?.otpExpiry ? new Date(ord.delivery.otpExpiry).getTime() : 0;
+        if (ord.delivery?.deliveryOtpEncrypted && exp > Date.now()) {
+          const plain = decryptDeliveryOtp(ord.delivery.deliveryOtpEncrypted);
+          if (plain) otpMap.set(ord.id, plain);
         }
       }
     }

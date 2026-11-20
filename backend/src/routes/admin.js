@@ -32,6 +32,7 @@ import {
   findUserByEmail,
   findUserById,
   updateUser,
+  deleteUser,
   sanitizeUser,
   listAuditLogs,
   recordAudit,
@@ -990,6 +991,69 @@ router.patch('/delivery-boys/:id', requireRole('admin'), async (req, res) => {
     details: { fullName: updated.fullName, blocked: updated.blocked, availability: updated.deliveryAvailability },
   });
   res.json({ deliveryBoy: updated });
+});
+
+router.delete('/delivery-boys/:id', requireRole('admin'), async (req, res) => {
+  const target = await findUserById(req.params.id);
+  if (!target || target.role !== 'delivery_boy') {
+    return res.status(404).json({ error: 'Delivery partner not found.' });
+  }
+  const orders = await listAllOrders();
+  const hasActiveOrder = orders.some(
+    (o) =>
+      o.deliveryAssignment?.deliveryBoyId === target.id &&
+      ['assigned', 'picked_up', 'out_for_delivery'].includes(o.deliveryStatus) &&
+      !['delivered', 'cancelled', 'refunded'].includes(o.status)
+  );
+  if (hasActiveOrder) {
+    return res.status(400).json({
+      error: 'Cannot delete a delivery partner with active deliveries. Reassign or complete their active orders first.',
+    });
+  }
+  await deleteUser(target.id);
+  await recordAudit({
+    actorId: req.user.id,
+    actorEmail: req.user.email,
+    action: 'DELIVERY_BOY_DELETED',
+    entity: 'user',
+    entityId: target.id,
+    details: { fullName: target.fullName, email: target.email },
+  });
+  res.json({ deleted: true, id: target.id });
+});
+
+router.delete('/delivery-boys', requireRole('admin'), async (req, res) => {
+  const [users, orders] = await Promise.all([listUsers(), listAllOrders()]);
+  const boys = users.filter((u) => u.role === 'delivery_boy');
+  const activePartnerIds = new Set(
+    orders
+      .filter(
+        (o) =>
+          o.deliveryAssignment?.deliveryBoyId &&
+          ['assigned', 'picked_up', 'out_for_delivery'].includes(o.deliveryStatus) &&
+          !['delivered', 'cancelled', 'refunded'].includes(o.status)
+      )
+      .map((o) => o.deliveryAssignment.deliveryBoyId)
+  );
+  let deletedCount = 0;
+  let skippedCount = 0;
+  for (const boy of boys) {
+    if (activePartnerIds.has(boy.id)) {
+      skippedCount += 1;
+      continue;
+    }
+    await deleteUser(boy.id);
+    deletedCount += 1;
+  }
+  await recordAudit({
+    actorId: req.user.id,
+    actorEmail: req.user.email,
+    action: 'DELIVERY_BOYS_BULK_DELETED',
+    entity: 'user',
+    entityId: 'all',
+    details: { deletedCount, skippedCount },
+  });
+  res.json({ deletedCount, skippedCount });
 });
 
 router.post('/orders/:id/assign-delivery', async (req, res) => {

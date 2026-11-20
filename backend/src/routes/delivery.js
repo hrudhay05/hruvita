@@ -219,9 +219,9 @@ router.post('/orders/:id/resend-otp', otpVerifyLimiter, async (req, res) => {
   const otp = generateNumericOtp();
   const otpHash = hashDeliveryOtp(otp);
   const otpEncrypted = encryptDeliveryOtp(otp);
-  const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+  const otpExpiry = new Date(Date.now() + 4 * 60 * 60 * 1000);
 
-  await Order.updateOne(
+  const updatedOrder = await Order.findOneAndUpdate(
     { id: order.id },
     {
       $set: {
@@ -230,8 +230,12 @@ router.post('/orders/:id/resend-otp', otpVerifyLimiter, async (req, res) => {
         'delivery.otpExpiry': otpExpiry,
         'delivery.otpAttempts': 0,
       },
-    }
-  );
+    },
+    { new: true }
+  ).lean();
+
+  emitOrderUpdated(updatedOrder || order);
+  emitDeliveryUpdated(updatedOrder || order, 'delivery:otp-refreshed');
 
   // Never send Delivery OTP via email; notify customer to view it in Order Details
   sendUserNotification({
@@ -358,7 +362,7 @@ router.patch('/orders/:id/status', otpVerifyLimiter, async (req, res) => {
       const generatedOtp = generateNumericOtp();
       deliverySet['delivery.deliveryOtpHash'] = hashDeliveryOtp(generatedOtp);
       deliverySet['delivery.deliveryOtpEncrypted'] = encryptDeliveryOtp(generatedOtp);
-      deliverySet['delivery.otpExpiry'] = new Date(Date.now() + 10 * 60 * 1000);
+      deliverySet['delivery.otpExpiry'] = new Date(Date.now() + 4 * 60 * 60 * 1000);
       deliverySet['delivery.otpAttempts'] = 0;
 
       notifTitle = `Out for Delivery (${orderDoc.id})`;

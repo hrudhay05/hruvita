@@ -8,6 +8,7 @@ const SocketContext = createContext(null);
 export function SocketProvider({ children }) {
   const { user } = useAuth();
   const socketRef = useRef(null);
+  const [socket, setSocket] = useState(null);
   const seenEventsRef = useRef(new Set());
   const [status, setStatus] = useState('offline'); // 'connected' | 'reconnecting' | 'offline'
   const [lastSyncAt, setLastSyncAt] = useState(0);
@@ -23,6 +24,7 @@ export function SocketProvider({ children }) {
       transports: ['websocket', 'polling'],
     });
     socketRef.current = sock;
+    setSocket(sock);
 
     const onConnect = () => {
       setStatus('connected');
@@ -47,6 +49,7 @@ export function SocketProvider({ children }) {
       sock.io.off('reconnect', onReconnect);
       sock.disconnect();
       socketRef.current = null;
+      setSocket(null);
     };
   }, [user?.id, user?.role]);
 
@@ -72,7 +75,7 @@ export function SocketProvider({ children }) {
   }, []);
 
   return (
-    <SocketContext.Provider value={{ socket: socketRef.current, status, lastSyncAt, subscribe }}>
+    <SocketContext.Provider value={{ socket, status, lastSyncAt, subscribe }}>
       {children}
     </SocketContext.Provider>
   );
@@ -85,11 +88,11 @@ export function useSocket() {
 export function useSocketEvents(eventsMap, deps = []) {
   const ctx = useSocket();
   useEffect(() => {
-    if (!ctx?.subscribe || !eventsMap) return undefined;
+    if (!ctx?.subscribe || !ctx?.socket || !eventsMap) return undefined;
     const unsubs = Object.entries(eventsMap).map(([ev, fn]) => ctx.subscribe(ev, fn));
     return () => {
       for (const u of unsubs) u();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx, ctx?.lastSyncAt, ...deps]);
+  }, [ctx, ctx?.socket, ctx?.lastSyncAt, ...deps]);
 }

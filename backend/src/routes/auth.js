@@ -41,8 +41,10 @@ import {
 
 const router = Router();
 
-// TEMPORARY: Set to false to re-enable Login/Signup OTP, verification, and welcome emails.
-const TEMP_DISABLE_AUTH_EMAILS = false;
+// Disable auth emails only in local development; enabled automatically in production (Render / Vercel).
+const TEMP_DISABLE_AUTH_EMAILS =
+  process.env.DISABLE_EMAILS === 'true' ||
+  (process.env.NODE_ENV !== 'production' && !process.env.RENDER);
 const loginAttempts = new Map();
 
 export function validateStrongPassword(password) {

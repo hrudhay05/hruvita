@@ -7,6 +7,7 @@ import {
   FiCheck,
   FiChevronDown,
   FiCoffee,
+  FiCreditCard,
   FiDownload,
   FiEdit2,
   FiExternalLink,
@@ -159,6 +160,97 @@ function OrderStatusPicker({ order, onChange, ariaLabel }) {
   );
 }
 
+function StatusFilterPicker({ value, onChange, orders }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocDown = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [open]);
+
+  const totalCount = (orders || []).length;
+  const counts = {};
+  for (const o of orders || []) {
+    counts[o.status] = (counts[o.status] || 0) + 1;
+  }
+
+  const currentTheme = value ? getStatusThemeClass(value) : null;
+  const activeLabel = value
+    ? `${value.replace(/_/g, ' ')} (${counts[value] || 0})`
+    : `All ${ALL_STATUSES.length} Statuses (${totalCount})`;
+
+  return (
+    <div className="admin-custom-select admin-status-filter-picker" ref={wrapRef}>
+      <button
+        type="button"
+        id="admin-status-filter"
+        aria-label="Filter orders by status"
+        aria-expanded={open}
+        className={`admin-custom-select-btn ${currentTheme ? currentTheme.btn : ''} ${
+          open ? 'admin-custom-select-btn-open' : ''
+        }`.trim()}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          {currentTheme && <span className={`admin-custom-dot ${currentTheme.dot}`} />}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {activeLabel}
+          </span>
+        </span>
+        <FiChevronDown size={14} style={{ flexShrink: 0, opacity: 0.75 }} />
+      </button>
+      {open && (
+        <div className="admin-custom-menu admin-custom-menu-right" role="listbox" aria-label="Filter orders by status">
+          <div className="admin-custom-menu-head">Filter by Status</div>
+          <button
+            type="button"
+            role="option"
+            aria-selected={!value}
+            className={`admin-custom-option ${!value ? 'admin-custom-option-active' : ''}`.trim()}
+            onClick={() => {
+              onChange('');
+              setOpen(false);
+            }}
+          >
+            <span>All {ALL_STATUSES.length} Statuses ({totalCount})</span>
+            {!value && <FiCheck size={14} />}
+          </button>
+          {ALL_STATUSES.map((st) => {
+            const isSelected = st === value;
+            const optTheme = getStatusThemeClass(st);
+            return (
+              <button
+                key={st}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                className={`admin-custom-option ${isSelected ? 'admin-custom-option-active' : ''}`.trim()}
+                onClick={() => {
+                  onChange(st);
+                  setOpen(false);
+                }}
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <span className={`admin-custom-dot ${optTheme.dot}`} />
+                  <span>
+                    {st.replace(/_/g, ' ')} ({counts[st] || 0})
+                  </span>
+                </span>
+                {isSelected && <FiCheck size={14} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PartnerAssignPicker({ order, partners, onAssign, ariaLabel }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -298,6 +390,8 @@ export default function Admin() {
   const [statusFilter, setStatusFilter] = useState('');
   const [orderDateFilter, setOrderDateFilter] = useState('');
   const [orderProductFilter, setOrderProductFilter] = useState('');
+  const [paymentHistoryTab, setPaymentHistoryTab] = useState('all');
+  const [paymentSearch, setPaymentSearch] = useState('');
   const [prodSearch, setProdSearch] = useState('');
   const [ordersPage, setOrdersPage] = useState(1);
   const [productsPage, setProductsPage] = useState(1);
@@ -448,6 +542,8 @@ export default function Admin() {
             loadOverview();
           },
           'payment:successful': () => loadOverview(),
+          'payment:updated': () => loadOverview(),
+          'payment:cod-collected': () => loadOverview(),
           'payment:refunded': () => loadOverview(),
           'inventory:updated': () => {
             loadOverview();
@@ -463,7 +559,14 @@ export default function Admin() {
           },
           'delivery:assigned': () => loadOverview(),
           'delivery:accepted': () => loadOverview(),
+          'delivery:order-accepted': () => loadOverview(),
           'delivery:started': () => loadOverview(),
+          'delivery:order-started': () => loadOverview(),
+          'delivery:order-rejected': (p) => {
+            showToast(`Delivery rejected: ${p?.orderId || ''}`, 'error');
+            loadOverview();
+          },
+          'delivery:updated': () => loadOverview(),
           'delivery:completed': (p) => {
             showToast(`Order delivered: ${p?.orderId || ''}`);
             loadOverview();
@@ -479,6 +582,21 @@ export default function Admin() {
       : null,
     [isAdmin, loadOverview, refreshCatalog]
   );
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    const onFocusSync = () => {
+      if (document.visibilityState === 'visible') {
+        loadOverview();
+      }
+    };
+    window.addEventListener('focus', onFocusSync);
+    document.addEventListener('visibilitychange', onFocusSync);
+    return () => {
+      window.removeEventListener('focus', onFocusSync);
+      document.removeEventListener('visibilitychange', onFocusSync);
+    };
+  }, [isAdmin, loadOverview]);
 
   const [team, setTeam] = useState([]);
   const [teamForm, setTeamForm] = useState({ fullName: '', email: '', password: '', role: 'admin_analyser' });
@@ -544,6 +662,46 @@ export default function Admin() {
         body: JSON.stringify({ active: !boy.active }),
       });
       showToast(`${boy.fullName} ${boy.active ? 'deactivated' : 'activated'}.`);
+      await Promise.all([loadDeliveryBoys(), loadOverview()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeleteDeliveryBoy = async (boy) => {
+    if (!window.confirm(`Delete delivery partner "${boy.fullName}"? This cannot be undone.`)) return;
+    setError('');
+    try {
+      await apiRequest(`/api/admin/delivery-boys/${boy.id}`, { method: 'DELETE' });
+      if (selectedPartnerId === boy.id) setSelectedPartnerId(null);
+      if (deliveryBoyForm.id === boy.id) {
+        setDeliveryBoyForm({ id: '', fullName: '', phone: '', email: '', password: '', availability: 'available' });
+      }
+      showToast(`Deleted delivery partner ${boy.fullName}.`);
+      await Promise.all([loadDeliveryBoys(), loadOverview()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeleteAllDeliveryBoys = async () => {
+    if (
+      !window.confirm(
+        `Remove all ${deliveryBoysList.length} delivery partner(s)? Partners with active deliveries will be skipped.`
+      )
+    ) {
+      return;
+    }
+    setError('');
+    try {
+      const res = await apiRequest('/api/admin/delivery-boys', { method: 'DELETE' });
+      setSelectedPartnerId(null);
+      setDeliveryBoyForm({ id: '', fullName: '', phone: '', email: '', password: '', availability: 'available' });
+      if (res.skippedCount > 0) {
+        showToast(`Removed ${res.deletedCount} partner(s); ${res.skippedCount} skipped due to active deliveries.`);
+      } else {
+        showToast(`Removed ${res.deletedCount} delivery partner(s).`);
+      }
       await Promise.all([loadDeliveryBoys(), loadOverview()]);
     } catch (err) {
       setError(err.message);
@@ -1151,6 +1309,7 @@ export default function Admin() {
     { id: 'overview', label: 'Overview', icon: FiGrid, active: activeTab === 'overview' },
     { id: 'kitchen', label: 'Kitchen Prep', icon: FiCoffee, active: activeTab === 'kitchen' },
     { id: 'orders', label: 'Orders', count: allOrders.length, icon: FiShoppingBag, active: activeTab === 'orders' },
+    { id: 'payments', label: 'Payment History', icon: FiCreditCard, active: activeTab === 'payments' },
     { id: 'delivery', label: 'Delivery Team', count: overview?.deliveryBoys?.length || 0, icon: FiTruck, active: activeTab === 'delivery' },
     { id: 'products', label: 'Catalog & Menu', count: products.length, icon: FiBox, active: isCatalogTab },
     { id: 'customers', label: 'Customers', count: overview?.customers?.length || 0, icon: FiUsers, active: activeTab === 'customers' },
@@ -1163,6 +1322,7 @@ export default function Admin() {
     { id: 'overview', label: 'Overview' },
     { id: 'kitchen', label: 'Kitchen Prep' },
     { id: 'orders', label: 'Orders Queue' },
+    { id: 'payments', label: 'Payment History' },
     { id: 'delivery', label: 'Delivery Team' },
     ...catalogTabs,
     { id: 'customers', label: 'Customers' },
@@ -1595,7 +1755,7 @@ export default function Admin() {
                 <section className="admin-panel">
               <div className="admin-panel-head">
                 <h2>Orders Queue ({filteredOrders.length})</h2>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <div className="admin-orders-filters">
                   <input
                     type="date"
                     aria-label="Filter orders by date"
@@ -1610,31 +1770,24 @@ export default function Admin() {
                     type="search"
                     aria-label="Search by Order ID, product, or customer"
                     placeholder="Search Order ID, product, customer..."
-                    className="menu-select"
-                    style={{ minWidth: 230 }}
+                    className="menu-select admin-orders-search"
                     value={orderProductFilter}
                     onChange={(e) => {
                       setOrderProductFilter(e.target.value);
                       setOrdersPage(1);
                     }}
                   />
-                  <label htmlFor="admin-status-filter" style={{ fontSize: '0.84rem', fontWeight: 600 }}>
-                    Status:
-                  </label>
-                  <select
-                    id="admin-status-filter"
-                    name="statusFilter"
-                    className="menu-select"
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                  >
-                    <option value="">All 11 Statuses ({allOrders.length})</option>
-                    {ALL_STATUSES.map((st) => (
-                      <option key={st} value={st}>
-                        {st.replace(/_/g, ' ')}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="admin-orders-status-filter">
+                    <label htmlFor="admin-status-filter">Status:</label>
+                    <StatusFilterPicker
+                      value={statusFilter}
+                      onChange={(st) => {
+                        setStatusFilter(st);
+                        setOrdersPage(1);
+                      }}
+                      orders={allOrders}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1671,24 +1824,24 @@ export default function Admin() {
                             onClick={() => setSelectedOrderId(ord.id)}
                           >
                             <td>
-                              <strong>{ord.id}</strong>
-                              <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                              <strong className="admin-order-id">{ord.id}</strong>
+                              <div className="admin-order-meta">
                                 {ord.scheduledDate} &bull; {ord.slotLabel}
                               </div>
                             </td>
                             <td>
                               <strong>{ord.customerName}</strong>
-                              <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                              <div className="admin-order-meta">
                                 {ord.address?.line1}, {ord.address?.pincode}
                               </div>
                               <div
-                                style={{ display: 'flex', gap: 10, marginTop: 4, fontSize: '0.78rem' }}
+                                className="admin-order-contact"
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <a href={`tel:${ord.customerPhone}`} style={{ color: 'var(--primary)', fontWeight: 600 }}>
+                                <a href={`tel:${ord.customerPhone}`} className="admin-contact-chip">
                                   <FiPhone size={11} /> Call
                                 </a>
-                                <a href={waUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', fontWeight: 600 }}>
+                                <a href={waUrl} target="_blank" rel="noreferrer" className="admin-contact-chip">
                                   WhatsApp
                                 </a>
                               </div>
@@ -2097,6 +2250,310 @@ export default function Admin() {
                   </div>
                 )}
               </>
+            );
+          })()}
+
+          {activeTab === 'payments' && (() => {
+            const ordersById = new Map(allOrders.map((o) => [o.id, o]));
+            const rawPayments = overview?.payments || [];
+            const paymentOrderIds = new Set(rawPayments.map((p) => p.orderId));
+
+            const onlineRecords = [
+              ...rawPayments
+                .filter((p) => p.method === 'razorpay')
+                .map((p) => {
+                  const ord = ordersById.get(p.orderId);
+                  return {
+                    key: p.id || `${p.orderId}-${p.razorpayPaymentId || 'pay'}`,
+                    orderId: p.orderId,
+                    customerName: ord?.customerName || 'Customer',
+                    customerPhone: ord?.customerPhone || '',
+                    date: p.createdAt || ord?.createdAt || ord?.scheduledDate || '',
+                    paymentId: p.razorpayPaymentId || p.id || '—',
+                    reference: p.razorpayOrderId || p.refundId || '—',
+                    amount: Number(p.amount ?? ord?.pricing?.grandTotal ?? 0),
+                    status: p.status || ord?.paymentStatus || 'created',
+                    convertedFromCod: ord?.originalPaymentMethod === 'COD',
+                  };
+                }),
+              ...allOrders
+                .filter(
+                  (o) =>
+                    !paymentOrderIds.has(o.id) &&
+                    (o.paymentMethod === 'razorpay' || o.currentPaymentMethod === 'Online')
+                )
+                .map((o) => ({
+                  key: `ord-${o.id}`,
+                  orderId: o.id,
+                  customerName: o.customerName || 'Customer',
+                  customerPhone: o.customerPhone || '',
+                  date: o.createdAt || o.scheduledDate || '',
+                  paymentId: o.razorpayPaymentId || o.paymentId || '—',
+                  reference: o.razorpayOrderId || '—',
+                  amount: Number(o.pricing?.grandTotal || 0),
+                  status: o.paymentStatus || 'pending',
+                  convertedFromCod: o.originalPaymentMethod === 'COD',
+                })),
+            ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+            const codRecords = allOrders
+              .filter((o) => o.paymentMethod === 'cod' || o.originalPaymentMethod === 'COD')
+              .map((o) => ({
+                key: `cod-${o.id}`,
+                orderId: o.id,
+                customerName: o.customerName || 'Customer',
+                customerPhone: o.customerPhone || '',
+                date: o.createdAt || o.scheduledDate || '',
+                amount: Number(o.pricing?.grandTotal || 0),
+                paymentStatus: o.paymentStatus || 'pending',
+                orderStatus: o.status || 'placed',
+                convertedToOnline:
+                  o.originalPaymentMethod === 'COD' &&
+                  (o.currentPaymentMethod === 'Online' || o.paymentMethod === 'razorpay') &&
+                  o.paymentStatus === 'paid',
+              }))
+              .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+            const pq = paymentSearch.trim().toLowerCase();
+            const filteredOnline = !pq
+              ? onlineRecords
+              : onlineRecords.filter((r) =>
+                  [r.orderId, r.paymentId, r.reference, r.customerName, r.customerPhone, r.status]
+                    .filter(Boolean)
+                    .some((v) => String(v).toLowerCase().includes(pq))
+                );
+            const filteredCod = !pq
+              ? codRecords
+              : codRecords.filter((r) =>
+                  [r.orderId, r.customerName, r.customerPhone, r.paymentStatus, r.orderStatus]
+                    .filter(Boolean)
+                    .some((v) => String(v).toLowerCase().includes(pq))
+                );
+
+            const onlineCapturedSum = onlineRecords
+              .filter((r) => ['captured', 'paid'].includes(r.status))
+              .reduce((s, r) => s + r.amount, 0);
+            const codCollectedSum = codRecords
+              .filter((r) => r.paymentStatus === 'paid' && !r.convertedToOnline)
+              .reduce((s, r) => s + r.amount, 0);
+            const codPendingSum = codRecords
+              .filter((r) => r.paymentStatus !== 'paid' && !['cancelled', 'refunded'].includes(r.orderStatus))
+              .reduce((s, r) => s + r.amount, 0);
+            const totalCollected = onlineCapturedSum + codCollectedSum;
+
+            return (
+              <div className="admin-payment-history-wrap">
+                <div className="admin-payment-kpis">
+                  <div className="admin-payment-kpi-card admin-payment-kpi-total">
+                    <span className="admin-payment-kpi-label">Total Collected</span>
+                    <strong className="admin-payment-kpi-value">{money(totalCollected)}</strong>
+                    <span className="admin-payment-kpi-sub">
+                      {onlineRecords.length + codRecords.length} total records
+                    </span>
+                  </div>
+                  <div className="admin-payment-kpi-card">
+                    <span className="admin-payment-kpi-label">Online Payments</span>
+                    <strong className="admin-payment-kpi-value">{money(onlineCapturedSum)}</strong>
+                    <span className="admin-payment-kpi-sub">{onlineRecords.length} transactions</span>
+                  </div>
+                  <div className="admin-payment-kpi-card">
+                    <span className="admin-payment-kpi-label">Cash on Delivery (Collected)</span>
+                    <strong className="admin-payment-kpi-value">{money(codCollectedSum)}</strong>
+                    <span className="admin-payment-kpi-sub">{codRecords.length} COD orders</span>
+                  </div>
+                  <div className="admin-payment-kpi-card">
+                    <span className="admin-payment-kpi-label">COD Pending Collection</span>
+                    <strong className="admin-payment-kpi-value admin-payment-kpi-amber">{money(codPendingSum)}</strong>
+                    <span className="admin-payment-kpi-sub">Awaiting delivery cash</span>
+                  </div>
+                </div>
+
+                <section className="admin-panel">
+                  <div className="admin-panel-head">
+                    <h2>Payment History</h2>
+                    <div className="admin-payment-controls">
+                      <div className="admin-payment-tabs" role="tablist" aria-label="Payment method filter">
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={paymentHistoryTab === 'all'}
+                          className={`admin-payment-tab ${paymentHistoryTab === 'all' ? 'admin-payment-tab-active' : ''}`}
+                          onClick={() => setPaymentHistoryTab('all')}
+                        >
+                          All ({filteredOnline.length + filteredCod.length})
+                        </button>
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={paymentHistoryTab === 'online'}
+                          className={`admin-payment-tab ${paymentHistoryTab === 'online' ? 'admin-payment-tab-active' : ''}`}
+                          onClick={() => setPaymentHistoryTab('online')}
+                        >
+                          Online ({filteredOnline.length})
+                        </button>
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={paymentHistoryTab === 'cod'}
+                          className={`admin-payment-tab ${paymentHistoryTab === 'cod' ? 'admin-payment-tab-active' : ''}`}
+                          onClick={() => setPaymentHistoryTab('cod')}
+                        >
+                          Cash &amp; Delivery ({filteredCod.length})
+                        </button>
+                      </div>
+                      <input
+                        type="search"
+                        aria-label="Search payments by order ID, payment ID, reference, or customer"
+                        placeholder="Search Order ID, Payment ID, Reference..."
+                        className="menu-select admin-orders-search"
+                        value={paymentSearch}
+                        onChange={(e) => setPaymentSearch(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  {(paymentHistoryTab === 'all' || paymentHistoryTab === 'online') && (
+                    <div className="admin-payment-block">
+                      <div className="admin-payment-block-head">
+                        <h3>Online Payments ({filteredOnline.length})</h3>
+                        <span className="admin-badge">Razorpay / UPI / Card</span>
+                      </div>
+                      <div className="admin-table-wrap">
+                        <table className="admin-table admin-payment-table">
+                          <thead>
+                            <tr>
+                              <th>Order ID</th>
+                              <th>Customer</th>
+                              <th>Payment ID</th>
+                              <th>Reference</th>
+                              <th>Amount</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredOnline.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} className="admin-empty-cell">
+                                  No online payments found.
+                                </td>
+                              </tr>
+                            ) : (
+                              filteredOnline.map((pay) => (
+                                <tr key={pay.key}>
+                                  <td>
+                                    <strong className="admin-order-id">{pay.orderId}</strong>
+                                    {pay.convertedFromCod && (
+                                      <span className="admin-payment-tag-sub">COD &rarr; Online</span>
+                                    )}
+                                  </td>
+                                  <td>
+                                    <strong>{pay.customerName}</strong>
+                                    {pay.date && (
+                                      <div className="admin-order-meta">
+                                        {String(pay.date).slice(0, 10)}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td>
+                                    <code className="admin-mono-chip">{pay.paymentId}</code>
+                                  </td>
+                                  <td>
+                                    <code className="admin-mono-chip">{pay.reference}</code>
+                                  </td>
+                                  <td>
+                                    <strong className="admin-payment-amt">{money(pay.amount)}</strong>
+                                  </td>
+                                  <td>
+                                    <span
+                                      className={`admin-order-pill ${
+                                        ['captured', 'paid'].includes(pay.status)
+                                          ? 'admin-pill-green'
+                                          : ['refunded', 'refund_initiated', 'failed'].includes(pay.status)
+                                          ? 'admin-pill-red'
+                                          : 'admin-pill-amber'
+                                      }`}
+                                    >
+                                      {String(pay.status).replace(/_/g, ' ')}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {(paymentHistoryTab === 'all' || paymentHistoryTab === 'cod') && (
+                    <div className="admin-payment-block">
+                      <div className="admin-payment-block-head">
+                        <h3>Cash on Delivery ({filteredCod.length})</h3>
+                        <span className="admin-badge admin-badge-cod">Cash &amp; Delivery</span>
+                      </div>
+                      <div className="admin-table-wrap">
+                        <table className="admin-table admin-payment-table">
+                          <thead>
+                            <tr>
+                              <th>Order ID</th>
+                              <th>Customer</th>
+                              <th>Amount</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredCod.length === 0 ? (
+                              <tr>
+                                <td colSpan={4} className="admin-empty-cell">
+                                  No Cash on Delivery orders found.
+                                </td>
+                              </tr>
+                            ) : (
+                              filteredCod.map((cod) => (
+                                <tr key={cod.key}>
+                                  <td>
+                                    <strong className="admin-order-id">{cod.orderId}</strong>
+                                  </td>
+                                  <td>
+                                    <strong>{cod.customerName}</strong>
+                                    {cod.date && (
+                                      <div className="admin-order-meta">
+                                        {String(cod.date).slice(0, 10)}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td>
+                                    <strong className="admin-payment-amt">{money(cod.amount)}</strong>
+                                  </td>
+                                  <td>
+                                    <span
+                                      className={`admin-order-pill ${
+                                        cod.convertedToOnline || cod.paymentStatus === 'paid'
+                                          ? 'admin-pill-green'
+                                          : cod.orderStatus === 'cancelled' || cod.orderStatus === 'refunded'
+                                          ? 'admin-pill-red'
+                                          : 'admin-pill-amber'
+                                      }`}
+                                    >
+                                      {cod.convertedToOnline
+                                        ? 'COD to Online (Paid)'
+                                        : cod.paymentStatus === 'paid'
+                                        ? 'Cash Collected'
+                                        : cod.orderStatus === 'cancelled'
+                                        ? 'Cancelled'
+                                        : 'COD Pending'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              </div>
             );
           })()}
 
@@ -3829,17 +4286,27 @@ export default function Admin() {
             <section className="admin-panel">
               <div className="admin-panel-head">
                 <h2>Delivery Partner Management ({filteredPartners.length})</h2>
-                <input
-                  type="search"
-                  aria-label="Search delivery partners"
-                  placeholder="Search by name, phone, email, status..."
-                  className="menu-select"
-                  style={{ minWidth: 260 }}
-                  value={deliverySearch}
-                  onChange={(e) => setDeliverySearch(e.target.value)}
-                />
+                <div className="admin-delivery-head-actions">
+                  <input
+                    type="search"
+                    aria-label="Search delivery partners"
+                    placeholder="Search by name, phone, email, status..."
+                    className="menu-select admin-delivery-search"
+                    value={deliverySearch}
+                    onChange={(e) => setDeliverySearch(e.target.value)}
+                  />
+                  {deliveryBoysList.length > 0 && (
+                    <button
+                      type="button"
+                      className="admin-mini-btn admin-mini-danger"
+                      onClick={handleDeleteAllDeliveryBoys}
+                    >
+                      <FiTrash2 size={13} /> Remove All
+                    </button>
+                  )}
+                </div>
               </div>
-              <form className="admin-form" onSubmit={handleSaveDeliveryBoy} style={{ marginBottom: 20 }}>
+              <form className="admin-form admin-delivery-form" onSubmit={handleSaveDeliveryBoy}>
                 <div className="admin-form-row">
                   <div className="admin-field">
                     <label htmlFor="db-name">Full Name</label>
@@ -3887,35 +4354,40 @@ export default function Admin() {
                     />
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <select
-                    className="menu-select"
-                    value={deliveryBoyForm.availability}
-                    onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, availability: e.target.value })}
-                  >
-                    <option value="available">Available</option>
-                    <option value="busy">Busy</option>
-                    <option value="offline">Offline</option>
-                  </select>
-                  <Button type="submit" size="sm">
-                    {deliveryBoyForm.id ? 'Update Partner' : 'Add Delivery Partner'}
-                  </Button>
-                  {deliveryBoyForm.id && (
-                    <button
-                      type="button"
-                      className="admin-mini-btn"
-                      onClick={() =>
-                        setDeliveryBoyForm({ id: '', fullName: '', phone: '', email: '', password: '', availability: 'available' })
-                      }
+                <div className="admin-form-row admin-delivery-form-footer">
+                  <div className="admin-field">
+                    <label htmlFor="db-availability">Availability</label>
+                    <select
+                      id="db-availability"
+                      value={deliveryBoyForm.availability}
+                      onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, availability: e.target.value })}
                     >
-                      Cancel Edit
-                    </button>
-                  )}
+                      <option value="available">Available</option>
+                      <option value="busy">Busy</option>
+                      <option value="offline">Offline</option>
+                    </select>
+                  </div>
+                  <div className="admin-form-actions">
+                    <Button type="submit" size="sm">
+                      {deliveryBoyForm.id ? 'Update Partner' : 'Add Delivery Partner'}
+                    </Button>
+                    {deliveryBoyForm.id && (
+                      <button
+                        type="button"
+                        className="admin-mini-btn"
+                        onClick={() =>
+                          setDeliveryBoyForm({ id: '', fullName: '', phone: '', email: '', password: '', availability: 'available' })
+                        }
+                      >
+                        Cancel Edit
+                      </button>
+                    )}
+                  </div>
                 </div>
               </form>
 
               <div className="admin-table-wrap">
-                <table className="admin-table">
+                <table className="admin-table admin-delivery-table">
                   <thead>
                     <tr>
                       <th>Partner</th>
@@ -3929,8 +4401,10 @@ export default function Admin() {
                   <tbody>
                     {filteredPartners.length === 0 ? (
                       <tr>
-                        <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)', padding: '24px 12px' }}>
-                          No delivery partners match &ldquo;{deliverySearch}&rdquo;.
+                        <td colSpan={6} className="admin-empty-cell">
+                          {q
+                            ? `No delivery partners match "${deliverySearch}".`
+                            : 'No delivery partners added yet. Use the form above to add one.'}
                         </td>
                       </tr>
                     ) : (
@@ -3942,17 +4416,28 @@ export default function Admin() {
                       >
                         <td>
                           <strong>{b.fullName}</strong>
-                          <div style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>{b.email}</div>
+                          <div className="admin-order-meta">{b.email}</div>
                         </td>
                         <td>{b.phone}</td>
-                        <td style={{ textTransform: 'capitalize' }}>{b.availability}</td>
-                        <td style={{ fontSize: '0.8rem' }}>
-                          Assigned: <strong>{b.stats?.totalAssigned || 0}</strong> &bull; Active:{' '}
-                          <strong>{b.stats?.active || 0}</strong> &bull; Done:{' '}
-                          <strong>{b.stats?.completed || 0}</strong> &bull; Failed:{' '}
-                          <strong>{b.stats?.failed || 0}</strong> ({b.stats?.completionRate ?? 100}%)
+                        <td>
+                          <span className={`admin-avail-pill admin-avail-${b.availability || 'offline'}`}>
+                            {b.availability || 'offline'}
+                          </span>
                         </td>
-                        <td>{b.active ? 'Active' : 'Inactive'}</td>
+                        <td>
+                          <div className="admin-perf-chips">
+                            <span className="admin-perf-chip">Assigned: <strong>{b.stats?.totalAssigned || 0}</strong></span>
+                            <span className="admin-perf-chip">Active: <strong>{b.stats?.active || 0}</strong></span>
+                            <span className="admin-perf-chip">Done: <strong>{b.stats?.completed || 0}</strong></span>
+                            <span className="admin-perf-chip">Failed: <strong>{b.stats?.failed || 0}</strong></span>
+                            <span className="admin-perf-chip admin-perf-rate">{b.stats?.completionRate ?? 100}%</span>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`admin-order-pill ${b.active ? 'admin-pill-green' : 'admin-pill-red'}`}>
+                            {b.active ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
                         <td onClick={(e) => e.stopPropagation()}>
                           <div className="admin-row-actions">
                             <button
@@ -3973,10 +4458,18 @@ export default function Admin() {
                             </button>
                             <button
                               type="button"
-                              className={`admin-mini-btn ${b.active ? 'admin-mini-danger' : ''}`}
+                              className="admin-mini-btn"
                               onClick={() => handleToggleDeliveryBoy(b)}
                             >
                               {b.active ? 'Deactivate' : 'Activate'}
+                            </button>
+                            <button
+                              type="button"
+                              className="admin-mini-btn admin-mini-danger"
+                              onClick={() => handleDeleteDeliveryBoy(b)}
+                              aria-label={`Delete ${b.fullName}`}
+                            >
+                              <FiTrash2 size={13} /> Delete
                             </button>
                           </div>
                         </td>

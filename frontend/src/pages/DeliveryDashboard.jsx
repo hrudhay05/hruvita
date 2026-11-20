@@ -122,12 +122,29 @@ export default function DeliveryDashboard() {
             loadDeliveryOrders();
           },
           'delivery:order-updated': () => loadDeliveryOrders(),
+          'delivery:updated': () => loadDeliveryOrders(),
           'order:updated': () => loadDeliveryOrders(),
           'order:cancelled': () => loadDeliveryOrders(),
+          'payment:updated': () => loadDeliveryOrders(),
         }
       : null,
     [isDeliveryBoy, loadDeliveryOrders]
   );
+
+  useEffect(() => {
+    if (!isDeliveryBoy) return undefined;
+    const onFocusSync = () => {
+      if (document.visibilityState === 'visible') {
+        loadDeliveryOrders();
+      }
+    };
+    window.addEventListener('focus', onFocusSync);
+    document.addEventListener('visibilitychange', onFocusSync);
+    return () => {
+      window.removeEventListener('focus', onFocusSync);
+      document.removeEventListener('visibilitychange', onFocusSync);
+    };
+  }, [isDeliveryBoy, loadDeliveryOrders]);
 
   const handleLogin = async (e) => {
     e.preventDefault();

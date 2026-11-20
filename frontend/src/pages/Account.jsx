@@ -147,7 +147,10 @@ export default function Account() {
             loadDashboardData();
             showToast('Delivery partner assigned to your order.');
           },
+          'delivery:updated': () => loadDashboardData(),
+          'delivery:otp-refreshed': () => loadDashboardData(),
           'payment:successful': () => loadDashboardData(),
+          'payment:updated': () => loadDashboardData(),
           'payment:refunded': () => loadDashboardData(),
           'subscription:created': () => loadDashboardData(),
           'subscription:updated': () => loadDashboardData(),
@@ -155,6 +158,21 @@ export default function Account() {
       : null,
     [user?.id, loadDashboardData]
   );
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const onFocusSync = () => {
+      if (document.visibilityState === 'visible') {
+        loadDashboardData();
+      }
+    };
+    window.addEventListener('focus', onFocusSync);
+    document.addEventListener('visibilitychange', onFocusSync);
+    return () => {
+      window.removeEventListener('focus', onFocusSync);
+      document.removeEventListener('visibilitychange', onFocusSync);
+    };
+  }, [user, loadDashboardData]);
 
   useEffect(() => {
     if (user) {

@@ -664,7 +664,6 @@ export function buildInitialUsers() {
   const adminHash = bcrypt.hashSync(adminPass, 12);
   const analystPass = process.env.ANALYST_PASSWORD || 'Analyst@123';
   const analystHash = bcrypt.hashSync(analystPass, 12);
-  const deliveryHash = bcrypt.hashSync('Delivery@123', 12);
   const demoCustomerHash = bcrypt.hashSync('Customer@123', 12);
 
   return [
@@ -705,28 +704,6 @@ export function buildInitialUsers() {
       dateOfBirth: new Date('1996-05-10'),
       termsAccepted: true,
       referralCode: 'HRUVITAANALYST',
-      rewardPoints: 0,
-      preferences: { vegOnly: true, spiceLevel: 'medium', allergies: [], deliveryNotes: '' },
-      wishlist: [],
-      blocked: false,
-    },
-    {
-      id: 'u-delivery-1',
-      role: 'delivery_boy',
-      fullName: 'Kiran Delivery Partner',
-      name: 'Kiran Delivery Partner',
-      username: 'hruvita_delivery',
-      email: 'delivery@hruvita.com',
-      mobileNumber: '9876501234',
-      phone: '9876501234',
-      password: deliveryHash,
-      deliveryAvailability: 'available',
-      isEmailVerified: true,
-      isProfileCompleted: true,
-      gender: 'Male',
-      dateOfBirth: new Date('1997-04-12'),
-      termsAccepted: true,
-      referralCode: 'HRUVITADEL1',
       rewardPoints: 0,
       preferences: { vegOnly: true, spiceLevel: 'medium', allergies: [], deliveryNotes: '' },
       wishlist: [],
