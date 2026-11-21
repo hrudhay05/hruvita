@@ -3,11 +3,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import { FiEye, FiEyeOff, FiLogIn } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
 import { useAuth, getDashboardPathForRole } from '../context/AuthContext.jsx';
+import { isPasskeySupported } from '../lib/passkey.js';
 import './AuthFlow.css';
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, passkeyLogin } = useAuth();
+  const passkeyAvailable = isPasskeySupported();
 
   const [emailOrUsername, setEmailOrUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -56,6 +58,19 @@ export default function Login() {
         return;
       }
       setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    setError('');
+    setBusy(true);
+    try {
+      const loggedUser = await passkeyLogin(emailOrUsername.trim(), rememberMe);
+      handleUserRedirect(loggedUser);
+    } catch (err) {
+      setError(err.message || 'Fingerprint / FaceID login failed.');
     } finally {
       setBusy(false);
     }
@@ -130,9 +145,36 @@ export default function Login() {
 
           <Button type="submit" size="lg" disabled={busy}>
             <FiLogIn size={18} />
-            {busy ? 'Sending Verification Code...' : 'Login'}
+            {busy ? 'Signing In...' : 'Login'}
           </Button>
         </form>
+
+        {passkeyAvailable && (
+          <div style={{ marginTop: 14, display: 'grid', gap: 10 }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                fontSize: '0.78rem',
+                color: 'var(--muted)',
+              }}
+            >
+              <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
+              <span>OR</span>
+              <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              disabled={busy}
+              onClick={handlePasskeyLogin}
+            >
+              👆 Login with Fingerprint / FaceID
+            </Button>
+          </div>
+        )}
 
         <div className="auth-foot">
           New to HRUVITA? <Link to="/signup">Create an account</Link>

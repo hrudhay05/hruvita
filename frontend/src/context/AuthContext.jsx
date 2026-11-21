@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { apiRequest, setStoredToken } from '../lib/api.js';
+import { authenticateWithPasskey } from '../lib/passkey.js';
 import { disconnectAllHruvitaSockets } from '../lib/socket.js';
 
 const AuthContext = createContext(null);
@@ -138,6 +139,17 @@ export function AuthProvider({ children }) {
     setUser(data.user);
     syncAddressesState(data.user?.addresses || []);
     await fetchNotifications();
+    return data.user;
+  };
+
+  const passkeyLogin = async (identifier = '', rememberMe = true) => {
+    const data = await authenticateWithPasskey(identifier, rememberMe);
+    if (data.token) setStoredToken(data.token);
+    if (data.user) {
+      setUser(data.user);
+      syncAddressesState(data.user?.addresses || []);
+      await fetchNotifications();
+    }
     return data.user;
   };
 
@@ -295,6 +307,7 @@ export function AuthProvider({ children }) {
         verifyEmailOtp,
         resendOtp,
         login,
+        passkeyLogin,
         googleSignIn,
         logout,
         forgotPassword,

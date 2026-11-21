@@ -5,6 +5,7 @@ import {
   findUserByEmail,
   findUserByEmailOrUsername,
   findUserById,
+  listUsers,
   findUserByResetTokenHash,
   createUser,
   updateUser,
@@ -700,6 +701,231 @@ router.get('/session', async (req, res) => {
     return res.json({ authenticated: true, user: await sanitizeUser(user) });
   } catch {
     return res.json({ authenticated: false, user: null });
+  }
+});
+
+// ---------------- WebAuthn Biometric / Passkey (Fingerprint / FaceID) ----------------
+const passkeyChallenges = new Map();
+
+function base64UrlToBuffer(b64u = '') {
+  const pad = b64u.length % 4 === 0 ? '' : '='.repeat(4 - (b64u.length % 4));
+  const b64 = String(b64u).replace(/-/g, '+').replace(/_/g, '/') + pad;
+  return Buffer.from(b64, 'base64');
+}
+
+function bufferToBase64Url(buf) {
+  return Buffer.from(buf)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+function extractRpId(req) {
+  const origin = req.headers.origin;
+  if (origin) {
+    try {
+      return new URL(origin).hostname;
+    } catch {
+      // fall through to host header
+    }
+  }
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || 'localhost').split(':')[0];
+  return host || 'localhost';
+}
+
+function pruneChallenges() {
+  const now = Date.now();
+  for (const [k, v] of passkeyChallenges.entries()) {
+    if (now - v.createdAt > 5 * 60 * 1000) passkeyChallenges.delete(k);
+  }
+}
+
+router.post('/passkey/register-options', requireAuth, async (req, res) => {
+  pruneChallenges();
+  const challenge = bufferToBase64Url(crypto.randomBytes(32));
+  const rpId = extractRpId(req);
+  passkeyChallenges.set(`reg:${req.user.id}`, { challenge, rpId, createdAt: Date.now() });
+
+  const userDoc = await findUserById(req.user.id);
+  const existingIds = (userDoc?.passkeys || []).map((pk) => pk.credentialId);
+
+  return res.json({
+    challenge,
+    rp: { name: 'HRUVITA', id: rpId },
+    user: {
+      id: bufferToBase64Url(Buffer.from(req.user.id)),
+      name: req.user.email,
+      displayName: req.user.fullName || req.user.name || req.user.email,
+    },
+    excludeCredentials: existingIds,
+  });
+});
+
+router.post('/passkey/register-verify', requireAuth, async (req, res) => {
+  try {
+    const {
+      credentialId,
+      publicKeySpki,
+      algorithm = -7,
+      clientDataJSON,
+      deviceName = 'Mobile / Device Biometric',
+    } = req.body || {};
+
+    if (!credentialId || !publicKeySpki || !clientDataJSON) {
+      return res.status(400).json({ error: 'Incomplete passkey registration payload.' });
+    }
+
+    const stored = passkeyChallenges.get(`reg:${req.user.id}`);
+    if (!stored || Date.now() - stored.createdAt > 5 * 60 * 1000) {
+      return res.status(400).json({ error: 'Passkey challenge expired. Please try again.' });
+    }
+
+    const clientData = JSON.parse(base64UrlToBuffer(clientDataJSON).toString('utf8'));
+    if (clientData.type !== 'webauthn.create' || clientData.challenge !== stored.challenge) {
+      return res.status(400).json({ error: 'Passkey challenge verification failed.' });
+    }
+    passkeyChallenges.delete(`reg:${req.user.id}`);
+
+    const userDoc = await findUserById(req.user.id);
+    const current = Array.isArray(userDoc?.passkeys) ? userDoc.passkeys : [];
+    const filtered = current.filter((p) => p.credentialId !== credentialId);
+    const nextPasskeys = [
+      ...filtered,
+      {
+        credentialId,
+        publicKeySpki,
+        algorithm: Number(algorithm) || -7,
+        deviceName: String(deviceName || 'Biometric Device').slice(0, 80),
+        createdAt: new Date().toISOString(),
+      },
+    ];
+
+    await updateUser(req.user.id, { passkeys: nextPasskeys });
+    return res.json({
+      registered: true,
+      passkeys: nextPasskeys.map(({ credentialId: cid, deviceName: dn, createdAt }) => ({
+        credentialId: cid,
+        deviceName: dn,
+        createdAt,
+      })),
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Could not register biometric passkey.' });
+  }
+});
+
+router.get('/passkey/list', requireAuth, async (req, res) => {
+  const userDoc = await findUserById(req.user.id);
+  const list = (userDoc?.passkeys || []).map(({ credentialId, deviceName, createdAt }) => ({
+    credentialId,
+    deviceName,
+    createdAt,
+  }));
+  return res.json({ passkeys: list });
+});
+
+router.delete('/passkey/:credentialId', requireAuth, async (req, res) => {
+  const userDoc = await findUserById(req.user.id);
+  const nextPasskeys = (userDoc?.passkeys || []).filter(
+    (p) => p.credentialId !== req.params.credentialId
+  );
+  await updateUser(req.user.id, { passkeys: nextPasskeys });
+  return res.json({
+    deleted: true,
+    passkeys: nextPasskeys.map(({ credentialId, deviceName, createdAt }) => ({
+      credentialId,
+      deviceName,
+      createdAt,
+    })),
+  });
+});
+
+router.post('/passkey/login-options', async (req, res) => {
+  pruneChallenges();
+  const identifier = String(req.body?.identifier || '').trim();
+  const challenge = bufferToBase64Url(crypto.randomBytes(32));
+  const rpId = extractRpId(req);
+  const challengeKey = `auth:${challenge}`;
+  passkeyChallenges.set(challengeKey, { challenge, rpId, createdAt: Date.now() });
+
+  let allowCredentials = [];
+  if (identifier) {
+    const user = await findUserByEmailOrUsername(identifier);
+    if (user?.passkeys?.length) {
+      allowCredentials = user.passkeys.map((p) => p.credentialId);
+    }
+  }
+
+  return res.json({ challenge, rpId, allowCredentials });
+});
+
+router.post('/passkey/login-verify', async (req, res) => {
+  try {
+    const {
+      credentialId,
+      authenticatorData,
+      clientDataJSON,
+      signature,
+      rememberMe = true,
+    } = req.body || {};
+
+    if (!credentialId || !authenticatorData || !clientDataJSON || !signature) {
+      return res.status(400).json({ error: 'Incomplete biometric assertion.' });
+    }
+
+    const clientDataBuf = base64UrlToBuffer(clientDataJSON);
+    const clientData = JSON.parse(clientDataBuf.toString('utf8'));
+    if (clientData.type !== 'webauthn.get') {
+      return res.status(400).json({ error: 'Invalid passkey assertion type.' });
+    }
+
+    const stored = passkeyChallenges.get(`auth:${clientData.challenge}`);
+    if (!stored || Date.now() - stored.createdAt > 5 * 60 * 1000) {
+      return res.status(400).json({ error: 'Biometric login expired. Please tap Fingerprint Login again.' });
+    }
+    passkeyChallenges.delete(`auth:${clientData.challenge}`);
+
+    const allUsers = await listUsers();
+    let matchedUser = null;
+    let matchedPasskey = null;
+    for (const u of allUsers) {
+      const foundPk = (u.passkeys || []).find((p) => p.credentialId === credentialId);
+      if (foundPk) {
+        matchedUser = u;
+        matchedPasskey = foundPk;
+        break;
+      }
+    }
+
+    if (!matchedUser || !matchedPasskey) {
+      return res.status(401).json({
+        error: 'No HRUVITA account linked to this fingerprint passkey. Sign in with password first and enable Fingerprint Login in Account Settings.',
+      });
+    }
+    if (matchedUser.blocked) {
+      return res.status(403).json({ error: 'This account has been suspended by admin.' });
+    }
+
+    const authDataBuf = base64UrlToBuffer(authenticatorData);
+    const clientDataHash = crypto.createHash('sha256').update(clientDataBuf).digest();
+    const signedData = Buffer.concat([authDataBuf, clientDataHash]);
+    const sigBuf = base64UrlToBuffer(signature);
+    const pubKey = crypto.createPublicKey({
+      key: Buffer.from(matchedPasskey.publicKeySpki, 'base64'),
+      format: 'der',
+      type: 'spki',
+    });
+
+    const ok = crypto.verify('sha256', signedData, pubKey, sigBuf);
+    if (!ok) {
+      return res.status(401).json({ error: 'Biometric signature verification failed.' });
+    }
+
+    const session = await issueSessionAndCookies(req, res, matchedUser, Boolean(rememberMe));
+    return res.json(session);
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Biometric sign-in failed.' });
   }
 });
 

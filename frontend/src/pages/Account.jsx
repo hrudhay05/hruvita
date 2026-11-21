@@ -32,6 +32,7 @@ import { useCatalog } from '../context/CatalogContext.jsx';
 import { useCart } from '../context/CartContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { apiRequest } from '../lib/api.js';
+import { isPasskeySupported, registerDevicePasskey } from '../lib/passkey.js';
 import { money } from '../lib/format.js';
 import './Account.css';
 import './AuthFlow.css';
@@ -99,23 +100,53 @@ export default function Account() {
     newPassword: '',
     confirmPassword: '',
   });
+  const [passkeys, setPasskeys] = useState([]);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
 
   const loadDashboardData = useCallback(async () => {
     if (!user) return;
     try {
-      const [ordRes, subRes, refRes] = await Promise.all([
+      const [ordRes, subRes, refRes, pkRes] = await Promise.all([
         apiRequest('/api/orders/my'),
         apiRequest('/api/subscriptions/my'),
         apiRequest('/api/referrals/my').catch(() => ({ referrals: [], summary: null })),
+        apiRequest('/api/auth/passkey/list').catch(() => ({ passkeys: [] })),
       ]);
       setMyOrders(ordRes.orders || []);
       setMySubscriptions(subRes.subscriptions || []);
       setMyReferrals(refRes.referrals || []);
       if (refRes.summary) setReferralSummary(refRes.summary);
+      setPasskeys(pkRes.passkeys || []);
     } catch {
       // ignore if offline
     }
   }, [user]);
+
+  const handleRegisterPasskey = async () => {
+    setPasskeyBusy(true);
+    setError('');
+    try {
+      const res = await registerDevicePasskey();
+      setPasskeys(res.passkeys || []);
+      showToast('Fingerprint / FaceID passkey enabled on this device!');
+    } catch (err) {
+      setError(err.message || 'Could not enable fingerprint login.');
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
+  const handleRemovePasskey = async (credentialId) => {
+    try {
+      const res = await apiRequest(`/api/auth/passkey/${encodeURIComponent(credentialId)}`, {
+        method: 'DELETE',
+      });
+      setPasskeys(res.passkeys || []);
+      showToast('Biometric passkey removed.');
+    } catch (err) {
+      setError(err.message || 'Could not remove passkey.');
+    }
+  };
 
   useEffect(() => {
     const onOrderPlaced = () => {
@@ -1136,6 +1167,70 @@ export default function Account() {
                 >
                   <FiTrash2 size={14} /> Delete Account
                 </button>
+              </div>
+            )}
+          </section>
+
+          <section className="account-card" style={{ display: 'grid', gap: 14 }}>
+            <div>
+              <h2>👆 Fingerprint / FaceID Passkey Login</h2>
+              <p style={{ color: 'var(--muted)', fontSize: '0.86rem', marginTop: 4 }}>
+                Enable biometric sign-in on this phone or laptop so you can log in with 1 tap without typing your password.
+              </p>
+            </div>
+
+            {isPasskeySupported() ? (
+              <div>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={passkeyBusy}
+                  onClick={handleRegisterPasskey}
+                >
+                  {passkeyBusy ? 'Waiting for Biometric...' : '👆 Enable Fingerprint / FaceID on This Device'}
+                </Button>
+              </div>
+            ) : (
+              <p style={{ color: 'var(--muted)', fontSize: '0.84rem' }}>
+                Biometric Passkeys require HTTPS (your live Vercel app) or localhost in Chrome/Safari.
+              </p>
+            )}
+
+            {passkeys.length > 0 && (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <strong style={{ fontSize: '0.84rem', color: 'var(--green-900)' }}>
+                  Registered Devices ({passkeys.length})
+                </strong>
+                {passkeys.map((pk) => (
+                  <div
+                    key={pk.credentialId}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '8px 12px',
+                      borderRadius: 10,
+                      border: '1px solid #e3ebe5',
+                      background: '#f9fcfa',
+                      fontSize: '0.84rem',
+                    }}
+                  >
+                    <div>
+                      <strong>{pk.deviceName || 'Biometric Device'}</strong>
+                      <div style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>
+                        Added {pk.createdAt ? new Date(pk.createdAt).toLocaleDateString('en-IN') : ''}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="account-mini-btn"
+                      onClick={() => handleRemovePasskey(pk.credentialId)}
+                    >
+                      <FiTrash2 size={13} /> Remove
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </section>

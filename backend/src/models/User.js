@@ -58,6 +58,7 @@ const userSchema = new mongoose.Schema(
     referralCode: { type: String, unique: true, sparse: true },
     referredBy: { type: String, default: '' },
     rewardPoints: { type: Number, default: 0, min: 0 },
+    passkeys: { type: Array, default: [] },
     preferences: {
       vegOnly: { type: Boolean, default: true },
       spiceLevel: { type: String, enum: ['mild', 'medium', 'spicy'], default: 'medium' },
