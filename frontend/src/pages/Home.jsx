@@ -6,6 +6,7 @@ import SectionHeader from '../components/SectionHeader.jsx';
 import ProductCard from '../components/ProductCard.jsx';
 import PlanCard from '../components/PlanCard.jsx';
 import BowlBuilderSection from '../components/BowlBuilderSection.jsx';
+import { ProductGridSkeleton } from '../components/Skeleton.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
 import { useCart } from '../context/CartContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -90,6 +91,9 @@ export default function Home() {
   }, []);
 
   const bestSellers = products.filter((p) => p.bestseller).slice(0, 4);
+  const groceryHighlights = products
+    .filter((p) => ['fresh-fruits', 'fresh-vegetables', 'organic-staples'].includes(p.category))
+    .slice(0, 4);
 
   const handleReviewSubmit = async (e) => {
     e.preventDefault();
@@ -209,11 +213,7 @@ export default function Home() {
           linkLabel="Browse All Items"
         />
         {loading ? (
-          <div className="home-cards">
-            {[1, 2, 3, 4].map((n) => (
-              <div key={n} className="skeleton-card" />
-            ))}
-          </div>
+          <ProductGridSkeleton count={4} className="home-cards" />
         ) : (
           <div className="home-cards">
             {bestSellers.map((p) => (
@@ -222,6 +222,23 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {/* Fresh Morning Groceries */}
+      {groceryHighlights.length > 0 && (
+        <section className="container home-section">
+          <SectionHeader
+            title="Fresh Morning Groceries"
+            subtitle="Farm fruits, leafy greens, raw honey &amp; dry fruits delivered with your breakfast"
+            to="/groceries"
+            linkLabel="Shop Groceries"
+          />
+          <div className="home-cards">
+            {groceryHighlights.map((p) => (
+              <ProductCard key={p.id} product={p} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Build Your Own Bowl */}
       <section className="home-surface-band" id="build-your-bowl">
@@ -317,6 +334,20 @@ export default function Home() {
             <PlanCard key={p.id} plan={p} />
           ))}
         </div>
+
+        <div className="home-group-drop-banner">
+          <div>
+            <span className="home-group-drop-pill">New • ₹0 Delivery Fee</span>
+            <h3>Office &amp; Family Group Morning Drops</h3>
+            <p>
+              Create one shared link for your office floor, PG, or family. Everyone adds their own
+              bowl, sees their exact split, and pays zero delivery fee.
+            </p>
+          </div>
+          <Link to="/group-drops" className="home-group-drop-cta">
+            Start a Group Drop &rarr;
+          </Link>
+        </div>
       </section>
 
       {/* Why Choose HRUVITA */}
@@ -375,7 +406,7 @@ export default function Home() {
           </div>
         )}
 
-        {user && (
+        {user ? (
           <form className="home-review-form" onSubmit={handleReviewSubmit}>
             <div className="home-review-form-head">
               <h3>Share Your HRUVITA Experience</h3>
@@ -413,6 +444,18 @@ export default function Home() {
               </Button>
             </div>
           </form>
+        ) : (
+          <div className="home-review-form">
+            <div className="home-review-form-head">
+              <h3>Share Your HRUVITA Experience</h3>
+              <p>Sign in to rate your fruit bowl, juice, or morning delivery experience.</p>
+            </div>
+            <div className="home-review-actions">
+              <Link to="/login">
+                <Button type="button" size="sm">Sign In to Write a Review</Button>
+              </Link>
+            </div>
+          </div>
         )}
       </section>
     </>

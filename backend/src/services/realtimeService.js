@@ -120,6 +120,8 @@ export function emitDeliveryUpdated(order, eventName = 'delivery:updated') {
     partnerName: order.deliveryAssignment?.deliveryBoyName || order.delivery?.partnerName || '',
     partnerPhone: order.deliveryAssignment?.deliveryBoyPhone || order.delivery?.partnerPhone || '',
     reason: order.delivery?.failureReason || order.deliveryAssignment?.failureReason || '',
+    delivery: order.delivery || null,
+    order,
   });
   emitToUser(order.userId, eventName, payload);
   emitToAdmins(eventName, payload);

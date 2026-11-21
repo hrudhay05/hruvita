@@ -1,6 +1,7 @@
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { findUserById } from '../store/repository.js';
+import { collectAndValidateLocation } from './locationTracker.js';
 
 let io = null;
 
@@ -66,6 +67,38 @@ export function initSocketServer(httpServer, allowedOrigins = []) {
     } else if (role === 'delivery_boy') {
       socket.join(`delivery:${id}`);
       socket.join('role:delivery_boy');
+
+      socket.on('delivery:location-stream', async (payload = {}) => {
+        try {
+          const result = await collectAndValidateLocation({
+            orderId: payload.orderId,
+            partnerId: id,
+            lat: payload.lat,
+            lng: payload.lng,
+            accuracy: payload.accuracy ?? null,
+            etaMinutes: payload.etaMinutes,
+          });
+          if (!result.ok) return;
+
+          const eventPayload = {
+            orderId: result.order.id,
+            lat: result.liveLocation.lat,
+            lng: result.liveLocation.lng,
+            heading: result.liveLocation.heading,
+            speedKmh: result.liveLocation.speedKmh,
+            updatedAt: result.liveLocation.updatedAt,
+            delivery: result.order.delivery,
+            liveLocation: result.liveLocation,
+            order: result.order,
+            ts: Date.now(),
+          };
+          emitToUser(result.order.userId, 'delivery:location-updated', eventPayload);
+          emitToUser(result.order.userId, 'order:location-updated', eventPayload);
+          emitToAdmins('delivery:location-updated', eventPayload);
+        } catch {
+          // ignore transient stream errors
+        }
+      });
     } else if (role === 'customer') {
       socket.join('role:customer');
     }

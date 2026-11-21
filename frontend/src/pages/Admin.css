@@ -2090,3 +2090,278 @@
     border-top: 1px dashed #e2ebe5;
   }
 }
+
+/* ---------- Product Editor & Kitchen Slip Modals (.rzp-*) ---------- */
+.rzp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(11, 36, 25, 0.56);
+  backdrop-filter: blur(5px);
+}
+
+.rzp-modal {
+  width: min(100%, 560px);
+  max-height: 92vh;
+  overflow-y: auto;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid #d5e1d8;
+  box-shadow: 0 24px 60px rgba(11, 36, 25, 0.3);
+  animation: adminModalPopIn 0.16s ease-out;
+}
+
+.rzp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #123728 0%, #1b4d38 100%);
+  color: #ffffff;
+  font-size: 1rem;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.rzp-body {
+  padding: 18px 20px;
+}
+
+/* ---------- Combos & Plans Enhancements ---------- */
+.admin-combo-items-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.admin-combo-items-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.admin-combo-item-row {
+  display: grid;
+  grid-template-columns: 1fr 78px auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.admin-combo-qty-input {
+  text-align: center;
+}
+
+.admin-highlight-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.admin-highlight-add-row input {
+  flex: 1 1 auto;
+}
+
+.admin-highlights-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.admin-highlight-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #edf7f0;
+  border: 1px solid #cde6d5;
+  color: #166534;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.admin-highlight-chip button {
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: rgba(22, 101, 52, 0.12);
+  color: #166534;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.admin-plan-perks-preview {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+  display: grid;
+  gap: 2px;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+/* ---------- Kitchen Prep Section ---------- */
+.admin-kitchen-wrap {
+  display: grid;
+  gap: 20px;
+}
+
+.admin-kitchen-sub {
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin: 4px 0 0;
+}
+
+.admin-kitchen-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-kitchen-summary-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.admin-kitchen-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-kitchen-summary-head h3 {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--green-900);
+  margin: 0;
+}
+
+.admin-kitchen-qty-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: #edf7f0;
+  border: 1px solid #cde6d5;
+  color: #166534;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.admin-kitchen-empty {
+  padding: 18px 16px;
+  margin-bottom: 20px;
+  border-radius: 12px;
+  border: 1px dashed #cfe0d5;
+  background: #f9fcfa;
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.admin-kitchen-slots-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+@media (min-width: 700px) {
+  .admin-kitchen-slots-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1100px) {
+  .admin-kitchen-slots-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.admin-kitchen-slot-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid #dce8e0;
+  background: #f9fcfa;
+  box-shadow: 0 3px 10px rgba(18, 55, 40, 0.04);
+}
+
+.admin-kitchen-slot-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e6eee8;
+}
+
+.admin-kitchen-slot-head strong {
+  display: block;
+  color: var(--green-900);
+  font-size: 0.96rem;
+}
+
+.admin-kitchen-slot-window {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.admin-kitchen-slot-badge {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #1b4d38;
+  color: #ffffff;
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.admin-kitchen-slot-empty {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.admin-kitchen-items-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.admin-kitchen-items-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: #ffffff;
+  border: 1px solid #e6eee8;
+  font-size: 0.85rem;
+}
+
+.admin-kitchen-items-list li strong {
+  color: #166534;
+  font-weight: 800;
+}

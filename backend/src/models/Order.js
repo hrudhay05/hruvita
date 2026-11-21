@@ -81,9 +81,9 @@ const orderSchema = new mongoose.Schema(
     scheduledDate: { type: String, required: true, index: true },
     slotId: { type: String, required: true },
     slotLabel: { type: String, required: true },
-    paymentMethod: { type: String, enum: ['razorpay', 'cod'], required: true },
-    originalPaymentMethod: { type: String, enum: ['COD', 'Online'], default: 'COD' },
-    currentPaymentMethod: { type: String, enum: ['COD', 'Online'], default: 'COD' },
+    paymentMethod: { type: String, enum: ['razorpay', 'cod', 'wallet'], required: true },
+    originalPaymentMethod: { type: String, enum: ['COD', 'Online', 'Wallet'], default: 'COD' },
+    currentPaymentMethod: { type: String, enum: ['COD', 'Online', 'Wallet'], default: 'COD' },
     paymentStatus: {
       type: String,
       enum: ['pending', 'paid', 'failed', 'refund_initiated', 'refunded'],
@@ -134,6 +134,13 @@ const orderSchema = new mongoose.Schema(
         type: String,
         enum: ['pending', 'collected', 'not_applicable'],
         default: 'not_applicable',
+      },
+      etaMinutes: { type: Number, default: 0 },
+      estimatedArrivalAt: { type: String, default: '' },
+      liveLocation: {
+        lat: { type: Number, default: null },
+        lng: { type: Number, default: null },
+        updatedAt: { type: String, default: '' },
       },
     },
     deliveryAssignment: {

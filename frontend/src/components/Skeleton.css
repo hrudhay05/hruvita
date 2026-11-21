@@ -1,0 +1,61 @@
+.hruvita-shimmer {
+  position: relative;
+  overflow: hidden;
+  background: #e6ede8;
+  border-radius: 10px;
+}
+
+.hruvita-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.55) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: hruvitaShimmer 1.35s infinite;
+}
+
+@keyframes hruvitaShimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.hruvita-skel-card {
+  background: #fff;
+  border: 1px solid #e5ece7;
+  border-radius: 16px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.hruvita-skel-img {
+  height: 165px;
+  border-radius: 12px;
+}
+
+.hruvita-skel-line {
+  height: 14px;
+  border-radius: 8px;
+}
+
+.hruvita-skel-line.sm {
+  height: 11px;
+  width: 65%;
+}
+
+.hruvita-skel-line.price {
+  height: 18px;
+  width: 38%;
+}
+
+.hruvita-page-skel {
+  padding: 28px 0 52px;
+  display: grid;
+  gap: 20px;
+}

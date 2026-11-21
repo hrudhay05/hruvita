@@ -1,7 +1,7 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 
-export default function ProtectedRoute({ allowedRoles = null, children }) {
+export default function ProtectedRoute({ allowedRoles = null, redirectTo = '/', children }) {
   const { user, loading, getDashboardPathForRole } = useAuth();
 
   if (loading) {
@@ -13,7 +13,7 @@ export default function ProtectedRoute({ allowedRoles = null, children }) {
   }
 
   if (!user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={redirectTo} replace />;
   }
 
   if (Array.isArray(allowedRoles) && allowedRoles.length > 0 && !allowedRoles.includes(user.role)) {

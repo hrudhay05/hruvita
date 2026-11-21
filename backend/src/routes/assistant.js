@@ -67,11 +67,11 @@ router.get('/debug', async (req, res) => {
   });
 });
 
-// Personalized welcome greeting
-router.get('/greeting', async (req, res) => {
+// Personalized welcome greeting (after login only)
+router.get('/greeting', requireAuth, async (req, res) => {
   const lang = req.query.lang === 'te-IN' ? 'te-IN' : 'en-IN';
   const personalization = req.query.personalization !== '0';
-  const user = await getOptionalUser(req);
+  const user = req.user;
 
   const defaultGreeting =
     lang === 'te-IN'
@@ -101,7 +101,7 @@ router.get('/greeting', async (req, res) => {
   return res.json({ greeting, personalized: true });
 });
 
-router.post('/chat', async (req, res) => {
+router.post('/chat', requireAuth, async (req, res) => {
   const requestId = createRequestId();
   const reqStart = Date.now();
   try {
@@ -125,8 +125,8 @@ router.post('/chat', async (req, res) => {
       return res.status(400).json({ error: 'Please say or type a message.' });
     }
 
-    const user = await getOptionalUser(req);
-    logAI('HRUVITA-API', `POST /api/assistant/chat [${requestId}] user=${user ? user.id : 'guest'}`);
+    const user = req.user;
+    logAI('HRUVITA-API', `POST /api/assistant/chat [${requestId}] user=${user.id}`);
 
     const existingConv = conversationId ? await getConversationById(conversationId) : null;
     const history = existingConv?.messages || [];
@@ -174,8 +174,8 @@ router.post('/chat', async (req, res) => {
   }
 });
 
-// Natural Female Voice TTS Endpoint
-router.post('/tts', async (req, res) => {
+// Natural Female Voice TTS Endpoint (after login only)
+router.post('/tts', requireAuth, async (req, res) => {
   const t0 = Date.now();
   try {
     const { text, language = 'en-IN' } = req.body || {};
@@ -197,8 +197,8 @@ router.post('/tts', async (req, res) => {
   }
 });
 
-// Whisper STT fallback endpoint (requires GROQ_API_KEY)
-router.post('/stt', async (req, res) => {
+// Whisper STT fallback endpoint (after login only, requires GROQ_API_KEY)
+router.post('/stt', requireAuth, async (req, res) => {
   const t0 = Date.now();
   try {
     const groqKey = process.env.GROQ_API_KEY?.trim();

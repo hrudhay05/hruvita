@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { FiArrowLeft, FiCheckCircle, FiCrosshair, FiMapPin } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
+import PincodeChecker from '../components/PincodeChecker.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { detectCurrentLocation } from '../lib/location.js';
 import './AuthFlow.css';
@@ -456,6 +457,7 @@ export default function AddressFormPage() {
                 }
                 placeholder="500081"
               />
+              <PincodeChecker pincode={form.pincode} area={form.area || form.district} />
             </div>
 
             <div className="auth-field">

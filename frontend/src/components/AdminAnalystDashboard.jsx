@@ -370,6 +370,30 @@ export default function AdminAnalystDashboard({ user, onLogout }) {
               <div className="ana-kpi"><span>Out-of-Stock</span><strong>{ov.outOfStockCount || 0}</strong></div>
               <div className="ana-kpi"><span>Cancelled Orders</span><strong>{ov.cancelledOrders || 0}</strong></div>
             </div>
+
+            {analytics?.businessSplit && (
+              <div className="ana-charts-grid" style={{ marginBottom: 16 }}>
+                <div className="ana-panel">
+                  <h3>🍎 Fruits &amp; Kitchen Business</h3>
+                  <div className="ana-kpi-grid" style={{ marginTop: 10 }}>
+                    <div className="ana-kpi"><span>Revenue</span><strong>{money(analytics.businessSplit.fruits?.revenue || 0)}</strong></div>
+                    <div className="ana-kpi"><span>Orders</span><strong>{analytics.businessSplit.fruits?.ordersCount || 0}</strong></div>
+                    <div className="ana-kpi"><span>Units Sold</span><strong>{analytics.businessSplit.fruits?.unitsSold || 0}</strong></div>
+                    <div className="ana-kpi"><span>Low Stock</span><strong>{analytics.businessSplit.fruits?.lowStockCount || 0}</strong></div>
+                  </div>
+                </div>
+                <div className="ana-panel">
+                  <h3>🛒 Groceries &amp; Home Business</h3>
+                  <div className="ana-kpi-grid" style={{ marginTop: 10 }}>
+                    <div className="ana-kpi"><span>Revenue</span><strong>{money(analytics.businessSplit.grocery?.revenue || 0)}</strong></div>
+                    <div className="ana-kpi"><span>Orders</span><strong>{analytics.businessSplit.grocery?.ordersCount || 0}</strong></div>
+                    <div className="ana-kpi"><span>Units Sold</span><strong>{analytics.businessSplit.grocery?.unitsSold || 0}</strong></div>
+                    <div className="ana-kpi"><span>Low Stock</span><strong>{analytics.businessSplit.grocery?.lowStockCount || 0}</strong></div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="ana-charts-grid">
               <div className="ana-panel">
                 <h3>Daily Revenue Trend</h3>

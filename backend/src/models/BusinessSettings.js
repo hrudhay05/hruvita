@@ -22,6 +22,12 @@ const businessSettingsSchema = new mongoose.Schema(
     aiEnabled: { type: Boolean, default: true },
     deliveryCommissionPerOrder: { type: Number, default: 40, min: 0 },
     deliveryIncentivePer10Orders: { type: Number, default: 100, min: 0 },
+    serviceablePincodes: {
+      type: [String],
+      default: ['500001', '500032', '500033', '500034', '500081', '500082', '500084'],
+    },
+    vapidPublicKey: { type: String, default: '' },
+    vapidPrivateKey: { type: String, default: '' },
   },
   { timestamps: true }
 );

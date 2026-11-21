@@ -1,0 +1,255 @@
+.ga-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  background: #f4f8f5;
+  color: #132c20;
+}
+
+.ga-sidebar {
+  background: linear-gradient(180deg, #103524 0%, #164831 100%);
+  color: #ffffff;
+  padding: 22px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.ga-brand {
+  display: grid;
+  gap: 8px;
+}
+
+.ga-role-pill {
+  display: inline-block;
+  width: fit-content;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.2);
+  border: 1px solid rgba(74, 222, 128, 0.45);
+  color: #bbf7d0;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.ga-nav {
+  display: grid;
+  gap: 6px;
+}
+
+.ga-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.ga-nav-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.ga-nav-active {
+  background: #ffffff;
+  color: #123728;
+  font-weight: 700;
+}
+
+.ga-nav-active:hover {
+  background: #ffffff;
+  color: #123728;
+}
+
+.ga-sidebar-foot {
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  padding-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.ga-user-mini {
+  display: grid;
+  gap: 2px;
+  font-size: 0.8rem;
+}
+
+.ga-user-mini span {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.74rem;
+}
+
+.ga-signout-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.ga-main {
+  padding: 24px 28px;
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  max-width: 1240px;
+  width: 100%;
+}
+
+.ga-topbar {
+  background: #ffffff;
+  border: 1px solid #dde8e0;
+  border-radius: 16px;
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ga-topbar h1 {
+  margin: 0;
+  font-size: 1.32rem;
+  color: #123728;
+}
+
+.ga-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 12px;
+}
+
+.ga-kpi {
+  background: #ffffff;
+  border: 1px solid #dde8e0;
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 4px;
+}
+
+.ga-kpi span {
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.ga-kpi strong {
+  font-size: 1.25rem;
+  color: #123728;
+}
+
+.ga-panel {
+  background: #ffffff;
+  border: 1px solid #dde8e0;
+  border-radius: 16px;
+  padding: 18px 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.ga-panel h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #123728;
+}
+
+.ga-filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ga-pill {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid #cddad0;
+  background: #ffffff;
+  color: #133828;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ga-pill-active {
+  background: #15803d;
+  border-color: #15803d;
+  color: #ffffff;
+}
+
+.ga-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ga-badge-cod {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.ga-badge-online {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.ga-badge-mixed {
+  background: #e0f2fe;
+  color: #075985;
+  margin-left: 6px;
+}
+
+.ga-table-wrap {
+  overflow-x: auto;
+}
+
+.ga-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.ga-table th {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1.5px solid #dbe6de;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.ga-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid #edf3ee;
+  vertical-align: top;
+}
+
+@media (max-width: 860px) {
+  .ga-shell {
+    grid-template-columns: 1fr;
+  }
+  .ga-main {
+    padding: 16px;
+  }
+}

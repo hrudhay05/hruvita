@@ -4,6 +4,7 @@ const categorySchema = new mongoose.Schema(
   {
     slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
     name: { type: String, required: true, trim: true },
+    businessType: { type: String, enum: ['fruits', 'grocery'], default: 'fruits', index: true },
     emoji: { type: String, default: '🍽️' },
     image: { type: String, default: '' },
     tint: { type: String, default: '#e6f4ea' },

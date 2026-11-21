@@ -14,6 +14,7 @@ import {
   FiGrid,
   FiLayers,
   FiLogOut,
+  FiMail,
   FiMenu,
   FiPhone,
   FiPlus,
@@ -191,9 +192,8 @@ function StatusFilterPicker({ value, onChange, orders }) {
         id="admin-status-filter"
         aria-label="Filter orders by status"
         aria-expanded={open}
-        className={`admin-custom-select-btn ${currentTheme ? currentTheme.btn : ''} ${
-          open ? 'admin-custom-select-btn-open' : ''
-        }`.trim()}
+        className={`admin-custom-select-btn ${currentTheme ? currentTheme.btn : ''} ${open ? 'admin-custom-select-btn-open' : ''
+          }`.trim()}
         onClick={() => setOpen((v) => !v)}
       >
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
@@ -273,10 +273,10 @@ function PartnerAssignPicker({ order, partners, onAssign, ariaLabel }) {
   const filtered = !q
     ? activePartners
     : activePartners.filter((b) =>
-        [b.fullName, b.phone, b.email, b.availability]
-          .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(q))
-      );
+      [b.fullName, b.phone, b.email, b.availability]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q))
+    );
   const assignedId = order.deliveryAssignment?.deliveryBoyId || '';
   const assignedName = order.deliveryAssignment?.deliveryBoyName || '';
 
@@ -286,9 +286,8 @@ function PartnerAssignPicker({ order, partners, onAssign, ariaLabel }) {
         type="button"
         aria-label={ariaLabel}
         aria-expanded={open}
-        className={`admin-custom-select-btn ${assignedName ? 'admin-picker-green' : 'admin-picker-empty'} ${
-          open ? 'admin-custom-select-btn-open' : ''
-        }`.trim()}
+        className={`admin-custom-select-btn ${assignedName ? 'admin-picker-green' : 'admin-picker-empty'} ${open ? 'admin-custom-select-btn-open' : ''
+          }`.trim()}
         onClick={() => {
           setOpen((v) => {
             if (v) setQuery('');
@@ -335,8 +334,8 @@ function PartnerAssignPicker({ order, partners, onAssign, ariaLabel }) {
                 b.availability === 'available'
                   ? 'admin-avail-available'
                   : b.availability === 'busy'
-                  ? 'admin-avail-busy'
-                  : 'admin-avail-offline';
+                    ? 'admin-avail-busy'
+                    : 'admin-avail-offline';
               return (
                 <button
                   key={b.id}
@@ -370,23 +369,31 @@ function PartnerAssignPicker({ order, partners, onAssign, ariaLabel }) {
   );
 }
 
-export default function Admin() {
+export default function Admin({ scope = 'default' }) {
+  const isGroceryScope = scope === 'grocery';
+  const apiPrefix = isGroceryScope ? '/api/grocery-admin' : '/api/admin';
+  const productsApi = isGroceryScope ? '/api/grocery-admin/products' : '/api/products';
+  const categoriesApi = isGroceryScope ? '/api/grocery-admin/categories' : '/api/categories';
+
   const navigate = useNavigate();
-  const { user, isAdmin, login, logout } = useAuth();
+  const { user, isAdmin, isGroceryAdmin, login, logout } = useAuth();
+  const hasAccess = isGroceryScope ? isGroceryAdmin : isAdmin;
 
   const handleSignOut = async () => {
     await logout();
     navigate('/', { replace: true });
   };
-  const { categories, products, refreshCatalog } = useCatalog();
+  const { categories: catalogCategories, products: catalogProducts, refreshCatalog } = useCatalog();
   const { showToast } = useToast();
 
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [email, setEmail] = useState('admin@hruvita.com');
-  const [password, setPassword] = useState('Admin@123');
+  const [email, setEmail] = useState(isGroceryScope ? 'groceryadmin@hruvita.com' : 'admin@hruvita.com');
+  const [password, setPassword] = useState(isGroceryScope ? 'Grocery@123' : 'Admin@123');
   const [error, setError] = useState('');
   const [overview, setOverview] = useState(null);
+  const categories = isGroceryScope ? (overview?.categories || []) : catalogCategories;
+  const products = isGroceryScope ? (overview?.products || []) : catalogProducts;
   const [statusFilter, setStatusFilter] = useState('');
   const [orderDateFilter, setOrderDateFilter] = useState('');
   const [orderProductFilter, setOrderProductFilter] = useState('');
@@ -458,11 +465,14 @@ export default function Admin() {
     originalPrice: 120,
     scheduleStart: '06:00',
     scheduleEnd: '12:00',
-    item1Id: 'p1',
-    item2Id: 'p7',
+    items: [
+      { productId: 'p1', qty: 1 },
+      { productId: 'p7', qty: 1 },
+    ],
     active: true,
   });
   const [adminPlans, setAdminPlans] = useState([]);
+  const [planHighlightInput, setPlanHighlightInput] = useState('');
   const [planForm, setPlanForm] = useState({
     id: '',
     name: '',
@@ -470,25 +480,30 @@ export default function Admin() {
     price: 599,
     badge: '',
     perks: 'Fresh morning delivery\nFree pause before 10 PM',
+    popular: false,
+    perks: ['Fresh morning delivery', 'Free pause before 10 PM'],
     active: true,
   });
   const [adminReviews, setAdminReviews] = useState([]);
   const [adminReferrals, setAdminReferrals] = useState([]);
+  const [pincodeOverview, setPincodeOverview] = useState({ serviceablePincodes: [], demandSummary: [] });
+  const [newPincode, setNewPincode] = useState('');
 
   const loadOverview = useCallback(async () => {
-    if (!isAdmin) return;
+    if (!hasAccess) return;
     try {
-      const [ov, cp, sl, rp, convRes, invRes, cmbRes, plRes, revRes, refRes] = await Promise.all([
-        apiRequest('/api/admin/overview'),
-        apiRequest('/api/admin/coupons'),
-        apiRequest('/api/admin/slots'),
-        apiRequest('/api/admin/reports'),
-        apiRequest('/api/assistant/conversations').catch(() => ({ conversations: [] })),
-        apiRequest('/api/admin/inventory').catch(() => ({ products: [], ingredients: [], logs: [] })),
-        apiRequest('/api/admin/combos').catch(() => ({ combos: [] })),
-        apiRequest('/api/admin/plans').catch(() => ({ plans: [] })),
-        apiRequest('/api/admin/reviews').catch(() => ({ reviews: [] })),
-        apiRequest('/api/admin/referrals').catch(() => ({ referrals: [] })),
+      const [ov, cp, sl, rp, convRes, invRes, cmbRes, plRes, revRes, refRes, pinRes] = await Promise.all([
+        apiRequest(`${apiPrefix}/overview`),
+        apiRequest(`${apiPrefix}/coupons`),
+        apiRequest(`${apiPrefix}/slots`),
+        apiRequest(`${apiPrefix}/reports`),
+        isGroceryScope ? Promise.resolve({ conversations: [] }) : apiRequest('/api/assistant/conversations').catch(() => ({ conversations: [] })),
+        apiRequest(`${apiPrefix}/inventory`).catch(() => ({ products: [], ingredients: [], logs: [] })),
+        isGroceryScope ? Promise.resolve({ combos: [] }) : apiRequest('/api/admin/combos').catch(() => ({ combos: [] })),
+        isGroceryScope ? Promise.resolve({ plans: [] }) : apiRequest('/api/admin/plans').catch(() => ({ plans: [] })),
+        apiRequest(`${apiPrefix}/reviews`).catch(() => ({ reviews: [] })),
+        apiRequest(`${apiPrefix}/referrals`).catch(() => ({ referrals: [] })),
+        isGroceryScope ? Promise.resolve({ serviceablePincodes: [], demandSummary: [] }) : apiRequest('/api/pincode/admin/overview').catch(() => ({ serviceablePincodes: [], demandSummary: [] })),
       ]);
       setOverview(ov);
       setCoupons(cp.coupons || []);
@@ -500,23 +515,24 @@ export default function Admin() {
       setAdminPlans(plRes.plans || []);
       setAdminReviews(revRes.reviews || []);
       setAdminReferrals(refRes.referrals || []);
+      setPincodeOverview(pinRes);
       if (ov.settings) setSettingsForm(ov.settings);
     } catch (err) {
       setError(err.message);
     }
-  }, [isAdmin]);
+  }, [hasAccess, apiPrefix, isGroceryScope]);
 
   const loadKitchen = useCallback(
     async (dateStr) => {
-      if (!isAdmin) return;
+      if (!hasAccess) return;
       try {
-        const data = await apiRequest(`/api/admin/kitchen?date=${encodeURIComponent(dateStr)}`);
+        const data = await apiRequest(`${apiPrefix}/kitchen?date=${encodeURIComponent(dateStr)}`);
         setKitchenData(data);
       } catch (err) {
         setError(err.message);
       }
     },
-    [isAdmin]
+    [hasAccess, apiPrefix]
   );
 
   useEffect(() => {
@@ -524,67 +540,87 @@ export default function Admin() {
   }, [loadOverview]);
 
   useEffect(() => {
-    if (isAdmin && activeTab === 'kitchen') {
+    if (hasAccess && activeTab === 'kitchen') {
       loadKitchen(kitchenDate);
     }
-  }, [isAdmin, activeTab, kitchenDate, loadKitchen]);
+  }, [hasAccess, activeTab, kitchenDate, loadKitchen]);
 
   useSocketEvents(
-    isAdmin
+    hasAccess
       ? {
-          'order:created': (p) => {
-            showToast(`New order received: ${p?.orderId || ''}`);
+        'order:created': (p) => {
+          showToast(`New order received: ${p?.orderId || ''}`);
+          loadOverview();
+        },
+        'order:updated': () => loadOverview(),
+        'order:cancelled': (p) => {
+          showToast(`Order cancelled: ${p?.orderId || ''}`);
+          loadOverview();
+        },
+        'payment:successful': () => loadOverview(),
+        'payment:updated': () => loadOverview(),
+        'payment:cod-collected': () => loadOverview(),
+        'payment:refunded': () => loadOverview(),
+        'inventory:updated': () => {
+          loadOverview();
+          refreshCatalog();
+        },
+        'inventory:low-stock': (p) => {
+          showToast(`Low stock alert: ${p?.item?.name || p?.productId || ''}`);
+          loadOverview();
+        },
+        'inventory:out-of-stock': (p) => {
+          showToast(`Out of stock: ${p?.item?.name || p?.productId || ''}`, 'error');
+          loadOverview();
+        },
+        'delivery:assigned': () => loadOverview(),
+        'delivery:accepted': () => loadOverview(),
+        'delivery:order-accepted': () => loadOverview(),
+        'delivery:started': () => loadOverview(),
+        'delivery:order-started': () => loadOverview(),
+        'delivery:order-rejected': (p) => {
+          showToast(`Delivery rejected: ${p?.orderId || ''}`, 'error');
+          loadOverview();
+        },
+        'delivery:updated': () => loadOverview(),
+        'delivery:location-updated': (p) => {
+          if (p?.orderId && p?.order?.delivery) {
+            setOverview((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    orders: (prev.orders || []).map((o) =>
+                      o.id === p.orderId ? { ...o, delivery: p.order.delivery } : o
+                    ),
+                  }
+                : prev
+            );
+          } else {
             loadOverview();
-          },
-          'order:updated': () => loadOverview(),
-          'order:cancelled': (p) => {
-            showToast(`Order cancelled: ${p?.orderId || ''}`);
-            loadOverview();
-          },
-          'payment:successful': () => loadOverview(),
-          'payment:updated': () => loadOverview(),
-          'payment:cod-collected': () => loadOverview(),
-          'payment:refunded': () => loadOverview(),
-          'inventory:updated': () => {
-            loadOverview();
-            refreshCatalog();
-          },
-          'inventory:low-stock': (p) => {
-            showToast(`Low stock alert: ${p?.item?.name || p?.productId || ''}`);
-            loadOverview();
-          },
-          'inventory:out-of-stock': (p) => {
-            showToast(`Out of stock: ${p?.item?.name || p?.productId || ''}`, 'error');
-            loadOverview();
-          },
-          'delivery:assigned': () => loadOverview(),
-          'delivery:accepted': () => loadOverview(),
-          'delivery:order-accepted': () => loadOverview(),
-          'delivery:started': () => loadOverview(),
-          'delivery:order-started': () => loadOverview(),
-          'delivery:order-rejected': (p) => {
-            showToast(`Delivery rejected: ${p?.orderId || ''}`, 'error');
-            loadOverview();
-          },
-          'delivery:updated': () => loadOverview(),
-          'delivery:completed': (p) => {
-            showToast(`Order delivered: ${p?.orderId || ''}`);
-            loadOverview();
-          },
-          'delivery:failed': (p) => {
-            showToast(`Delivery failed: ${p?.orderId || ''}`, 'error');
-            loadOverview();
-          },
-          'customer:registered': () => loadOverview(),
-          'subscription:created': () => loadOverview(),
-          'subscription:updated': () => loadOverview(),
-        }
+          }
+        },
+        'delivery:completed': (p) => {
+          showToast(`Order delivered: ${p?.orderId || ''}`);
+          loadOverview();
+        },
+        'delivery:failed': (p) => {
+          showToast(`Delivery failed: ${p?.orderId || ''}`, 'error');
+          loadOverview();
+        },
+        'customer:registered': () => loadOverview(),
+        'contact:new-message': (p) => {
+          showToast(`New Contact Message from ${p?.contactMessage?.name || 'Customer'}`);
+          loadContactMessages();
+        },
+        'subscription:created': () => loadOverview(),
+        'subscription:updated': () => loadOverview(),
+      }
       : null,
-    [isAdmin, loadOverview, refreshCatalog]
+    [hasAccess, loadOverview, refreshCatalog]
   );
 
   useEffect(() => {
-    if (!isAdmin) return undefined;
+    if (!hasAccess) return undefined;
     const onFocusSync = () => {
       if (document.visibilityState === 'visible') {
         loadOverview();
@@ -602,10 +638,49 @@ export default function Admin() {
       window.removeEventListener('focus', onFocusSync);
       document.removeEventListener('visibilitychange', onFocusSync);
     };
-  }, [isAdmin, loadOverview]);
+  }, [hasAccess, loadOverview]);
 
   const [team, setTeam] = useState([]);
   const [teamForm, setTeamForm] = useState({ fullName: '', email: '', password: '', role: 'admin_analyser' });
+  const [contactMessages, setContactMessages] = useState([]);
+
+  const loadContactMessages = useCallback(async () => {
+    if (!hasAccess || isGroceryScope) return;
+    try {
+      const res = await apiRequest('/api/contact/admin');
+      setContactMessages(res.messages || []);
+    } catch {
+      /* ignore */
+    }
+  }, [hasAccess, isGroceryScope]);
+
+  useEffect(() => {
+    if (hasAccess && !isGroceryScope) loadContactMessages();
+  }, [hasAccess, isGroceryScope, loadContactMessages]);
+
+  const handleToggleContactStatus = async (msg) => {
+    try {
+      const nextStatus = msg.status === 'resolved' ? 'open' : 'resolved';
+      await apiRequest(`/api/contact/admin/${msg.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      showToast(`Message marked ${nextStatus}.`);
+      await loadContactMessages();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeleteContactMessage = async (id) => {
+    try {
+      await apiRequest(`/api/contact/admin/${id}`, { method: 'DELETE' });
+      showToast('Message deleted.');
+      await loadContactMessages();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
   const [deliveryBoysList, setDeliveryBoysList] = useState([]);
   const [deliverySearch, setDeliverySearch] = useState('');
   const [selectedPartnerId, setSelectedPartnerId] = useState(null);
@@ -619,25 +694,25 @@ export default function Admin() {
   });
 
   const loadDeliveryBoys = useCallback(async () => {
-    if (!isAdmin) return;
+    if (!hasAccess) return;
     try {
-      const res = await apiRequest('/api/admin/delivery-boys');
+      const res = await apiRequest(`${apiPrefix}/delivery-boys`);
       setDeliveryBoysList(res.deliveryBoys || []);
     } catch {
       /* ignore */
     }
-  }, [isAdmin]);
+  }, [hasAccess, apiPrefix]);
 
   useEffect(() => {
-    if (isAdmin && activeTab === 'delivery') loadDeliveryBoys();
-  }, [isAdmin, activeTab, loadDeliveryBoys]);
+    if (hasAccess && activeTab === 'delivery') loadDeliveryBoys();
+  }, [hasAccess, activeTab, loadDeliveryBoys]);
 
   const handleSaveDeliveryBoy = async (e) => {
     e.preventDefault();
     setError('');
     try {
       if (deliveryBoyForm.id) {
-        await apiRequest(`/api/admin/delivery-boys/${deliveryBoyForm.id}`, {
+        await apiRequest(`${apiPrefix}/delivery-boys/${deliveryBoyForm.id}`, {
           method: 'PATCH',
           body: JSON.stringify({
             fullName: deliveryBoyForm.fullName,
@@ -648,7 +723,7 @@ export default function Admin() {
         });
         showToast('Delivery partner updated.');
       } else {
-        await apiRequest('/api/admin/delivery-boys', {
+        await apiRequest(`${apiPrefix}/delivery-boys`, {
           method: 'POST',
           body: JSON.stringify(deliveryBoyForm),
         });
@@ -663,7 +738,7 @@ export default function Admin() {
 
   const handleToggleDeliveryBoy = async (boy) => {
     try {
-      await apiRequest(`/api/admin/delivery-boys/${boy.id}`, {
+      await apiRequest(`${apiPrefix}/delivery-boys/${boy.id}`, {
         method: 'PATCH',
         body: JSON.stringify({ active: !boy.active }),
       });
@@ -678,7 +753,7 @@ export default function Admin() {
     if (!window.confirm(`Delete delivery partner "${boy.fullName}"? This cannot be undone.`)) return;
     setError('');
     try {
-      await apiRequest(`/api/admin/delivery-boys/${boy.id}`, { method: 'DELETE' });
+      await apiRequest(`${apiPrefix}/delivery-boys/${boy.id}`, { method: 'DELETE' });
       if (selectedPartnerId === boy.id) setSelectedPartnerId(null);
       if (deliveryBoyForm.id === boy.id) {
         setDeliveryBoyForm({ id: '', fullName: '', phone: '', email: '', password: '', availability: 'available' });
@@ -700,7 +775,7 @@ export default function Admin() {
     }
     setError('');
     try {
-      const res = await apiRequest('/api/admin/delivery-boys', { method: 'DELETE' });
+      const res = await apiRequest(`${apiPrefix}/delivery-boys`, { method: 'DELETE' });
       setSelectedPartnerId(null);
       setDeliveryBoyForm({ id: '', fullName: '', phone: '', email: '', password: '', availability: 'available' });
       if (res.skippedCount > 0) {
@@ -718,7 +793,7 @@ export default function Admin() {
     if (!deliveryBoyId) return;
     setError('');
     try {
-      await apiRequest(`/api/admin/orders/${orderId}/assign-delivery`, {
+      await apiRequest(`${apiPrefix}/orders/${orderId}/assign-delivery`, {
         method: 'POST',
         body: JSON.stringify({ deliveryBoyId }),
       });
@@ -774,7 +849,11 @@ export default function Admin() {
     setError('');
     try {
       const logged = await login(email, password, true, true);
-      if (!['admin', 'staff', 'admin_analyser'].includes(logged?.role)) {
+      if (isGroceryScope) {
+        if (logged?.role !== 'grocery_admin') {
+          setError('This account does not have Grocery Admin permissions.');
+        }
+      } else if (!['admin', 'staff', 'admin_analyser'].includes(logged?.role)) {
         setError('This account does not have admin permissions.');
       }
     } catch (err) {
@@ -786,7 +865,7 @@ export default function Admin() {
     return <AdminAnalystDashboard user={user} onLogout={handleSignOut} />;
   }
 
-  if (!user || !isAdmin) {
+  if (!user || !hasAccess) {
     return (
       <div className="admin-login-screen">
         <div className="admin-login-card">
@@ -795,10 +874,12 @@ export default function Admin() {
           </div>
           <h1 style={{ fontSize: '1.45rem', color: 'var(--primary)', marginBottom: 6 }}>
             <FiShield size={20} style={{ verticalAlign: 'middle', marginRight: 6 }} />
-            Admin Control Center
+            {isGroceryScope ? 'Grocery Admin Control Center' : 'Admin Control Center'}
           </h1>
           <p style={{ color: 'var(--muted)', fontSize: '0.88rem', marginBottom: 18 }}>
-            Sign in with your administrator credentials.
+            {isGroceryScope
+              ? 'Sign in with your Grocery Admin credentials.'
+              : 'Sign in with your administrator credentials.'}
           </p>
           {error && <div className="account-alert" role="alert">{error}</div>}
           <form className="admin-form" onSubmit={handleAdminLogin}>
@@ -839,7 +920,7 @@ export default function Admin() {
   const handleOrderStatusChange = async (orderId, newStatus) => {
     setError('');
     try {
-      await apiRequest(`/api/admin/orders/${orderId}/status`, {
+      await apiRequest(`${apiPrefix}/orders/${orderId}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ status: newStatus }),
       });
@@ -853,7 +934,7 @@ export default function Admin() {
   const handleRefundOrder = async (orderId) => {
     setError('');
     try {
-      await apiRequest(`/api/admin/orders/${orderId}/refund`, {
+      await apiRequest(`${apiPrefix}/orders/${orderId}/refund`, {
         method: 'POST',
         body: JSON.stringify({ reason: 'Admin initiated refund' }),
       });
@@ -876,13 +957,13 @@ export default function Admin() {
         prepMins: Number(prodForm.prepMins),
       };
       if (prodForm.id) {
-        await apiRequest(`/api/products/${prodForm.id}`, {
+        await apiRequest(`${productsApi}/${prodForm.id}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
         showToast(`Updated "${prodForm.name}".`);
       } else {
-        await apiRequest('/api/products', {
+        await apiRequest(productsApi, {
           method: 'POST',
           body: JSON.stringify(payload),
         });
@@ -920,7 +1001,7 @@ export default function Admin() {
   const handleDeleteProduct = async (p) => {
     setError('');
     try {
-      await apiRequest(`/api/products/${p.id}`, { method: 'DELETE' });
+      await apiRequest(`${productsApi}/${p.id}`, { method: 'DELETE' });
       showToast(`Removed "${p.name}".`);
       await Promise.all([refreshCatalog(), loadOverview()]);
     } catch (err) {
@@ -931,7 +1012,7 @@ export default function Admin() {
   const handleQuickStock = async (p, delta) => {
     try {
       const nextStock = Math.max(0, (p.stock || 0) + delta);
-      await apiRequest(`/api/products/${p.id}`, {
+      await apiRequest(`${productsApi}/${p.id}`, {
         method: 'PUT',
         body: JSON.stringify({ stock: nextStock }),
       });
@@ -945,7 +1026,7 @@ export default function Admin() {
     e.preventDefault();
     setError('');
     try {
-      await apiRequest('/api/categories', {
+      await apiRequest(categoriesApi, {
         method: 'POST',
         body: JSON.stringify(catForm),
       });
@@ -1020,6 +1101,22 @@ export default function Admin() {
     }
   };
 
+  const handleSavePincodes = async (nextList) => {
+    try {
+      const res = await apiRequest('/api/pincode/admin/serviceable', {
+        method: 'PUT',
+        body: JSON.stringify({ pincodes: nextList }),
+      });
+      setPincodeOverview((prev) => ({
+        ...prev,
+        serviceablePincodes: res.serviceablePincodes || nextList,
+      }));
+      showToast('Serviceable delivery pincodes updated.');
+    } catch (err) {
+      setError(err.message || 'Could not update delivery pincodes.');
+    }
+  };
+
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     setError('');
@@ -1056,7 +1153,7 @@ export default function Admin() {
           : 'http://localhost:5000';
       const apiBase = (import.meta.env.VITE_API_URL || host).replace(/\/$/, '');
       const token = getStoredToken();
-      const res = await fetch(`${apiBase}/api/admin/export/${type}`, {
+      const res = await fetch(`${apiBase}${apiPrefix}/export/${type}`, {
         credentials: 'include',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -1090,7 +1187,7 @@ export default function Admin() {
 
   const handleAdjustProductStock = async (prodId, delta, note = 'Admin quick adjust') => {
     try {
-      await apiRequest(`/api/admin/inventory/products/${prodId}/adjust`, {
+      await apiRequest(`${apiPrefix}/inventory/products/${prodId}/adjust`, {
         method: 'POST',
         body: JSON.stringify({ delta, note }),
       });
@@ -1142,9 +1239,13 @@ export default function Admin() {
     e.preventDefault();
     setError('');
     try {
-      const items = [comboForm.item1Id, comboForm.item2Id]
-        .filter(Boolean)
-        .map((productId) => ({ productId, qty: 1 }));
+      const items = (comboForm.items || [])
+        .filter((it) => it.productId)
+        .map((it) => ({ productId: it.productId, qty: Math.max(1, Number(it.qty) || 1) }));
+      if (items.length === 0) {
+        setError('Please add at least one product to the combo.');
+        return;
+      }
       await apiRequest('/api/admin/combos', {
         method: 'POST',
         body: JSON.stringify({
@@ -1170,8 +1271,10 @@ export default function Admin() {
         originalPrice: 120,
         scheduleStart: '06:00',
         scheduleEnd: '12:00',
-        item1Id: 'p1',
-        item2Id: 'p7',
+        items: [
+          { productId: products[0]?.id || 'p1', qty: 1 },
+          { productId: products[1]?.id || 'p7', qty: 1 },
+        ],
         active: true,
       });
       await Promise.all([refreshCatalog(), loadOverview()]);
@@ -1194,11 +1297,22 @@ export default function Admin() {
     e.preventDefault();
     setError('');
     try {
+      const perksList = Array.isArray(planForm.perks)
+        ? planForm.perks.map((s) => String(s).trim()).filter(Boolean)
+        : String(planForm.perks || '')
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean);
       await apiRequest('/api/admin/plans', {
         method: 'POST',
         body: JSON.stringify(planForm),
+        body: JSON.stringify({
+          ...planForm,
+          perks: perksList,
+        }),
       });
       showToast(`Plan "${planForm.name}" saved.`);
+      setPlanHighlightInput('');
       setPlanForm({
         id: '',
         name: '',
@@ -1206,6 +1320,8 @@ export default function Admin() {
         price: 599,
         badge: '',
         perks: 'Fresh morning delivery\nFree pause before 10 PM',
+        popular: false,
+        perks: ['Fresh morning delivery', 'Free pause before 10 PM'],
         active: true,
       });
       await Promise.all([refreshCatalog(), loadOverview()]);
@@ -1319,6 +1435,7 @@ export default function Admin() {
     { id: 'delivery', label: 'Delivery Team', count: overview?.deliveryBoys?.length || 0, icon: FiTruck, active: activeTab === 'delivery' },
     { id: 'products', label: 'Catalog & Menu', count: products.length, icon: FiBox, active: isCatalogTab },
     { id: 'customers', label: 'Customers', count: overview?.customers?.length || 0, icon: FiUsers, active: activeTab === 'customers' },
+    { id: 'inbox', label: 'Support Inbox', count: contactMessages.filter((m) => m.status === 'open').length, icon: FiMail, active: activeTab === 'inbox' },
     { id: 'coupons', label: 'Marketing', count: coupons.length + adminReviews.length, icon: FiTag, active: isMarketingTab },
     { id: 'reports', label: 'Reports & CSV', icon: FiBarChart2, active: activeTab === 'reports' },
     { id: 'settings', label: 'Settings & Admin', icon: FiSettings, active: isSystemTab },
@@ -1332,6 +1449,7 @@ export default function Admin() {
     { id: 'delivery', label: 'Delivery Team' },
     ...catalogTabs,
     { id: 'customers', label: 'Customers' },
+    { id: 'inbox', label: 'Contact & Support Inbox' },
     ...marketingTabs,
     { id: 'reports', label: 'Reports & CSV' },
     ...systemTabs,
@@ -1367,7 +1485,7 @@ export default function Admin() {
           <div className="admin-nav-group">
             {sidebarItems.map((item) => {
               const Icon = item.icon;
-            return (
+              return (
                 <button
                   key={item.id}
                   type="button"
@@ -1451,7 +1569,7 @@ export default function Admin() {
             <div className="admin-subtabs" role="tablist" aria-label="Section sub-tabs">
               {activeSubTabs.map((sub) => {
                 const SubIcon = sub.icon;
-            return (
+                return (
                   <button
                     key={sub.id}
                     type="button"
@@ -1583,7 +1701,7 @@ export default function Admin() {
                     ].map((row) => {
                       const total = Math.max(stats.totalOrders || 1, 1);
                       const pct = Math.min(100, Math.round((row.count / total) * 100));
-            return (
+                      return (
                         <div key={row.label} className="admin-status-bar-row">
                           <div className="admin-status-bar-head">
                             <span>{row.label}</span>
@@ -1647,18 +1765,19 @@ export default function Admin() {
 
           {/* Kitchen Tomorrow-Prep View */}
           {activeTab === 'kitchen' && (
-            <div style={{ display: 'grid', gap: 24 }}>
+            <div className="admin-kitchen-wrap">
               <section className="admin-panel">
                 <div className="admin-panel-head">
                   <div>
                     <h2>Kitchen Preparation Sheet</h2>
-                    <p style={{ color: 'var(--muted)', fontSize: '0.88rem' }}>
+                    <p className="admin-kitchen-sub">
                       Pre-orders and active breakfast subscriptions grouped by delivery slot.
                     </p>
                   </div>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div className="admin-kitchen-controls">
                     <input
                       type="date"
+                      aria-label="Kitchen prep date"
                       value={kitchenDate}
                       onChange={(e) => setKitchenDate(e.target.value)}
                       className="menu-select"
@@ -1670,53 +1789,60 @@ export default function Admin() {
                 </div>
 
                 {kitchenData?.grandTotals?.length > 0 ? (
-                  <div className="admin-table-wrap" style={{ marginBottom: 24 }}>
-                    <h3 style={{ marginBottom: 10, fontSize: '1.05rem' }}>
-                      Total Quantities to Prepare ({kitchenData.date})
-                    </h3>
-                    <table className="admin-table">
-                      <thead>
-                        <tr>
-                          <th>Dish / Bowl</th>
-                          <th>Total Quantity</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {kitchenData.grandTotals.map((row) => (
-                          <tr key={row.name}>
-                            <td>
-                              <strong>{row.name}</strong>
-                            </td>
-                            <td>
-                              <strong>{row.qty}</strong>
-                            </td>
+                  <div className="admin-kitchen-summary-card">
+                    <div className="admin-kitchen-summary-head">
+                      <h3>Total Quantities to Prepare ({kitchenData.date})</h3>
+                      <span className="admin-badge">
+                        {kitchenData.grandTotals.reduce((sum, r) => sum + Number(r.qty || 0), 0)} total items
+                      </span>
+                    </div>
+                    <div className="admin-table-wrap">
+                      <table className="admin-table">
+                        <thead>
+                          <tr>
+                            <th>Dish / Bowl</th>
+                            <th style={{ textAlign: 'right' }}>Total Quantity</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {kitchenData.grandTotals.map((row) => (
+                            <tr key={row.name}>
+                              <td>
+                                <strong>{row.name}</strong>
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                <span className="admin-kitchen-qty-pill">&times; {row.qty}</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 ) : (
-                  <p style={{ color: 'var(--muted)', marginBottom: 20 }}>
+                  <div className="admin-kitchen-empty">
                     No scheduled pre-orders or active subscriptions for {kitchenDate}.
-                  </p>
+                  </div>
                 )}
 
-                <div className="addr-cards-grid">
+                <div className="admin-kitchen-slots-grid">
                   {(kitchenData?.slots || []).map((sl) => (
-                    <div key={sl.slotId} className="addr-card">
-                      <div className="addr-card-top">
-                        <strong>{sl.slotName}</strong>
-                        <span className="addr-type-pill">
+                    <div key={sl.slotId} className="admin-kitchen-slot-card">
+                      <div className="admin-kitchen-slot-head">
+                        <div>
+                          <strong>{sl.slotName}</strong>
+                          <span className="admin-kitchen-slot-window">{sl.window}</span>
+                        </div>
+                        <span className="admin-kitchen-slot-badge">
                           {sl.orders.length + sl.subscriptions.length} / {sl.maxOrders}
                         </span>
                       </div>
-                      <span style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>{sl.window}</span>
                       {Object.keys(sl.itemTotals).length === 0 ? (
-                        <p style={{ fontSize: '0.86rem', color: 'var(--muted)' }}>No items scheduled.</p>
+                        <p className="admin-kitchen-slot-empty">No items scheduled.</p>
                       ) : (
-                        <ul style={{ display: 'grid', gap: 4, fontSize: '0.88rem' }}>
+                        <ul className="admin-kitchen-items-list">
                           {Object.entries(sl.itemTotals).map(([dish, qty]) => (
-                            <li key={dish} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <li key={dish}>
                               <span>{dish}</span>
                               <strong>&times; {qty}</strong>
                             </li>
@@ -1759,189 +1885,189 @@ export default function Admin() {
             return (
               <>
                 <section className="admin-panel">
-              <div className="admin-panel-head">
-                <h2>Orders Queue ({filteredOrders.length})</h2>
-                <div className="admin-orders-filters">
-                  <input
-                    type="date"
-                    aria-label="Filter orders by date"
-                    className="menu-select"
-                    value={orderDateFilter}
-                    onChange={(e) => {
-                      setOrderDateFilter(e.target.value);
-                      setOrdersPage(1);
-                    }}
-                  />
-                  <input
-                    type="search"
-                    aria-label="Search by Order ID, product, or customer"
-                    placeholder="Search Order ID, product, customer..."
-                    className="menu-select admin-orders-search"
-                    value={orderProductFilter}
-                    onChange={(e) => {
-                      setOrderProductFilter(e.target.value);
-                      setOrdersPage(1);
-                    }}
-                  />
-                  <div className="admin-orders-status-filter">
-                    <label htmlFor="admin-status-filter">Status:</label>
-                    <StatusFilterPicker
-                      value={statusFilter}
-                      onChange={(st) => {
-                        setStatusFilter(st);
-                        setOrdersPage(1);
-                      }}
-                      orders={allOrders}
-                    />
+                  <div className="admin-panel-head">
+                    <h2>Orders Queue ({filteredOrders.length})</h2>
+                    <div className="admin-orders-filters">
+                      <input
+                        type="date"
+                        aria-label="Filter orders by date"
+                        className="menu-select"
+                        value={orderDateFilter}
+                        onChange={(e) => {
+                          setOrderDateFilter(e.target.value);
+                          setOrdersPage(1);
+                        }}
+                      />
+                      <input
+                        type="search"
+                        aria-label="Search by Order ID, product, or customer"
+                        placeholder="Search Order ID, product, customer..."
+                        className="menu-select admin-orders-search"
+                        value={orderProductFilter}
+                        onChange={(e) => {
+                          setOrderProductFilter(e.target.value);
+                          setOrdersPage(1);
+                        }}
+                      />
+                      <div className="admin-orders-status-filter">
+                        <label htmlFor="admin-status-filter">Status:</label>
+                        <StatusFilterPicker
+                          value={statusFilter}
+                          onChange={(st) => {
+                            setStatusFilter(st);
+                            setOrdersPage(1);
+                          }}
+                          orders={allOrders}
+                        />
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              {filteredOrders.length === 0 ? (
-                <p style={{ color: 'var(--muted)', fontSize: '0.92rem' }}>
-                  No orders in this view yet.
-                </p>
-              ) : (
-                <div className="admin-table-wrap admin-orders-table-wrap">
-                  <table className="admin-table admin-orders-table admin-orders-mobile-cards">
-                    <thead>
-                      <tr>
-                        <th>Order &amp; Slot</th>
-                        <th>Customer &amp; Address</th>
-                        <th>Items</th>
-                        <th>Amount &amp; Payment</th>
-                        <th>Order Status</th>
-                        <th>Delivery Partner</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredOrders
-                        .slice((ordersPage - 1) * PAGE_SIZE, ordersPage * PAGE_SIZE)
-                        .map((ord) => {
-                        const cleanDigits = String(ord.customerPhone || '').replace(/[^0-9]/g, '');
-                        const waUrl = `https://wa.me/${cleanDigits}?text=${encodeURIComponent(
-                          `Hello ${ord.customerName}, update on your HRUVITA order ${ord.id}: status is now ${ord.status.replace(/_/g, ' ')}.`
-                        )}`;
-            return (
-                          <tr
-                            key={ord.id}
-                            className={`admin-order-row-clickable ${selectedOrderId === ord.id ? 'admin-order-row-selected' : ''}`.trim()}
-                            onClick={() => setSelectedOrderId(ord.id)}
-                          >
-                            <td>
-                              <strong className="admin-order-id">{ord.id}</strong>
-                              <div className="admin-order-meta">
-                                {ord.scheduledDate} &bull; {ord.slotLabel}
-                              </div>
-                            </td>
-                            <td>
-                              <strong>{ord.customerName}</strong>
-                              <div className="admin-order-meta">
-                                {ord.address?.line1}, {ord.address?.pincode}
-                              </div>
-                              <div
-                                className="admin-order-contact"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <a href={`tel:${ord.customerPhone}`} className="admin-contact-chip">
-                                  <FiPhone size={11} /> Call
-                                </a>
-                                <a href={waUrl} target="_blank" rel="noreferrer" className="admin-contact-chip">
-                                  WhatsApp
-                                </a>
-                              </div>
-                            </td>
-                            <td>
-                              {(ord.items || []).map((it) => (
-                                <div key={it.productId} style={{ fontSize: '0.84rem' }}>
-                                  {it.name} &times; <strong>{it.qty}</strong>
-                                </div>
-                              ))}
-                            </td>
-                            <td>
-                              <strong>{money(ord.pricing?.grandTotal)}</strong>
-                              <div style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>
-                                {ord.originalPaymentMethod === 'COD' && (ord.currentPaymentMethod === 'Online' || ord.paymentMethod === 'razorpay') && ord.paymentStatus === 'paid' ? (
-                                  <span style={{ color: '#166534', fontWeight: 700 }}>COD &rarr; Online (PAID)</span>
-                                ) : ord.paymentMethod === 'cod' && ord.paymentStatus !== 'paid' ? (
-                                  <span>COD &ndash; Payment Pending</span>
-                                ) : (
-                                  <span style={{ textTransform: 'uppercase' }}>{ord.paymentMethod} ({ord.paymentStatus})</span>
-                                )}
-                              </div>
-                            </td>
-                            <td onClick={(e) => e.stopPropagation()}>
-                              <div className="admin-status-stack">
-                                <OrderStatusPicker
-                                  order={ord}
-                                  ariaLabel={`Status for ${ord.id}`}
-                                  onChange={handleOrderStatusChange}
-                                />
-                              </div>
-                            </td>
-                            <td onClick={(e) => e.stopPropagation()}>
-                              <div className="admin-partner-box">
-                                <PartnerAssignPicker
-                                  order={ord}
-                                  partners={overview?.deliveryBoys}
-                                  ariaLabel={`Assign delivery boy for ${ord.id}`}
-                                  onAssign={handleAssignDeliveryBoy}
-                                />
-                              </div>
-                            </td>
-                            <td onClick={(e) => e.stopPropagation()}>
-                              <div className="admin-row-actions">
-                                <button
-                                  type="button"
-                                  className="admin-mini-btn"
-                                  onClick={() => setKitchenSlipOrder(ord)}
-                                  title="Print Kitchen Slip"
-                                >
-                                  <FiPrinter size={13} /> Slip
-                                </button>
-                                {ord.paymentStatus === 'paid' && ord.status !== 'refunded' && (
-                                  <button
-                                    type="button"
-                                    className="admin-mini-btn admin-mini-danger"
-                                    onClick={() => handleRefundOrder(ord.id)}
-                                  >
-                                    Refund
-                                  </button>
-                                )}
-                              </div>
-                            </td>
+                  {filteredOrders.length === 0 ? (
+                    <p style={{ color: 'var(--muted)', fontSize: '0.92rem' }}>
+                      No orders in this view yet.
+                    </p>
+                  ) : (
+                    <div className="admin-table-wrap admin-orders-table-wrap">
+                      <table className="admin-table admin-orders-table admin-orders-mobile-cards">
+                        <thead>
+                          <tr>
+                            <th>Order &amp; Slot</th>
+                            <th>Customer &amp; Address</th>
+                            <th>Items</th>
+                            <th>Amount &amp; Payment</th>
+                            <th>Order Status</th>
+                            <th>Delivery Partner</th>
+                            <th>Actions</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {filteredOrders.length > PAGE_SIZE && (
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'flex-end', marginTop: 14 }}>
-                  <button
-                    type="button"
-                    className="admin-mini-btn"
-                    disabled={ordersPage <= 1}
-                    onClick={() => setOrdersPage((p) => Math.max(1, p - 1))}
-                  >
-                    Prev
-                  </button>
-                  <span style={{ fontSize: '0.84rem', color: 'var(--muted)' }}>
-                    Page {ordersPage} of {Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE))}
-                  </span>
-                  <button
-                    type="button"
-                    className="admin-mini-btn"
-                    disabled={ordersPage >= Math.ceil(filteredOrders.length / PAGE_SIZE)}
-                    onClick={() => setOrdersPage((p) => p + 1)}
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
-            </section>
+                        </thead>
+                        <tbody>
+                          {filteredOrders
+                            .slice((ordersPage - 1) * PAGE_SIZE, ordersPage * PAGE_SIZE)
+                            .map((ord) => {
+                              const cleanDigits = String(ord.customerPhone || '').replace(/[^0-9]/g, '');
+                              const waUrl = `https://wa.me/${cleanDigits}?text=${encodeURIComponent(
+                                `Hello ${ord.customerName}, update on your HRUVITA order ${ord.id}: status is now ${ord.status.replace(/_/g, ' ')}.`
+                              )}`;
+                              return (
+                                <tr
+                                  key={ord.id}
+                                  className={`admin-order-row-clickable ${selectedOrderId === ord.id ? 'admin-order-row-selected' : ''}`.trim()}
+                                  onClick={() => setSelectedOrderId(ord.id)}
+                                >
+                                  <td>
+                                    <strong className="admin-order-id">{ord.id}</strong>
+                                    <div className="admin-order-meta">
+                                      {ord.scheduledDate} &bull; {ord.slotLabel}
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <strong>{ord.customerName}</strong>
+                                    <div className="admin-order-meta">
+                                      {ord.address?.line1}, {ord.address?.pincode}
+                                    </div>
+                                    <div
+                                      className="admin-order-contact"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <a href={`tel:${ord.customerPhone}`} className="admin-contact-chip">
+                                        <FiPhone size={11} /> Call
+                                      </a>
+                                      <a href={waUrl} target="_blank" rel="noreferrer" className="admin-contact-chip">
+                                        WhatsApp
+                                      </a>
+                                    </div>
+                                  </td>
+                                  <td>
+                                    {(ord.items || []).map((it) => (
+                                      <div key={it.productId} style={{ fontSize: '0.84rem' }}>
+                                        {it.name} &times; <strong>{it.qty}</strong>
+                                      </div>
+                                    ))}
+                                  </td>
+                                  <td>
+                                    <strong>{money(ord.pricing?.grandTotal)}</strong>
+                                    <div style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>
+                                      {ord.originalPaymentMethod === 'COD' && (ord.currentPaymentMethod === 'Online' || ord.paymentMethod === 'razorpay') && ord.paymentStatus === 'paid' ? (
+                                        <span style={{ color: '#166534', fontWeight: 700 }}>COD &rarr; Online (PAID)</span>
+                                      ) : ord.paymentMethod === 'cod' && ord.paymentStatus !== 'paid' ? (
+                                        <span>COD &ndash; Payment Pending</span>
+                                      ) : (
+                                        <span style={{ textTransform: 'uppercase' }}>{ord.paymentMethod} ({ord.paymentStatus})</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td onClick={(e) => e.stopPropagation()}>
+                                    <div className="admin-status-stack">
+                                      <OrderStatusPicker
+                                        order={ord}
+                                        ariaLabel={`Status for ${ord.id}`}
+                                        onChange={handleOrderStatusChange}
+                                      />
+                                    </div>
+                                  </td>
+                                  <td onClick={(e) => e.stopPropagation()}>
+                                    <div className="admin-partner-box">
+                                      <PartnerAssignPicker
+                                        order={ord}
+                                        partners={overview?.deliveryBoys}
+                                        ariaLabel={`Assign delivery boy for ${ord.id}`}
+                                        onAssign={handleAssignDeliveryBoy}
+                                      />
+                                    </div>
+                                  </td>
+                                  <td onClick={(e) => e.stopPropagation()}>
+                                    <div className="admin-row-actions">
+                                      <button
+                                        type="button"
+                                        className="admin-mini-btn"
+                                        onClick={() => setKitchenSlipOrder(ord)}
+                                        title="Print Kitchen Slip"
+                                      >
+                                        <FiPrinter size={13} /> Slip
+                                      </button>
+                                      {ord.paymentStatus === 'paid' && ord.status !== 'refunded' && (
+                                        <button
+                                          type="button"
+                                          className="admin-mini-btn admin-mini-danger"
+                                          onClick={() => handleRefundOrder(ord.id)}
+                                        >
+                                          Refund
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {filteredOrders.length > PAGE_SIZE && (
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'flex-end', marginTop: 14 }}>
+                      <button
+                        type="button"
+                        className="admin-mini-btn"
+                        disabled={ordersPage <= 1}
+                        onClick={() => setOrdersPage((p) => Math.max(1, p - 1))}
+                      >
+                        Prev
+                      </button>
+                      <span style={{ fontSize: '0.84rem', color: 'var(--muted)' }}>
+                        Page {ordersPage} of {Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE))}
+                      </span>
+                      <button
+                        type="button"
+                        className="admin-mini-btn"
+                        disabled={ordersPage >= Math.ceil(filteredOrders.length / PAGE_SIZE)}
+                        onClick={() => setOrdersPage((p) => p + 1)}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </section>
 
                 {selectedOrder && (
                   <div
@@ -1974,263 +2100,262 @@ export default function Admin() {
 
                       <div className="admin-drawer-body">
                         <div className="admin-drawer-grid">
-                      {/* Status & Delivery Partner */}
-                      <div className="admin-drawer-section">
-                        <span className="admin-drawer-section-title">Order Status &amp; Delivery Partner</span>
-                        <div className="admin-status-stack">
-                          <span
-                            className={`admin-order-pill ${
-                              selectedOrder.status === 'delivered'
-                                ? 'admin-pill-green'
-                                : selectedOrder.status === 'cancelled' || selectedOrder.status === 'refunded' || selectedOrder.status === 'refund_initiated'
-                                ? 'admin-pill-red'
-                                : selectedOrder.status === 'packed' || selectedOrder.status === 'out_for_delivery'
-                                ? 'admin-pill-purple'
-                                : selectedOrder.status === 'confirmed' || selectedOrder.status === 'accepted' || selectedOrder.status === 'preparing'
-                                ? 'admin-pill-blue'
-                                : 'admin-pill-amber'
-                            }`}
-                          >
-                            {selectedOrder.status.replace(/_/g, ' ')}
-                          </span>
-                          <OrderStatusPicker
-                            order={selectedOrder}
-                            ariaLabel={`Panel status for ${selectedOrder.id}`}
-                            onChange={handleOrderStatusChange}
-                          />
-                        </div>
-
-                        <div className="admin-partner-box" style={{ marginTop: 4 }}>
-                          {selectedOrder.deliveryAssignment?.deliveryBoyName ? (
-                            <div className="admin-partner-card">
-                              <div>
-                                <span className="admin-partner-name">{selectedOrder.deliveryAssignment.deliveryBoyName}</span>
-                                <span className="admin-partner-meta">
-                                  {selectedOrder.deliveryAssignment.deliveryBoyPhone} &bull;{' '}
-                                  {selectedOrder.deliveryStatus?.replace(/_/g, ' ') || 'assigned'}
-                                </span>
-                              </div>
-                              <FiTruck size={15} style={{ color: '#15803d', flexShrink: 0 }} />
+                          {/* Status & Delivery Partner */}
+                          <div className="admin-drawer-section">
+                            <span className="admin-drawer-section-title">Order Status &amp; Delivery Partner</span>
+                            <div className="admin-status-stack">
+                              <span
+                                className={`admin-order-pill ${selectedOrder.status === 'delivered'
+                                  ? 'admin-pill-green'
+                                  : selectedOrder.status === 'cancelled' || selectedOrder.status === 'refunded' || selectedOrder.status === 'refund_initiated'
+                                    ? 'admin-pill-red'
+                                    : selectedOrder.status === 'packed' || selectedOrder.status === 'out_for_delivery'
+                                      ? 'admin-pill-purple'
+                                      : selectedOrder.status === 'confirmed' || selectedOrder.status === 'accepted' || selectedOrder.status === 'preparing'
+                                        ? 'admin-pill-blue'
+                                        : 'admin-pill-amber'
+                                  }`}
+                              >
+                                {selectedOrder.status.replace(/_/g, ' ')}
+                              </span>
+                              <OrderStatusPicker
+                                order={selectedOrder}
+                                ariaLabel={`Panel status for ${selectedOrder.id}`}
+                                onChange={handleOrderStatusChange}
+                              />
                             </div>
-                          ) : (
-                            <div className="admin-partner-card admin-partner-card-empty">
-                              <span>No delivery partner assigned</span>
-                              <FiTruck size={14} style={{ flexShrink: 0 }} />
-                            </div>
-                          )}
-                          <PartnerAssignPicker
-                            order={selectedOrder}
-                            partners={overview?.deliveryBoys}
-                            ariaLabel={`Panel assign delivery boy for ${selectedOrder.id}`}
-                            onAssign={handleAssignDeliveryBoy}
-                          />
-                        </div>
-                      </div>
 
-                      {/* Customer Information */}
-                      <div className="admin-drawer-section">
-                        <span className="admin-drawer-section-title">Customer Information</span>
-                        <div className="admin-drawer-kv">
-                          <span>Name</span>
-                          <strong>{selectedOrder.customerName}</strong>
-                        </div>
-                        <div className="admin-drawer-kv">
-                          <span>Phone</span>
-                          <strong>{selectedOrder.customerPhone}</strong>
-                        </div>
-                        {selectedOrder.customerEmail && (
-                          <div className="admin-drawer-kv">
-                            <span>Email</span>
-                            <strong>{selectedOrder.customerEmail}</strong>
-                          </div>
-                        )}
-                        <div className="admin-drawer-kv">
-                          <span>Address</span>
-                          <strong>
-                            {[
-                              selectedOrder.address?.line1,
-                              selectedOrder.address?.area,
-                              selectedOrder.address?.city,
-                              selectedOrder.address?.pincode,
-                            ]
-                              .filter(Boolean)
-                              .join(', ')}
-                          </strong>
-                        </div>
-                        {selectedOrder.address?.notes && (
-                          <div className="admin-drawer-kv">
-                            <span>Notes</span>
-                            <strong>{selectedOrder.address.notes}</strong>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Products */}
-                      <div className="admin-drawer-section">
-                        <span className="admin-drawer-section-title">
-                          Products ({selectedOrder.items?.length || 0})
-                        </span>
-                        <div>
-                          {(selectedOrder.items || []).map((it, idx) => (
-                            <div key={it.productId || idx} className="admin-drawer-item">
-                              <div>
-                                <strong>{it.name}</strong>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-                                  {it.qty} &times; {money(it.unitPrice)}
+                            <div className="admin-partner-box" style={{ marginTop: 4 }}>
+                              {selectedOrder.deliveryAssignment?.deliveryBoyName ? (
+                                <div className="admin-partner-card">
+                                  <div>
+                                    <span className="admin-partner-name">{selectedOrder.deliveryAssignment.deliveryBoyName}</span>
+                                    <span className="admin-partner-meta">
+                                      {selectedOrder.deliveryAssignment.deliveryBoyPhone} &bull;{' '}
+                                      {selectedOrder.deliveryStatus?.replace(/_/g, ' ') || 'assigned'}
+                                    </span>
+                                  </div>
+                                  <FiTruck size={15} style={{ color: '#15803d', flexShrink: 0 }} />
                                 </div>
-                              </div>
-                              <strong>{money(it.lineTotal ?? it.qty * it.unitPrice)}</strong>
+                              ) : (
+                                <div className="admin-partner-card admin-partner-card-empty">
+                                  <span>No delivery partner assigned</span>
+                                  <FiTruck size={14} style={{ flexShrink: 0 }} />
+                                </div>
+                              )}
+                              <PartnerAssignPicker
+                                order={selectedOrder}
+                                partners={overview?.deliveryBoys}
+                                ariaLabel={`Panel assign delivery boy for ${selectedOrder.id}`}
+                                onAssign={handleAssignDeliveryBoy}
+                              />
                             </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Payment & Total Breakdown */}
-                      <div className="admin-drawer-section">
-                        <span className="admin-drawer-section-title">Payment &amp; Gateway Details</span>
-                        <div className="admin-drawer-kv">
-                          <span>Method</span>
-                          <strong>
-                            {selectedOrder.originalPaymentMethod === 'COD' &&
-                            (selectedOrder.currentPaymentMethod === 'Online' || selectedOrder.paymentMethod === 'razorpay') &&
-                            selectedOrder.paymentStatus === 'paid'
-                              ? 'COD → Online Payment (Prepaid)'
-                              : (selectedPayment?.method || selectedOrder.paymentMethod).toUpperCase()}
-                          </strong>
-                        </div>
-                        <div className="admin-drawer-kv">
-                          <span>Payment Status</span>
-                          <strong style={{ textTransform: 'capitalize' }}>
-                            {selectedPayment?.status || selectedOrder.paymentStatus}
-                          </strong>
-                        </div>
-                        <div className="admin-drawer-kv">
-                          <span>Transaction / Ref ID</span>
-                          <strong className="admin-drawer-mono">
-                            {selectedPayment?.id || '—'}
-                          </strong>
-                        </div>
-                        {(selectedPayment?.razorpayOrderId || selectedOrder.razorpayOrderId) && (
-                          <div className="admin-drawer-kv">
-                            <span>Razorpay Order ID</span>
-                            <strong className="admin-drawer-mono">
-                              {selectedPayment?.razorpayOrderId || selectedOrder.razorpayOrderId}
-                            </strong>
                           </div>
-                        )}
-                        {(selectedPayment?.razorpayPaymentId || selectedOrder.razorpayPaymentId) && (
-                          <div className="admin-drawer-kv">
-                            <span>Razorpay Payment ID</span>
-                            <strong className="admin-drawer-mono">
-                              {selectedPayment?.razorpayPaymentId || selectedOrder.razorpayPaymentId}
-                            </strong>
-                          </div>
-                        )}
-                        <div className="admin-drawer-kv">
-                          <span>Payment Date</span>
-                          <strong>
-                            {(() => {
-                              const dt = selectedPayment?.updatedAt || selectedPayment?.createdAt || selectedOrder.createdAt;
-                              return dt ? new Date(dt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
-                            })()}
-                          </strong>
-                        </div>
-                        <div className="admin-drawer-kv">
-                          <span>Amount ({selectedPayment?.currency || 'INR'})</span>
-                          <strong>{money(selectedPayment?.amount ?? selectedOrder.pricing?.grandTotal ?? 0)}</strong>
-                        </div>
 
-                        {(selectedPayment?.refundId || selectedOrder.status === 'refunded' || selectedOrder.status === 'refund_initiated') && (
-                          <div
-                            style={{
-                              marginTop: 6,
-                              paddingTop: 8,
-                              borderTop: '1px dashed #fca5a5',
-                              display: 'grid',
-                              gap: 6,
-                            }}
-                          >
-                            <span className="admin-drawer-section-title" style={{ color: '#b91c1c' }}>
-                              Refund Details
+                          {/* Customer Information */}
+                          <div className="admin-drawer-section">
+                            <span className="admin-drawer-section-title">Customer Information</span>
+                            <div className="admin-drawer-kv">
+                              <span>Name</span>
+                              <strong>{selectedOrder.customerName}</strong>
+                            </div>
+                            <div className="admin-drawer-kv">
+                              <span>Phone</span>
+                              <strong>{selectedOrder.customerPhone}</strong>
+                            </div>
+                            {selectedOrder.customerEmail && (
+                              <div className="admin-drawer-kv">
+                                <span>Email</span>
+                                <strong>{selectedOrder.customerEmail}</strong>
+                              </div>
+                            )}
+                            <div className="admin-drawer-kv">
+                              <span>Address</span>
+                              <strong>
+                                {[
+                                  selectedOrder.address?.line1,
+                                  selectedOrder.address?.area,
+                                  selectedOrder.address?.city,
+                                  selectedOrder.address?.pincode,
+                                ]
+                                  .filter(Boolean)
+                                  .join(', ')}
+                              </strong>
+                            </div>
+                            {selectedOrder.address?.notes && (
+                              <div className="admin-drawer-kv">
+                                <span>Notes</span>
+                                <strong>{selectedOrder.address.notes}</strong>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Products */}
+                          <div className="admin-drawer-section">
+                            <span className="admin-drawer-section-title">
+                              Products ({selectedOrder.items?.length || 0})
                             </span>
-                            {selectedPayment?.refundId && (
+                            <div>
+                              {(selectedOrder.items || []).map((it, idx) => (
+                                <div key={it.productId || idx} className="admin-drawer-item">
+                                  <div>
+                                    <strong>{it.name}</strong>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                                      {it.qty} &times; {money(it.unitPrice)}
+                                    </div>
+                                  </div>
+                                  <strong>{money(it.lineTotal ?? it.qty * it.unitPrice)}</strong>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Payment & Total Breakdown */}
+                          <div className="admin-drawer-section">
+                            <span className="admin-drawer-section-title">Payment &amp; Gateway Details</span>
+                            <div className="admin-drawer-kv">
+                              <span>Method</span>
+                              <strong>
+                                {selectedOrder.originalPaymentMethod === 'COD' &&
+                                  (selectedOrder.currentPaymentMethod === 'Online' || selectedOrder.paymentMethod === 'razorpay') &&
+                                  selectedOrder.paymentStatus === 'paid'
+                                  ? 'COD → Online Payment (Prepaid)'
+                                  : (selectedPayment?.method || selectedOrder.paymentMethod).toUpperCase()}
+                              </strong>
+                            </div>
+                            <div className="admin-drawer-kv">
+                              <span>Payment Status</span>
+                              <strong style={{ textTransform: 'capitalize' }}>
+                                {selectedPayment?.status || selectedOrder.paymentStatus}
+                              </strong>
+                            </div>
+                            <div className="admin-drawer-kv">
+                              <span>Transaction / Ref ID</span>
+                              <strong className="admin-drawer-mono">
+                                {selectedPayment?.id || '—'}
+                              </strong>
+                            </div>
+                            {(selectedPayment?.razorpayOrderId || selectedOrder.razorpayOrderId) && (
                               <div className="admin-drawer-kv">
-                                <span>Refund ID</span>
-                                <strong className="admin-drawer-mono">{selectedPayment.refundId}</strong>
-                              </div>
-                            )}
-                            {selectedPayment?.refundReason && (
-                              <div className="admin-drawer-kv">
-                                <span>Reason</span>
-                                <strong>{selectedPayment.refundReason}</strong>
-                              </div>
-                            )}
-                            {selectedPayment?.refundedAt && (
-                              <div className="admin-drawer-kv">
-                                <span>Refunded At</span>
-                                <strong>
-                                  {new Date(selectedPayment.refundedAt).toLocaleString('en-IN', {
-                                    dateStyle: 'medium',
-                                    timeStyle: 'short',
-                                  })}
+                                <span>Razorpay Order ID</span>
+                                <strong className="admin-drawer-mono">
+                                  {selectedPayment?.razorpayOrderId || selectedOrder.razorpayOrderId}
                                 </strong>
                               </div>
                             )}
-                          </div>
-                        )}
+                            {(selectedPayment?.razorpayPaymentId || selectedOrder.razorpayPaymentId) && (
+                              <div className="admin-drawer-kv">
+                                <span>Razorpay Payment ID</span>
+                                <strong className="admin-drawer-mono">
+                                  {selectedPayment?.razorpayPaymentId || selectedOrder.razorpayPaymentId}
+                                </strong>
+                              </div>
+                            )}
+                            <div className="admin-drawer-kv">
+                              <span>Payment Date</span>
+                              <strong>
+                                {(() => {
+                                  const dt = selectedPayment?.updatedAt || selectedPayment?.createdAt || selectedOrder.createdAt;
+                                  return dt ? new Date(dt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+                                })()}
+                              </strong>
+                            </div>
+                            <div className="admin-drawer-kv">
+                              <span>Amount ({selectedPayment?.currency || 'INR'})</span>
+                              <strong>{money(selectedPayment?.amount ?? selectedOrder.pricing?.grandTotal ?? 0)}</strong>
+                            </div>
 
-                        <div
-                          style={{
-                            marginTop: 6,
-                            paddingTop: 8,
-                            borderTop: '1px solid #e2ebe5',
-                            display: 'grid',
-                            gap: 6,
-                          }}
-                        >
-                          <span className="admin-drawer-section-title">Order Total Breakdown</span>
-                          <div className="admin-drawer-kv">
-                            <span>Subtotal</span>
-                            <strong>{money(selectedOrder.pricing?.subtotal || 0)}</strong>
-                          </div>
-                          {Number(selectedOrder.pricing?.couponDiscount || 0) > 0 && (
-                            <div className="admin-drawer-kv">
-                              <span>Coupon ({selectedOrder.pricing?.couponCode})</span>
-                              <strong>-{money(selectedOrder.pricing.couponDiscount)}</strong>
+                            {(selectedPayment?.refundId || selectedOrder.status === 'refunded' || selectedOrder.status === 'refund_initiated') && (
+                              <div
+                                style={{
+                                  marginTop: 6,
+                                  paddingTop: 8,
+                                  borderTop: '1px dashed #fca5a5',
+                                  display: 'grid',
+                                  gap: 6,
+                                }}
+                              >
+                                <span className="admin-drawer-section-title" style={{ color: '#b91c1c' }}>
+                                  Refund Details
+                                </span>
+                                {selectedPayment?.refundId && (
+                                  <div className="admin-drawer-kv">
+                                    <span>Refund ID</span>
+                                    <strong className="admin-drawer-mono">{selectedPayment.refundId}</strong>
+                                  </div>
+                                )}
+                                {selectedPayment?.refundReason && (
+                                  <div className="admin-drawer-kv">
+                                    <span>Reason</span>
+                                    <strong>{selectedPayment.refundReason}</strong>
+                                  </div>
+                                )}
+                                {selectedPayment?.refundedAt && (
+                                  <div className="admin-drawer-kv">
+                                    <span>Refunded At</span>
+                                    <strong>
+                                      {new Date(selectedPayment.refundedAt).toLocaleString('en-IN', {
+                                        dateStyle: 'medium',
+                                        timeStyle: 'short',
+                                      })}
+                                    </strong>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            <div
+                              style={{
+                                marginTop: 6,
+                                paddingTop: 8,
+                                borderTop: '1px solid #e2ebe5',
+                                display: 'grid',
+                                gap: 6,
+                              }}
+                            >
+                              <span className="admin-drawer-section-title">Order Total Breakdown</span>
+                              <div className="admin-drawer-kv">
+                                <span>Subtotal</span>
+                                <strong>{money(selectedOrder.pricing?.subtotal || 0)}</strong>
+                              </div>
+                              {Number(selectedOrder.pricing?.couponDiscount || 0) > 0 && (
+                                <div className="admin-drawer-kv">
+                                  <span>Coupon ({selectedOrder.pricing?.couponCode})</span>
+                                  <strong>-{money(selectedOrder.pricing.couponDiscount)}</strong>
+                                </div>
+                              )}
+                              {Number(selectedOrder.pricing?.rewardPointsUsed || 0) > 0 && (
+                                <div className="admin-drawer-kv">
+                                  <span>Reward Points Used</span>
+                                  <strong>-{money(selectedOrder.pricing.rewardPointsUsed)}</strong>
+                                </div>
+                              )}
+                              <div className="admin-drawer-kv">
+                                <span>Delivery Charge</span>
+                                <strong>{money(selectedOrder.pricing?.deliveryCharge || 0)}</strong>
+                              </div>
+                              {Number(selectedOrder.pricing?.taxAmount || 0) > 0 && (
+                                <div className="admin-drawer-kv">
+                                  <span>Tax</span>
+                                  <strong>{money(selectedOrder.pricing.taxAmount)}</strong>
+                                </div>
+                              )}
+                              <div
+                                className="admin-drawer-kv"
+                                style={{
+                                  borderTop: '1px solid #d5e5da',
+                                  paddingTop: 8,
+                                  marginTop: 2,
+                                  fontSize: '0.96rem',
+                                }}
+                              >
+                                <strong style={{ textAlign: 'left' }}>Final Total</strong>
+                                <strong>{money(selectedOrder.pricing?.grandTotal || 0)}</strong>
+                              </div>
                             </div>
-                          )}
-                          {Number(selectedOrder.pricing?.rewardPointsUsed || 0) > 0 && (
-                            <div className="admin-drawer-kv">
-                              <span>Reward Points Used</span>
-                              <strong>-{money(selectedOrder.pricing.rewardPointsUsed)}</strong>
-                            </div>
-                          )}
-                          <div className="admin-drawer-kv">
-                            <span>Delivery Charge</span>
-                            <strong>{money(selectedOrder.pricing?.deliveryCharge || 0)}</strong>
                           </div>
-                          {Number(selectedOrder.pricing?.taxAmount || 0) > 0 && (
-                            <div className="admin-drawer-kv">
-                              <span>Tax</span>
-                              <strong>{money(selectedOrder.pricing.taxAmount)}</strong>
-                            </div>
-                          )}
-                          <div
-                            className="admin-drawer-kv"
-                            style={{
-                              borderTop: '1px solid #d5e5da',
-                              paddingTop: 8,
-                              marginTop: 2,
-                              fontSize: '0.96rem',
-                            }}
-                          >
-                            <strong style={{ textAlign: 'left' }}>Final Total</strong>
-                            <strong>{money(selectedOrder.pricing?.grandTotal || 0)}</strong>
-                          </div>
+
                         </div>
-                      </div>
-
-                      </div>
 
                         {/* Quick Actions */}
                         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -2324,17 +2449,17 @@ export default function Admin() {
             const filteredOnline = !pq
               ? onlineRecords
               : onlineRecords.filter((r) =>
-                  [r.orderId, r.paymentId, r.reference, r.customerName, r.customerPhone, r.status]
-                    .filter(Boolean)
-                    .some((v) => String(v).toLowerCase().includes(pq))
-                );
+                [r.orderId, r.paymentId, r.reference, r.customerName, r.customerPhone, r.status]
+                  .filter(Boolean)
+                  .some((v) => String(v).toLowerCase().includes(pq))
+              );
             const filteredCod = !pq
               ? codRecords
               : codRecords.filter((r) =>
-                  [r.orderId, r.customerName, r.customerPhone, r.paymentStatus, r.orderStatus]
-                    .filter(Boolean)
-                    .some((v) => String(v).toLowerCase().includes(pq))
-                );
+                [r.orderId, r.customerName, r.customerPhone, r.paymentStatus, r.orderStatus]
+                  .filter(Boolean)
+                  .some((v) => String(v).toLowerCase().includes(pq))
+              );
 
             const onlineCapturedSum = onlineRecords
               .filter((r) => ['captured', 'paid'].includes(r.status))
@@ -2471,13 +2596,12 @@ export default function Admin() {
                                   </td>
                                   <td>
                                     <span
-                                      className={`admin-order-pill ${
-                                        ['captured', 'paid'].includes(pay.status)
-                                          ? 'admin-pill-green'
-                                          : ['refunded', 'refund_initiated', 'failed'].includes(pay.status)
+                                      className={`admin-order-pill ${['captured', 'paid'].includes(pay.status)
+                                        ? 'admin-pill-green'
+                                        : ['refunded', 'refund_initiated', 'failed'].includes(pay.status)
                                           ? 'admin-pill-red'
                                           : 'admin-pill-amber'
-                                      }`}
+                                        }`}
                                     >
                                       {String(pay.status).replace(/_/g, ' ')}
                                     </span>
@@ -2533,21 +2657,20 @@ export default function Admin() {
                                   </td>
                                   <td>
                                     <span
-                                      className={`admin-order-pill ${
-                                        cod.convertedToOnline || cod.paymentStatus === 'paid'
-                                          ? 'admin-pill-green'
-                                          : cod.orderStatus === 'cancelled' || cod.orderStatus === 'refunded'
+                                      className={`admin-order-pill ${cod.convertedToOnline || cod.paymentStatus === 'paid'
+                                        ? 'admin-pill-green'
+                                        : cod.orderStatus === 'cancelled' || cod.orderStatus === 'refunded'
                                           ? 'admin-pill-red'
                                           : 'admin-pill-amber'
-                                      }`}
+                                        }`}
                                     >
                                       {cod.convertedToOnline
                                         ? 'COD to Online (Paid)'
                                         : cod.paymentStatus === 'paid'
-                                        ? 'Cash Collected'
-                                        : cod.orderStatus === 'cancelled'
-                                        ? 'Cancelled'
-                                        : 'COD Pending'}
+                                          ? 'Cash Collected'
+                                          : cod.orderStatus === 'cancelled'
+                                            ? 'Cancelled'
+                                            : 'COD Pending'}
                                     </span>
                                   </td>
                                 </tr>
@@ -2606,73 +2729,73 @@ export default function Admin() {
                     {filteredProducts
                       .slice((productsPage - 1) * PAGE_SIZE, productsPage * PAGE_SIZE)
                       .map((p) => (
-                      <tr key={p.id}>
-                        <td>
-                          <div className="admin-prod-cell">
-                            {p.image ? (
-                              <img src={p.image} alt={p.name} className="admin-prod-thumb" loading="lazy" />
-                            ) : (
-                              <span className="admin-prod-thumb" style={{ display: 'grid', placeItems: 'center' }}>
-                                {p.emoji}
-                              </span>
-                            )}
-                            <div>
-                              <strong>{p.name}</strong>
-                              <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
-                                {p.prepMins}m prep &bull; {p.veg ? 'Veg' : 'Non-Veg'}
+                        <tr key={p.id}>
+                          <td>
+                            <div className="admin-prod-cell">
+                              {p.image ? (
+                                <img src={p.image} alt={p.name} className="admin-prod-thumb" loading="lazy" />
+                              ) : (
+                                <span className="admin-prod-thumb" style={{ display: 'grid', placeItems: 'center' }}>
+                                  {p.emoji}
+                                </span>
+                              )}
+                              <div>
+                                <strong>{p.name}</strong>
+                                <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                                  {p.prepMins}m prep &bull; {p.veg ? 'Veg' : 'Non-Veg'}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        </td>
-                        <td style={{ textTransform: 'capitalize' }}>{p.category}</td>
-                        <td>
-                          <strong>{money(p.discountPrice || p.price)}</strong>
-                          {p.discountPrice ? (
-                            <del style={{ marginLeft: 6, color: 'var(--muted)', fontSize: '0.78rem' }}>
-                              {money(p.price)}
-                            </del>
-                          ) : null}
-                        </td>
-                        <td>
-                          <span
-                            style={{
-                              color: p.stock <= 0 ? 'var(--danger)' : 'var(--primary)',
-                              fontWeight: 700,
-                            }}
-                          >
-                            {p.stock}
-                          </span>
-                        </td>
-                        <td>
-                          <div className="admin-row-actions">
-                            <button
-                              type="button"
-                              className="admin-mini-btn"
-                              onClick={() => handleQuickStock(p, 5)}
-                              title="Add 5 stock"
+                          </td>
+                          <td style={{ textTransform: 'capitalize' }}>{p.category}</td>
+                          <td>
+                            <strong>{money(p.discountPrice || p.price)}</strong>
+                            {p.discountPrice ? (
+                              <del style={{ marginLeft: 6, color: 'var(--muted)', fontSize: '0.78rem' }}>
+                                {money(p.price)}
+                              </del>
+                            ) : null}
+                          </td>
+                          <td>
+                            <span
+                              style={{
+                                color: p.stock <= 0 ? 'var(--danger)' : 'var(--primary)',
+                                fontWeight: 700,
+                              }}
                             >
-                              +5
-                            </button>
-                            <button
-                              type="button"
-                              className="admin-mini-btn"
-                              onClick={() => openEditModal(p)}
-                              aria-label={`Edit ${p.name}`}
-                            >
-                              <FiEdit2 size={13} /> Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="admin-mini-btn admin-mini-danger"
-                              onClick={() => handleDeleteProduct(p)}
-                              aria-label={`Delete ${p.name}`}
-                            >
-                              <FiTrash2 size={13} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              {p.stock}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="admin-row-actions">
+                              <button
+                                type="button"
+                                className="admin-mini-btn"
+                                onClick={() => handleQuickStock(p, 5)}
+                                title="Add 5 stock"
+                              >
+                                +5
+                              </button>
+                              <button
+                                type="button"
+                                className="admin-mini-btn"
+                                onClick={() => openEditModal(p)}
+                                aria-label={`Edit ${p.name}`}
+                              >
+                                <FiEdit2 size={13} /> Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="admin-mini-btn admin-mini-danger"
+                                onClick={() => handleDeleteProduct(p)}
+                                aria-label={`Delete ${p.name}`}
+                              >
+                                <FiTrash2 size={13} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                   </tbody>
                 </table>
               </div>
@@ -2777,515 +2900,512 @@ export default function Admin() {
             );
 
             return (
-            <div className="admin-coupons-stack">
-              <div className="admin-kpi-grid">
-                <div className="admin-kpi-card">
-                  <div>
-                    <span>Total Coupons</span>
-                    <strong>{coupons.length}</strong>
+              <div className="admin-coupons-stack">
+                <div className="admin-kpi-grid">
+                  <div className="admin-kpi-card">
+                    <div>
+                      <span>Total Coupons</span>
+                      <strong>{coupons.length}</strong>
+                    </div>
+                    <div className="admin-kpi-icon"><FiTag size={18} /></div>
                   </div>
-                  <div className="admin-kpi-icon"><FiTag size={18} /></div>
-                </div>
-                <div className="admin-kpi-card">
-                  <div>
-                    <span>Active / Expired</span>
-                    <strong>{activeCouponsCount} / {expiredCouponsCount}</strong>
+                  <div className="admin-kpi-card">
+                    <div>
+                      <span>Active / Expired</span>
+                      <strong>{activeCouponsCount} / {expiredCouponsCount}</strong>
+                    </div>
+                    <div className="admin-kpi-icon admin-kpi-icon-blue"><FiCalendar size={18} /></div>
                   </div>
-                  <div className="admin-kpi-icon admin-kpi-icon-blue"><FiCalendar size={18} /></div>
-                </div>
-                <div className="admin-kpi-card">
-                  <div>
-                    <span>Public / Private</span>
-                    <strong>{publicCount} / {privateCount}</strong>
+                  <div className="admin-kpi-card">
+                    <div>
+                      <span>Public / Private</span>
+                      <strong>{publicCount} / {privateCount}</strong>
+                    </div>
+                    <div className="admin-kpi-icon admin-kpi-icon-orange"><FiShield size={18} /></div>
                   </div>
-                  <div className="admin-kpi-icon admin-kpi-icon-orange"><FiShield size={18} /></div>
-                </div>
-                <div className="admin-kpi-card">
-                  <div>
-                    <span>Redemptions</span>
-                    <strong>{redeemedRows.length}</strong>
+                  <div className="admin-kpi-card">
+                    <div>
+                      <span>Redemptions</span>
+                      <strong>{redeemedRows.length}</strong>
+                    </div>
+                    <div className="admin-kpi-icon"><FiShoppingBag size={18} /></div>
                   </div>
-                  <div className="admin-kpi-icon"><FiShoppingBag size={18} /></div>
-                </div>
-                <div className="admin-kpi-card">
-                  <div>
-                    <span>Discounts Given</span>
-                    <strong>{money(totalDiscountGiven)}</strong>
+                  <div className="admin-kpi-card">
+                    <div>
+                      <span>Discounts Given</span>
+                      <strong>{money(totalDiscountGiven)}</strong>
+                    </div>
+                    <div className="admin-kpi-icon admin-kpi-icon-orange"><FiGift size={18} /></div>
                   </div>
-                  <div className="admin-kpi-icon admin-kpi-icon-orange"><FiGift size={18} /></div>
                 </div>
-              </div>
 
-            <div className="admin-coupons-stack">
-              <section className="admin-panel">
-                <div className="admin-panel-head">
-                  <h2>Coupons &amp; Offers ({coupons.length})</h2>
-                </div>
-                <div className="admin-table-wrap admin-orders-table-wrap">
-                  <table className="admin-table admin-orders-table admin-coupons-mobile-cards">
-                    <thead>
-                      <tr>
-                        <th>Code &amp; Visibility</th>
-                        <th>Discount</th>
-                        <th>Eligibility &amp; Validity</th>
-                        <th>Usage &amp; Status</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {coupons.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="admin-empty-cell">
-                            No coupons created yet. Use the form below to create one.
-                          </td>
-                        </tr>
-                      ) : coupons.map((c) => {
-                        const isScheduled = Boolean(c.validFrom && todayIso < c.validFrom);
-                        const isExpired = Boolean(c.validUntil && todayIso > c.validUntil);
-                        const statusLabel = c.active === false
-                          ? 'Inactive'
-                          : isExpired
-                          ? 'Expired'
-                          : isScheduled
-                          ? 'Scheduled'
-                          : 'Active';
-                        const usedFromRedemptions = redeemedRows.filter((r) => r.couponCode === c.code);
-                        const usedOrdersFallback = allOrders.filter(
-                          (o) =>
-                            o.pricing?.couponCode === c.code &&
-                            !['cancelled', 'refunded', 'refund_initiated', 'payment_pending'].includes(o.status)
-                        );
-                        const usedCount = Math.max(usedFromRedemptions.length, usedOrdersFallback.length);
-                        const totalDiscounted = (usedFromRedemptions.length > 0 ? usedFromRedemptions : usedOrdersFallback).reduce(
-                          (sum, row) => sum + Number(row.discountAmount ?? row.pricing?.couponDiscount ?? 0),
-                          0
-                        );
-                        const gLimit = Number(c.globalUsageLimit || 0);
-                        return (
-                        <tr key={c.code}>
-                          <td>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                              <strong>{c.code}</strong>
-                              <span
-                                className={`admin-order-pill ${
-                                  c.visibility === 'private' ? 'admin-pill-purple' : 'admin-pill-green'
-                                }`}
-                                style={{ fontSize: '0.64rem', padding: '2px 7px' }}
-                              >
-                                {c.visibility === 'private' ? 'Private' : 'Public'}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{c.title}</div>
-                          </td>
-                          <td>
-                            {c.type === 'fixed_total'
-                              ? `Pay Fixed ₹${c.value}`
-                              : c.type === 'percent'
-                              ? `${c.value}% (up to ₹${c.maxDiscount})`
-                              : `Flat ₹${c.value}`}
-                            <div style={{ fontSize: '0.73rem', color: 'var(--muted)' }}>
-                              Min: {money(c.minOrder || 0)}
-                            </div>
-                          </td>
-                          <td style={{ fontSize: '0.76rem' }}>
-                            <div>{c.firstOrderOnly ? 'First order per new customer' : 'All eligible customers'}</div>
-                            <div style={{ color: 'var(--muted)' }}>
-                              {c.validFrom || c.validUntil
-                                ? `${c.validFrom || 'Now'} → ${c.validUntil || 'No expiry'}`
-                                : 'No expiry'}
-                            </div>
-                            <div style={{ color: 'var(--muted)' }}>
-                              {Array.isArray(c.eligibleProductIds) && c.eligibleProductIds.length > 0
-                                ? `${c.eligibleProductIds.length} product(s)`
-                                : Array.isArray(c.eligibleCategories) && c.eligibleCategories.length > 0
-                                ? `${c.eligibleCategories.length} category(s)`
-                                : 'All items'}
-                              {Array.isArray(c.allowedUserEmails) && c.allowedUserEmails.length > 0
-                                ? ` • ${c.allowedUserEmails.length} customer(s)`
-                                : ''}
-                            </div>
-                          </td>
-                          <td>
-                            <span
-                              className={`admin-order-pill ${
-                                statusLabel === 'Active'
-                                  ? 'admin-pill-green'
-                                  : statusLabel === 'Scheduled'
-                                  ? 'admin-pill-blue'
-                                  : 'admin-pill-red'
-                              }`}
-                              style={{ fontSize: '0.64rem', padding: '2px 7px' }}
-                            >
-                              {statusLabel}
-                            </span>
-                            <div style={{ fontSize: '0.74rem', color: 'var(--muted)', marginTop: 4 }}>
-                              Used: <strong>{usedCount}</strong>
-                              {gLimit > 0 ? ` / ${gLimit} (${Math.max(0, gLimit - usedCount)} left)` : ' / ∞'} &bull;{' '}
-                              {money(totalDiscounted)}
-                            </div>
-                          </td>
-                          <td>
-                            <div className="admin-row-actions">
-                              <button
-                                type="button"
-                                className="admin-mini-btn"
-                                onClick={() =>
-                                  setCouponForm({
-                                    code: c.code,
-                                    title: c.title || '',
-                                    type: c.type || 'percent',
-                                    value: c.value || 10,
-                                    minOrder: c.minOrder || 0,
-                                    maxDiscount: c.maxDiscount || 100,
-                                    visibility: c.visibility === 'private' ? 'private' : 'public',
-                                    validFrom: c.validFrom || '',
-                                    validUntil: c.validUntil || '',
-                                    eligibleProductIds: Array.isArray(c.eligibleProductIds) ? c.eligibleProductIds : [],
-                                    eligibleCategories: Array.isArray(c.eligibleCategories) ? c.eligibleCategories : [],
-                                    allowedUserEmails: Array.isArray(c.allowedUserEmails) ? c.allowedUserEmails.join(', ') : '',
-                                    perUserLimit: Number(c.perUserLimit || 0),
-                                    globalUsageLimit: Number(c.globalUsageLimit || 0),
-                                    restoreOnCancel: c.restoreOnCancel !== false,
-                                    firstOrderOnly: Boolean(c.firstOrderOnly),
-                                    active: c.active !== false,
-                                  })
-                                }
-                              >
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                className="admin-mini-btn"
-                                onClick={() => handleToggleCouponActive(c)}
-                              >
-                                {c.active === false ? 'Activate' : 'Deactivate'}
-                              </button>
-                              <button
-                                type="button"
-                                className="admin-mini-btn admin-mini-danger"
-                                onClick={() => handleDeleteCoupon(c.code)}
-                              >
-                                <FiTrash2 size={13} /> Delete
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              <div className="admin-coupons-bottom-grid">
-              <section className="admin-panel">
-                <div className="admin-panel-head">
-                  <h2>Create / Update Coupon</h2>
-                  {couponForm.code && (
-                    <button
-                      type="button"
-                      className="admin-mini-btn"
-                      onClick={() =>
-                        setCouponForm({
-                          code: '',
-                          title: '',
-                          type: 'percent',
-                          value: 15,
-                          minOrder: 100,
-                          maxDiscount: 60,
-                          visibility: 'public',
-                          validFrom: '',
-                          validUntil: '',
-                          eligibleProductIds: [],
-                          eligibleCategories: [],
-                          allowedUserEmails: '',
-                          perUserLimit: 0,
-                          globalUsageLimit: 0,
-                          restoreOnCancel: true,
-                          firstOrderOnly: false,
-                          active: true,
-                        })
-                      }
-                    >
-                      Reset Form
-                    </button>
-                  )}
-                </div>
-                <form className="admin-form" onSubmit={handleSaveCoupon}>
-                  <div className="admin-coupon-form-grid">
-                    <div className="admin-field">
-                      <label htmlFor="cp-code">Coupon Code</label>
-                      <input
-                        id="cp-code"
-                        type="text"
-                        required
-                        value={couponForm.code}
-                        onChange={(e) => setCouponForm({ ...couponForm, code: e.target.value.toUpperCase() })}
-                        placeholder="e.g. FESTIVE25"
-                      />
+                <div className="admin-coupons-stack">
+                  <section className="admin-panel">
+                    <div className="admin-panel-head">
+                      <h2>Coupons &amp; Offers ({coupons.length})</h2>
                     </div>
-                    <div className="admin-field">
-                      <label htmlFor="cp-type">Discount Type</label>
-                      <select
-                        id="cp-type"
-                        value={couponForm.type}
-                        onChange={(e) => setCouponForm({ ...couponForm, type: e.target.value })}
-                      >
-                        <option value="percent">Percentage (%)</option>
-                        <option value="flat">Flat Amount (₹)</option>
-                        <option value="fixed_total">Pay Fixed Total (₹)</option>
-                      </select>
-                    </div>
-                    <div className="admin-field">
-                      <label htmlFor="cp-vis">Visibility</label>
-                      <select
-                        id="cp-vis"
-                        value={couponForm.visibility}
-                        onChange={(e) => setCouponForm({ ...couponForm, visibility: e.target.value })}
-                      >
-                        <option value="public">Public (Visible to customers)</option>
-                        <option value="private">Private (Hidden code only)</option>
-                      </select>
-                    </div>
-
-                    <div className="admin-field admin-coupon-span-2">
-                      <label htmlFor="cp-title">Offer Description</label>
-                      <input
-                        id="cp-title"
-                        type="text"
-                        required
-                        value={couponForm.title}
-                        onChange={(e) => setCouponForm({ ...couponForm, title: e.target.value })}
-                        placeholder="e.g. 25% OFF on orders above ₹150"
-                      />
-                    </div>
-                    <div className="admin-field">
-                      <label htmlFor="cp-val">
-                        {couponForm.type === 'fixed_total' ? 'Final Payable Amount (₹)' : 'Discount Value'}
-                      </label>
-                      <input
-                        id="cp-val"
-                        type="number"
-                        min="1"
-                        required
-                        value={couponForm.value}
-                        onChange={(e) => setCouponForm({ ...couponForm, value: Number(e.target.value) })}
-                      />
-                    </div>
-
-                    <div className="admin-field">
-                      <label htmlFor="cp-max">Max Discount (₹)</label>
-                      <input
-                        id="cp-max"
-                        type="number"
-                        min="1"
-                        value={couponForm.maxDiscount}
-                        onChange={(e) => setCouponForm({ ...couponForm, maxDiscount: Number(e.target.value) })}
-                      />
-                    </div>
-                    <div className="admin-field">
-                      <label htmlFor="cp-min">Min Order (₹)</label>
-                      <input
-                        id="cp-min"
-                        type="number"
-                        min="0"
-                        value={couponForm.minOrder}
-                        onChange={(e) => setCouponForm({ ...couponForm, minOrder: Number(e.target.value) })}
-                      />
-                    </div>
-                    <div className="admin-field">
-                      <label htmlFor="cp-per-user">Per-Customer Limit (0 = unlimited)</label>
-                      <input
-                        id="cp-per-user"
-                        type="number"
-                        min="0"
-                        value={couponForm.perUserLimit}
-                        onChange={(e) => setCouponForm({ ...couponForm, perUserLimit: Number(e.target.value) })}
-                      />
-                    </div>
-
-                    <div className="admin-field">
-                      <label htmlFor="cp-global-limit">Global Usage Limit (0 = unlimited)</label>
-                      <input
-                        id="cp-global-limit"
-                        type="number"
-                        min="0"
-                        value={couponForm.globalUsageLimit}
-                        onChange={(e) => setCouponForm({ ...couponForm, globalUsageLimit: Number(e.target.value) })}
-                      />
-                    </div>
-                    <div className="admin-field">
-                      <label htmlFor="cp-from">Valid From (optional)</label>
-                      <input
-                        id="cp-from"
-                        type="date"
-                        value={couponForm.validFrom}
-                        onChange={(e) => setCouponForm({ ...couponForm, validFrom: e.target.value })}
-                      />
-                    </div>
-                    <div className="admin-field">
-                      <label htmlFor="cp-until">Valid Until (optional)</label>
-                      <input
-                        id="cp-until"
-                        type="date"
-                        value={couponForm.validUntil}
-                        onChange={(e) => setCouponForm({ ...couponForm, validUntil: e.target.value })}
-                      />
-                    </div>
-
-                    <div className="admin-field admin-coupon-span-full">
-                      <label htmlFor="cp-emails">Customer-Specific Emails (comma-separated, optional)</label>
-                      <input
-                        id="cp-emails"
-                        type="text"
-                        value={couponForm.allowedUserEmails}
-                        onChange={(e) => setCouponForm({ ...couponForm, allowedUserEmails: e.target.value })}
-                        placeholder="e.g. vip1@gmail.com, vip2@gmail.com (leave empty for all customers)"
-                      />
-                    </div>
-
-                    <div className="admin-field admin-coupon-span-full">
-                      <label>Eligible Categories (optional — leave unselected for all)</label>
-                      <div className="admin-chip-picker">
-                        {categories.map((cat) => {
-                          const selected = couponForm.eligibleCategories.includes(cat.id);
-                          return (
-                            <button
-                              key={cat.id}
-                              type="button"
-                              className={`admin-chip-opt ${selected ? 'admin-chip-opt-active' : ''}`.trim()}
-                              onClick={() =>
-                                setCouponForm({
-                                  ...couponForm,
-                                  eligibleCategories: selected
-                                    ? couponForm.eligibleCategories.filter((x) => x !== cat.id)
-                                    : [...couponForm.eligibleCategories, cat.id],
-                                })
-                              }
-                            >
-                              {cat.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="admin-field admin-coupon-span-full">
-                      <label>Eligible Products (optional — leave unselected for all)</label>
-                      <div className="admin-chip-picker">
-                        {products.map((p) => {
-                          const selected = couponForm.eligibleProductIds.includes(p.id);
-                          return (
-                            <button
-                              key={p.id}
-                              type="button"
-                              className={`admin-chip-opt ${selected ? 'admin-chip-opt-active' : ''}`.trim()}
-                              onClick={() =>
-                                setCouponForm({
-                                  ...couponForm,
-                                  eligibleProductIds: selected
-                                    ? couponForm.eligibleProductIds.filter((x) => x !== p.id)
-                                    : [...couponForm.eligibleProductIds, p.id],
-                                })
-                              }
-                            >
-                              {p.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="admin-checks" style={{ paddingTop: 4 }}>
-                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <input
-                        type="checkbox"
-                        checked={couponForm.firstOrderOnly}
-                        onChange={(e) => setCouponForm({ ...couponForm, firstOrderOnly: e.target.checked })}
-                      />
-                      First Order Only (New Customers)
-                    </label>
-                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <input
-                        type="checkbox"
-                        checked={couponForm.restoreOnCancel}
-                        onChange={(e) => setCouponForm({ ...couponForm, restoreOnCancel: e.target.checked })}
-                      />
-                      Restore on Cancel/Refund
-                    </label>
-                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <input
-                        type="checkbox"
-                        checked={couponForm.active}
-                        onChange={(e) => setCouponForm({ ...couponForm, active: e.target.checked })}
-                      />
-                      Active
-                    </label>
-                  </div>
-                  <div>
-                    <Button type="submit" size="sm">
-                      Save Coupon
-                    </Button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="admin-panel">
-                <div className="admin-panel-head">
-                  <h2>Coupon Redemption History ({redemptions.length})</h2>
-                </div>
-                {redemptions.length === 0 ? (
-                  <p style={{ color: 'var(--muted)', fontSize: '0.88rem' }}>
-                    No coupon redemptions recorded yet.
-                  </p>
-                ) : (
-                  <div className="admin-table-wrap admin-orders-table-wrap">
-                    <table className="admin-table admin-orders-table">
-                      <thead>
-                        <tr>
-                          <th>Coupon</th>
-                          <th>Customer</th>
-                          <th>Order ID</th>
-                          <th>Discount</th>
-                          <th>Status</th>
-                          <th>Date</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {redemptions.slice(0, 25).map((r) => (
-                          <tr key={r.id}>
-                            <td><strong>{r.couponCode}</strong></td>
-                            <td>{r.customerEmail || r.customerId}</td>
-                            <td><strong>{r.orderId}</strong></td>
-                            <td>{money(r.discountAmount)}</td>
-                            <td>
-                              <span
-                                className={`admin-order-pill ${
-                                  r.status === 'redeemed'
-                                    ? 'admin-pill-green'
-                                    : r.status === 'pending'
-                                    ? 'admin-pill-amber'
-                                    : 'admin-pill-red'
-                                }`}
-                                style={{ fontSize: '0.64rem', padding: '2px 7px' }}
-                              >
-                                {r.status}
-                              </span>
-                            </td>
-                            <td style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
-                              {r.redeemedAt ? new Date(r.redeemedAt).toLocaleString('en-IN') : '—'}
-                            </td>
+                    <div className="admin-table-wrap admin-orders-table-wrap">
+                      <table className="admin-table admin-orders-table admin-coupons-mobile-cards">
+                        <thead>
+                          <tr>
+                            <th>Code &amp; Visibility</th>
+                            <th>Discount</th>
+                            <th>Eligibility &amp; Validity</th>
+                            <th>Usage &amp; Status</th>
+                            <th>Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {coupons.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="admin-empty-cell">
+                                No coupons created yet. Use the form below to create one.
+                              </td>
+                            </tr>
+                          ) : coupons.map((c) => {
+                            const isScheduled = Boolean(c.validFrom && todayIso < c.validFrom);
+                            const isExpired = Boolean(c.validUntil && todayIso > c.validUntil);
+                            const statusLabel = c.active === false
+                              ? 'Inactive'
+                              : isExpired
+                                ? 'Expired'
+                                : isScheduled
+                                  ? 'Scheduled'
+                                  : 'Active';
+                            const usedFromRedemptions = redeemedRows.filter((r) => r.couponCode === c.code);
+                            const usedOrdersFallback = allOrders.filter(
+                              (o) =>
+                                o.pricing?.couponCode === c.code &&
+                                !['cancelled', 'refunded', 'refund_initiated', 'payment_pending'].includes(o.status)
+                            );
+                            const usedCount = Math.max(usedFromRedemptions.length, usedOrdersFallback.length);
+                            const totalDiscounted = (usedFromRedemptions.length > 0 ? usedFromRedemptions : usedOrdersFallback).reduce(
+                              (sum, row) => sum + Number(row.discountAmount ?? row.pricing?.couponDiscount ?? 0),
+                              0
+                            );
+                            const gLimit = Number(c.globalUsageLimit || 0);
+                            return (
+                              <tr key={c.code}>
+                                <td>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                    <strong>{c.code}</strong>
+                                    <span
+                                      className={`admin-order-pill ${c.visibility === 'private' ? 'admin-pill-purple' : 'admin-pill-green'
+                                        }`}
+                                      style={{ fontSize: '0.64rem', padding: '2px 7px' }}
+                                    >
+                                      {c.visibility === 'private' ? 'Private' : 'Public'}
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{c.title}</div>
+                                </td>
+                                <td>
+                                  {c.type === 'fixed_total'
+                                    ? `Pay Fixed ₹${c.value}`
+                                    : c.type === 'percent'
+                                      ? `${c.value}% (up to ₹${c.maxDiscount})`
+                                      : `Flat ₹${c.value}`}
+                                  <div style={{ fontSize: '0.73rem', color: 'var(--muted)' }}>
+                                    Min: {money(c.minOrder || 0)}
+                                  </div>
+                                </td>
+                                <td style={{ fontSize: '0.76rem' }}>
+                                  <div>{c.firstOrderOnly ? 'First order per new customer' : 'All eligible customers'}</div>
+                                  <div style={{ color: 'var(--muted)' }}>
+                                    {c.validFrom || c.validUntil
+                                      ? `${c.validFrom || 'Now'} → ${c.validUntil || 'No expiry'}`
+                                      : 'No expiry'}
+                                  </div>
+                                  <div style={{ color: 'var(--muted)' }}>
+                                    {Array.isArray(c.eligibleProductIds) && c.eligibleProductIds.length > 0
+                                      ? `${c.eligibleProductIds.length} product(s)`
+                                      : Array.isArray(c.eligibleCategories) && c.eligibleCategories.length > 0
+                                        ? `${c.eligibleCategories.length} category(s)`
+                                        : 'All items'}
+                                    {Array.isArray(c.allowedUserEmails) && c.allowedUserEmails.length > 0
+                                      ? ` • ${c.allowedUserEmails.length} customer(s)`
+                                      : ''}
+                                  </div>
+                                </td>
+                                <td>
+                                  <span
+                                    className={`admin-order-pill ${statusLabel === 'Active'
+                                      ? 'admin-pill-green'
+                                      : statusLabel === 'Scheduled'
+                                        ? 'admin-pill-blue'
+                                        : 'admin-pill-red'
+                                      }`}
+                                    style={{ fontSize: '0.64rem', padding: '2px 7px' }}
+                                  >
+                                    {statusLabel}
+                                  </span>
+                                  <div style={{ fontSize: '0.74rem', color: 'var(--muted)', marginTop: 4 }}>
+                                    Used: <strong>{usedCount}</strong>
+                                    {gLimit > 0 ? ` / ${gLimit} (${Math.max(0, gLimit - usedCount)} left)` : ' / ∞'} &bull;{' '}
+                                    {money(totalDiscounted)}
+                                  </div>
+                                </td>
+                                <td>
+                                  <div className="admin-row-actions">
+                                    <button
+                                      type="button"
+                                      className="admin-mini-btn"
+                                      onClick={() =>
+                                        setCouponForm({
+                                          code: c.code,
+                                          title: c.title || '',
+                                          type: c.type || 'percent',
+                                          value: c.value || 10,
+                                          minOrder: c.minOrder || 0,
+                                          maxDiscount: c.maxDiscount || 100,
+                                          visibility: c.visibility === 'private' ? 'private' : 'public',
+                                          validFrom: c.validFrom || '',
+                                          validUntil: c.validUntil || '',
+                                          eligibleProductIds: Array.isArray(c.eligibleProductIds) ? c.eligibleProductIds : [],
+                                          eligibleCategories: Array.isArray(c.eligibleCategories) ? c.eligibleCategories : [],
+                                          allowedUserEmails: Array.isArray(c.allowedUserEmails) ? c.allowedUserEmails.join(', ') : '',
+                                          perUserLimit: Number(c.perUserLimit || 0),
+                                          globalUsageLimit: Number(c.globalUsageLimit || 0),
+                                          restoreOnCancel: c.restoreOnCancel !== false,
+                                          firstOrderOnly: Boolean(c.firstOrderOnly),
+                                          active: c.active !== false,
+                                        })
+                                      }
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="admin-mini-btn"
+                                      onClick={() => handleToggleCouponActive(c)}
+                                    >
+                                      {c.active === false ? 'Activate' : 'Deactivate'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="admin-mini-btn admin-mini-danger"
+                                      onClick={() => handleDeleteCoupon(c.code)}
+                                    >
+                                      <FiTrash2 size={13} /> Delete
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+
+                  <div className="admin-coupons-bottom-grid">
+                    <section className="admin-panel">
+                      <div className="admin-panel-head">
+                        <h2>Create / Update Coupon</h2>
+                        {couponForm.code && (
+                          <button
+                            type="button"
+                            className="admin-mini-btn"
+                            onClick={() =>
+                              setCouponForm({
+                                code: '',
+                                title: '',
+                                type: 'percent',
+                                value: 15,
+                                minOrder: 100,
+                                maxDiscount: 60,
+                                visibility: 'public',
+                                validFrom: '',
+                                validUntil: '',
+                                eligibleProductIds: [],
+                                eligibleCategories: [],
+                                allowedUserEmails: '',
+                                perUserLimit: 0,
+                                globalUsageLimit: 0,
+                                restoreOnCancel: true,
+                                firstOrderOnly: false,
+                                active: true,
+                              })
+                            }
+                          >
+                            Reset Form
+                          </button>
+                        )}
+                      </div>
+                      <form className="admin-form" onSubmit={handleSaveCoupon}>
+                        <div className="admin-coupon-form-grid">
+                          <div className="admin-field">
+                            <label htmlFor="cp-code">Coupon Code</label>
+                            <input
+                              id="cp-code"
+                              type="text"
+                              required
+                              value={couponForm.code}
+                              onChange={(e) => setCouponForm({ ...couponForm, code: e.target.value.toUpperCase() })}
+                              placeholder="e.g. FESTIVE25"
+                            />
+                          </div>
+                          <div className="admin-field">
+                            <label htmlFor="cp-type">Discount Type</label>
+                            <select
+                              id="cp-type"
+                              value={couponForm.type}
+                              onChange={(e) => setCouponForm({ ...couponForm, type: e.target.value })}
+                            >
+                              <option value="percent">Percentage (%)</option>
+                              <option value="flat">Flat Amount (₹)</option>
+                              <option value="fixed_total">Pay Fixed Total (₹)</option>
+                            </select>
+                          </div>
+                          <div className="admin-field">
+                            <label htmlFor="cp-vis">Visibility</label>
+                            <select
+                              id="cp-vis"
+                              value={couponForm.visibility}
+                              onChange={(e) => setCouponForm({ ...couponForm, visibility: e.target.value })}
+                            >
+                              <option value="public">Public (Visible to customers)</option>
+                              <option value="private">Private (Hidden code only)</option>
+                            </select>
+                          </div>
+
+                          <div className="admin-field admin-coupon-span-2">
+                            <label htmlFor="cp-title">Offer Description</label>
+                            <input
+                              id="cp-title"
+                              type="text"
+                              required
+                              value={couponForm.title}
+                              onChange={(e) => setCouponForm({ ...couponForm, title: e.target.value })}
+                              placeholder="e.g. 25% OFF on orders above ₹150"
+                            />
+                          </div>
+                          <div className="admin-field">
+                            <label htmlFor="cp-val">
+                              {couponForm.type === 'fixed_total' ? 'Final Payable Amount (₹)' : 'Discount Value'}
+                            </label>
+                            <input
+                              id="cp-val"
+                              type="number"
+                              min="1"
+                              required
+                              value={couponForm.value}
+                              onChange={(e) => setCouponForm({ ...couponForm, value: Number(e.target.value) })}
+                            />
+                          </div>
+
+                          <div className="admin-field">
+                            <label htmlFor="cp-max">Max Discount (₹)</label>
+                            <input
+                              id="cp-max"
+                              type="number"
+                              min="1"
+                              value={couponForm.maxDiscount}
+                              onChange={(e) => setCouponForm({ ...couponForm, maxDiscount: Number(e.target.value) })}
+                            />
+                          </div>
+                          <div className="admin-field">
+                            <label htmlFor="cp-min">Min Order (₹)</label>
+                            <input
+                              id="cp-min"
+                              type="number"
+                              min="0"
+                              value={couponForm.minOrder}
+                              onChange={(e) => setCouponForm({ ...couponForm, minOrder: Number(e.target.value) })}
+                            />
+                          </div>
+                          <div className="admin-field">
+                            <label htmlFor="cp-per-user">Per-Customer Limit (0 = unlimited)</label>
+                            <input
+                              id="cp-per-user"
+                              type="number"
+                              min="0"
+                              value={couponForm.perUserLimit}
+                              onChange={(e) => setCouponForm({ ...couponForm, perUserLimit: Number(e.target.value) })}
+                            />
+                          </div>
+
+                          <div className="admin-field">
+                            <label htmlFor="cp-global-limit">Global Usage Limit (0 = unlimited)</label>
+                            <input
+                              id="cp-global-limit"
+                              type="number"
+                              min="0"
+                              value={couponForm.globalUsageLimit}
+                              onChange={(e) => setCouponForm({ ...couponForm, globalUsageLimit: Number(e.target.value) })}
+                            />
+                          </div>
+                          <div className="admin-field">
+                            <label htmlFor="cp-from">Valid From (optional)</label>
+                            <input
+                              id="cp-from"
+                              type="date"
+                              value={couponForm.validFrom}
+                              onChange={(e) => setCouponForm({ ...couponForm, validFrom: e.target.value })}
+                            />
+                          </div>
+                          <div className="admin-field">
+                            <label htmlFor="cp-until">Valid Until (optional)</label>
+                            <input
+                              id="cp-until"
+                              type="date"
+                              value={couponForm.validUntil}
+                              onChange={(e) => setCouponForm({ ...couponForm, validUntil: e.target.value })}
+                            />
+                          </div>
+
+                          <div className="admin-field admin-coupon-span-full">
+                            <label htmlFor="cp-emails">Customer-Specific Emails (comma-separated, optional)</label>
+                            <input
+                              id="cp-emails"
+                              type="text"
+                              value={couponForm.allowedUserEmails}
+                              onChange={(e) => setCouponForm({ ...couponForm, allowedUserEmails: e.target.value })}
+                              placeholder="e.g. vip1@gmail.com, vip2@gmail.com (leave empty for all customers)"
+                            />
+                          </div>
+
+                          <div className="admin-field admin-coupon-span-full">
+                            <label>Eligible Categories (optional — leave unselected for all)</label>
+                            <div className="admin-chip-picker">
+                              {categories.map((cat) => {
+                                const selected = couponForm.eligibleCategories.includes(cat.id);
+                                return (
+                                  <button
+                                    key={cat.id}
+                                    type="button"
+                                    className={`admin-chip-opt ${selected ? 'admin-chip-opt-active' : ''}`.trim()}
+                                    onClick={() =>
+                                      setCouponForm({
+                                        ...couponForm,
+                                        eligibleCategories: selected
+                                          ? couponForm.eligibleCategories.filter((x) => x !== cat.id)
+                                          : [...couponForm.eligibleCategories, cat.id],
+                                      })
+                                    }
+                                  >
+                                    {cat.name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="admin-field admin-coupon-span-full">
+                            <label>Eligible Products (optional — leave unselected for all)</label>
+                            <div className="admin-chip-picker">
+                              {products.map((p) => {
+                                const selected = couponForm.eligibleProductIds.includes(p.id);
+                                return (
+                                  <button
+                                    key={p.id}
+                                    type="button"
+                                    className={`admin-chip-opt ${selected ? 'admin-chip-opt-active' : ''}`.trim()}
+                                    onClick={() =>
+                                      setCouponForm({
+                                        ...couponForm,
+                                        eligibleProductIds: selected
+                                          ? couponForm.eligibleProductIds.filter((x) => x !== p.id)
+                                          : [...couponForm.eligibleProductIds, p.id],
+                                      })
+                                    }
+                                  >
+                                    {p.name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="admin-checks" style={{ paddingTop: 4 }}>
+                          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <input
+                              type="checkbox"
+                              checked={couponForm.firstOrderOnly}
+                              onChange={(e) => setCouponForm({ ...couponForm, firstOrderOnly: e.target.checked })}
+                            />
+                            First Order Only (New Customers)
+                          </label>
+                          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <input
+                              type="checkbox"
+                              checked={couponForm.restoreOnCancel}
+                              onChange={(e) => setCouponForm({ ...couponForm, restoreOnCancel: e.target.checked })}
+                            />
+                            Restore on Cancel/Refund
+                          </label>
+                          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <input
+                              type="checkbox"
+                              checked={couponForm.active}
+                              onChange={(e) => setCouponForm({ ...couponForm, active: e.target.checked })}
+                            />
+                            Active
+                          </label>
+                        </div>
+                        <div>
+                          <Button type="submit" size="sm">
+                            Save Coupon
+                          </Button>
+                        </div>
+                      </form>
+                    </section>
+
+                    <section className="admin-panel">
+                      <div className="admin-panel-head">
+                        <h2>Coupon Redemption History ({redemptions.length})</h2>
+                      </div>
+                      {redemptions.length === 0 ? (
+                        <p style={{ color: 'var(--muted)', fontSize: '0.88rem' }}>
+                          No coupon redemptions recorded yet.
+                        </p>
+                      ) : (
+                        <div className="admin-table-wrap admin-orders-table-wrap">
+                          <table className="admin-table admin-orders-table">
+                            <thead>
+                              <tr>
+                                <th>Coupon</th>
+                                <th>Customer</th>
+                                <th>Order ID</th>
+                                <th>Discount</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {redemptions.slice(0, 25).map((r) => (
+                                <tr key={r.id}>
+                                  <td><strong>{r.couponCode}</strong></td>
+                                  <td>{r.customerEmail || r.customerId}</td>
+                                  <td><strong>{r.orderId}</strong></td>
+                                  <td>{money(r.discountAmount)}</td>
+                                  <td>
+                                    <span
+                                      className={`admin-order-pill ${r.status === 'redeemed'
+                                        ? 'admin-pill-green'
+                                        : r.status === 'pending'
+                                          ? 'admin-pill-amber'
+                                          : 'admin-pill-red'
+                                        }`}
+                                      style={{ fontSize: '0.64rem', padding: '2px 7px' }}
+                                    >
+                                      {r.status}
+                                    </span>
+                                  </td>
+                                  <td style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                                    {r.redeemedAt ? new Date(r.redeemedAt).toLocaleString('en-IN') : '—'}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </section>
                   </div>
-                )}
-              </section>
+                </div>
               </div>
-            </div>
-            </div>
             );
           })()}
 
@@ -3373,6 +3493,85 @@ export default function Admin() {
             </div>
           )}
 
+          {activeTab === 'inbox' && (
+            <section className="admin-panel">
+              <div className="admin-panel-head">
+                <h2>Contact Us Inbox ({contactMessages.length})</h2>
+                <span className="admin-badge">
+                  {contactMessages.filter((m) => m.status === 'open').length} Open
+                </span>
+              </div>
+              <div className="admin-table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Customer</th>
+                      <th>Message</th>
+                      <th>Received</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contactMessages.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="admin-empty-cell">
+                          No Contact Us messages yet. Messages submitted from /contact will appear here.
+                        </td>
+                      </tr>
+                    ) : (
+                      contactMessages.map((msg) => (
+                        <tr key={msg.id}>
+                          <td>
+                            <strong>{msg.name}</strong>
+                            <div className="admin-order-meta">
+                              <a href={`mailto:${msg.email}`} style={{ color: 'var(--primary)' }}>
+                                {msg.email}
+                              </a>
+                            </div>
+                          </td>
+                          <td style={{ maxWidth: 380, whiteSpace: 'normal' }}>{msg.message}</td>
+                          <td className="admin-order-meta">
+                            {msg.createdAt ? new Date(msg.createdAt).toLocaleString('en-IN') : '—'}
+                          </td>
+                          <td>
+                            <span
+                              className={`admin-order-pill ${
+                                msg.status === 'resolved' ? 'admin-pill-green' : 'admin-pill-amber'
+                              }`}
+                            >
+                              {msg.status}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="admin-row-actions">
+                              <button
+                                type="button"
+                                className="admin-mini-btn"
+                                onClick={() => handleToggleContactStatus(msg)}
+                              >
+                                {msg.status === 'resolved' ? 'Reopen' : 'Mark Resolved'}
+                              </button>
+                              {user?.role === 'admin' && (
+                                <button
+                                  type="button"
+                                  className="admin-mini-btn admin-mini-danger"
+                                  onClick={() => handleDeleteContactMessage(msg.id)}
+                                >
+                                  <FiTrash2 size={13} /> Delete
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
           {activeTab === 'customers' && (
             <section className="admin-panel">
               <div className="admin-panel-head">
@@ -3422,6 +3621,131 @@ export default function Admin() {
           {/* Phase 5: Business Settings & Delivery Slots */}
           {activeTab === 'settings' && settingsForm && (
             <div className="admin-coupons-stack">
+              <section className="admin-panel" style={{ display: 'grid', gap: 14 }}>
+                <div>
+                  <h2>Serviceable Delivery Pincodes &amp; Waitlist</h2>
+                  <p style={{ color: 'var(--muted)', fontSize: '0.85rem', marginTop: 4 }}>
+                    Only addresses with a pincode listed here can place orders. Unlisted pincodes are blocked at Checkout &amp; Address entry.
+                  </p>
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const clean = newPincode.replace(/\D/g, '').slice(0, 6);
+                    if (!/^\d{6}$/.test(clean)) {
+                      setError('Enter a valid 6-digit delivery pincode.');
+                      return;
+                    }
+                    const current = pincodeOverview.serviceablePincodes || [];
+                    if (!current.includes(clean)) {
+                      handleSavePincodes([...current, clean]);
+                    }
+                    setNewPincode('');
+                  }}
+                  style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}
+                >
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="Add 6-digit pincode (e.g. 500089)"
+                    value={newPincode}
+                    onChange={(e) => setNewPincode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    style={{ padding: '9px 12px', borderRadius: 10, border: '1px solid #cddad0', minWidth: 220 }}
+                  />
+                  <Button type="submit" size="sm">
+                    + Add Delivery Pincode
+                  </Button>
+                </form>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {(pincodeOverview.serviceablePincodes || []).map((pin) => (
+                    <span
+                      key={pin}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '6px 12px',
+                        borderRadius: 999,
+                        background: '#ecfdf3',
+                        border: '1px solid #86efac',
+                        color: '#166534',
+                        fontWeight: 700,
+                        fontSize: '0.85rem',
+                      }}
+                    >
+                      {pin}
+                      <button
+                        type="button"
+                        aria-label={`Remove ${pin}`}
+                        onClick={() => {
+                          const next = (pincodeOverview.serviceablePincodes || []).filter((p) => p !== pin);
+                          if (next.length === 0) {
+                            setError('At least 1 serviceable pincode is required.');
+                            return;
+                          }
+                          handleSavePincodes(next);
+                        }}
+                        style={{
+                          border: 0,
+                          background: 'transparent',
+                          color: '#991b1b',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                          padding: 0,
+                          lineHeight: 1,
+                        }}
+                      >
+                        &times;
+                      </button>
+                    </span>
+                  ))}
+                </div>
+
+                {(pincodeOverview.demandSummary || []).length > 0 && (
+                  <div style={{ display: 'grid', gap: 8, marginTop: 4 }}>
+                    <strong style={{ fontSize: '0.86rem' }}>Customer Expansion Waitlist Demand</strong>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {pincodeOverview.demandSummary.map((d) => {
+                        const alreadyLive = (pincodeOverview.serviceablePincodes || []).includes(d.pincode);
+                        return (
+                          <div
+                            key={d.pincode}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '6px 10px',
+                              borderRadius: 10,
+                              border: '1px solid #fde68a',
+                              background: '#fffbeb',
+                              fontSize: '0.82rem',
+                            }}
+                          >
+                            <span>
+                              <strong>{d.pincode}</strong> {d.area ? `(${d.area})` : ''} &bull; {d.count} waiting
+                            </span>
+                            {!alreadyLive && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() =>
+                                  handleSavePincodes([...(pincodeOverview.serviceablePincodes || []), d.pincode])
+                                }
+                              >
+                                Enable
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </section>
+
               <section className="admin-panel">
                 <h2>Store &amp; Brand Settings</h2>
                 <form className="admin-form" onSubmit={handleSaveSettings}>
@@ -3923,1114 +4247,1373 @@ export default function Admin() {
           {activeTab === 'combos' && (
             <div className="admin-grid-2">
               <section className="admin-panel">
-                <h2>Dynamic Combos ({combos.length})</h2>
-                <div className="admin-table-wrap admin-orders-table-wrap">
-                  <table className="admin-table admin-orders-table">
+                <div className="admin-panel-head">
+                  <h2>Dynamic Combos ({combos.length})</h2>
+                </div>
+                <div className="admin-table-wrap">
+                  <table className="admin-table">
                     <thead>
                       <tr>
                         <th>Combo</th>
                         <th>Price</th>
                         <th>Schedule</th>
                         <th>Status</th>
-                        <th>Action</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
-                    <tbody>
-                      {combos.map((c) => (
-                        <tr key={c.id}>
-                          <td>
-                            <strong>{c.name}</strong>
-                            <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
-                              {(c.componentDetails || []).map((d) => `${d.qty}× ${d.name}`).join(' + ')}
-                            </div>
-                          </td>
-                          <td>
-                            <strong>{money(c.price)}</strong>{' '}
-                            {c.originalPrice > c.price && <del>{money(c.originalPrice)}</del>}
-                          </td>
-                          <td>
-                            {c.scheduleStart} – {c.scheduleEnd}
-                          </td>
-                          <td>{c.availableNow ? 'Live' : c.active ? 'Scheduled/OOS' : 'Off'}</td>
-                          <td>
-                            <button
-                              type="button"
-                              className="admin-mini-btn admin-mini-danger"
-                              onClick={() => handleDeleteCombo(c.id)}
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                        <tbody>
+                          {combos.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="admin-empty-cell">
+                                No combos created yet. Add items on the right to create a combo.
+                              </td>
+                            </tr>
+                          ) : (
+                        combos.map((c) => (
+                                <tr key={c.id}>
+                                  <td>
+                                    <strong>{c.name}</strong>
+                                    <div className="admin-order-meta">
+                                      {(c.componentDetails || []).map((d) => `${d.qty}× ${d.name}`).join(' + ')}
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <strong>{money(c.price)}</strong>{' '}
+                                    {c.originalPrice > c.price && <del style={{ color: 'var(--muted)' }}>{money(c.originalPrice)}</del>}
+                                  </td>
+                                  <td>
+                                    {c.scheduleStart} – {c.scheduleEnd}
+                                  </td>
+                                  <td>
+                                    <span className={`admin-order-pill ${c.availableNow ? 'admin-pill-green' : c.active ? 'admin-pill-amber' : 'admin-pill-red'}`}>
+                                      {c.availableNow ? 'Live' : c.active ? 'Scheduled/OOS' : 'Off'}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <div className="admin-row-actions">
+                                      <button
+                                        type="button"
+                                        className="admin-mini-btn"
+                                        onClick={() =>
+                                          setComboForm({
+                                            id: c.id,
+                                            name: c.name || '',
+                                            description: c.description || '',
+                                            image: c.image || '',
+                                            price: c.price || 99,
+                                            originalPrice: c.originalPrice || 120,
+                                            scheduleStart: c.scheduleStart || '06:00',
+                                            scheduleEnd: c.scheduleEnd || '12:00',
+                                            items: (c.items || []).length
+                                              ? c.items.map((it) => ({ productId: it.productId, qty: it.qty || 1 }))
+                                              : [{ productId: products[0]?.id || '', qty: 1 }],
+                                            active: c.active !== false,
+                                          })
+                                        }
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="admin-mini-btn admin-mini-danger"
+                                        onClick={() => handleDeleteCombo(c.id)}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                                ))
+                      )}
+                              </tbody>
+                            </table>
                 </div>
-              </section>
+                      </section>
 
-              <section className="admin-panel">
-                <h2>Create / Update Combo</h2>
-                <form className="admin-form" onSubmit={handleSaveCombo}>
-                  <div className="admin-field">
-                    <label>Combo Name</label>
-                    <input
-                      type="text"
-                      required
-                      value={comboForm.name}
-                      onChange={(e) => setComboForm({ ...comboForm, name: e.target.value })}
-                      placeholder="e.g. Breakfast Booster: Idli + Orange Juice"
-                    />
-                  </div>
-                  <div className="admin-field">
-                    <label>Description</label>
-                    <input
-                      type="text"
-                      value={comboForm.description}
-                      onChange={(e) => setComboForm({ ...comboForm, description: e.target.value })}
-                    />
-                  </div>
-                  <div className="admin-form-row">
-                    <div className="admin-field">
-                      <label>Component Item 1</label>
-                      <select
-                        value={comboForm.item1Id}
-                        onChange={(e) => setComboForm({ ...comboForm, item1Id: e.target.value })}
-                      >
-                        {products.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} ({money(p.discountPrice || p.price)})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="admin-field">
-                      <label>Component Item 2</label>
-                      <select
-                        value={comboForm.item2Id}
-                        onChange={(e) => setComboForm({ ...comboForm, item2Id: e.target.value })}
-                      >
-                        <option value="">None</option>
-                        {products.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} ({money(p.discountPrice || p.price)})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  <div className="admin-form-row">
-                    <div className="admin-field">
-                      <label>Combo Price (₹)</label>
-                      <input
-                        type="number"
-                        min="1"
-                        required
-                        value={comboForm.price}
-                        onChange={(e) => setComboForm({ ...comboForm, price: e.target.value })}
-                      />
-                    </div>
-                    <div className="admin-field">
-                      <label>Original Price (₹)</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={comboForm.originalPrice}
-                        onChange={(e) => setComboForm({ ...comboForm, originalPrice: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <div className="admin-form-row">
-                    <div className="admin-field">
-                      <label>Schedule Start (HH:MM)</label>
-                      <input
-                        type="time"
-                        value={comboForm.scheduleStart}
-                        onChange={(e) => setComboForm({ ...comboForm, scheduleStart: e.target.value })}
-                      />
-                    </div>
-                    <div className="admin-field">
-                      <label>Schedule End (HH:MM)</label>
-                      <input
-                        type="time"
-                        value={comboForm.scheduleEnd}
-                        onChange={(e) => setComboForm({ ...comboForm, scheduleEnd: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <Button type="submit" size="sm">
-                    Save Combo
-                  </Button>
-                </form>
-              </section>
-            </div>
-          )}
-
-          {activeTab === 'plans' && (
-            <div className="admin-grid-2">
-              <section className="admin-panel">
-                <h2>Subscription Plans ({adminPlans.length})</h2>
-                <div className="admin-table-wrap admin-orders-table-wrap">
-                  <table className="admin-table admin-orders-table">
-                    <thead>
-                      <tr>
-                        <th>Plan</th>
-                        <th>Days</th>
-                        <th>Price</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {adminPlans.map((pl) => (
-                        <tr key={pl.id}>
-                          <td>
-                            <strong>{pl.name}</strong>
-                            {pl.badge && <div style={{ fontSize: '0.76rem', color: 'var(--primary)' }}>{pl.badge}</div>}
-                          </td>
-                          <td>{pl.days} days</td>
-                          <td><strong>{money(pl.price)}</strong></td>
-                          <td>
-                            <button
-                              type="button"
-                              className="admin-mini-btn admin-mini-danger"
-                              onClick={() => handleDeletePlan(pl.id)}
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              <section className="admin-panel">
-                <h2>Add / Edit Subscription Plan</h2>
-                <form className="admin-form" onSubmit={handleSavePlan}>
-                  <div className="admin-field">
-                    <label>Plan Name</label>
-                    <input
-                      type="text"
-                      required
-                      value={planForm.name}
-                      onChange={(e) => setPlanForm({ ...planForm, name: e.target.value })}
-                      placeholder="e.g. 15-Day Wellness Morning"
-                    />
-                  </div>
-                  <div className="admin-form-row">
-                    <div className="admin-field">
-                      <label>Duration (Days)</label>
-                      <input
-                        type="number"
-                        min="1"
-                        required
-                        value={planForm.days}
-                        onChange={(e) => setPlanForm({ ...planForm, days: Number(e.target.value) })}
-                      />
-                    </div>
-                    <div className="admin-field">
-                      <label>Total Price (₹)</label>
-                      <input
-                        type="number"
-                        min="1"
-                        required
-                        value={planForm.price}
-                        onChange={(e) => setPlanForm({ ...planForm, price: Number(e.target.value) })}
-                      />
-                    </div>
-                  </div>
-                  <div className="admin-field">
-                    <label>Badge (Optional)</label>
-                    <input
-                      type="text"
-                      value={planForm.badge}
-                      onChange={(e) => setPlanForm({ ...planForm, badge: e.target.value })}
-                      placeholder="e.g. Most Popular"
-                    />
-                  </div>
-                  <Button type="submit" size="sm">
-                    Save Subscription Plan
-                  </Button>
-                </form>
-              </section>
-            </div>
-          )}
-
-          {activeTab === 'reviews' && (
-            <section className="admin-panel">
-              <h2>Customer Reviews Moderation ({adminReviews.length})</h2>
-              <div className="admin-table-wrap">
-                <table className="admin-table">
-                  <thead>
-                    <tr>
-                      <th>Customer</th>
-                      <th>Rating</th>
-                      <th>Comment</th>
-                      <th>Status</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {adminReviews.length === 0 ? (
-                      <tr>
-                        <td colSpan="5" style={{ color: 'var(--muted)' }}>
-                          No customer reviews submitted yet.
-                        </td>
-                      </tr>
-                    ) : (
-                      adminReviews.map((rev) => (
-                        <tr key={rev.id}>
-                          <td><strong>{rev.userName}</strong></td>
-                          <td>{'★'.repeat(rev.rating)}</td>
-                          <td>{rev.comment}</td>
-                          <td>{rev.visible !== false ? 'Visible' : 'Hidden'}</td>
-                          <td>
-                            <button
-                              type="button"
-                              className="admin-mini-btn"
-                              onClick={() => handleModerateReview(rev)}
-                            >
-                              {rev.visible !== false ? 'Hide Review' : 'Show Review'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-
-            </section>
-          )}
-
-          {activeTab === 'referrals' && (
-            <section className="admin-panel">
-              <h2>Referral Program &amp; Fraud Review ({adminReferrals.length})</h2>
-              <div className="admin-table-wrap">
-                <table className="admin-table">
-                  <thead>
-                    <tr>
-                      <th>Referrer</th>
-                      <th>Referred Friend</th>
-                      <th>Code</th>
-                      <th>Reward</th>
-                      <th>Status / Fraud Flags</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {adminReferrals.length === 0 ? (
-                      <tr>
-                        <td colSpan="6" style={{ color: 'var(--muted)' }}>
-                          No referrals recorded yet. Share a customer&apos;s referral link to test!
-                        </td>
-                      </tr>
-                    ) : (
-                      adminReferrals.map((r) => (
-                        <tr key={r.id}>
-                          <td>{r.referrerEmail}</td>
-                          <td>{r.referredEmail}</td>
-                          <td><strong>{r.referralCode}</strong></td>
-                          <td>{r.rewardAmount} pts</td>
-                          <td>
-                            <strong>{r.status}</strong>
-                            {r.fraudFlags?.length > 0 && (
-                              <div style={{ fontSize: '0.78rem', color: 'var(--danger)' }}>
-                                ⚠ {r.fraudFlags.join(' • ')}
-                              </div>
-                            )}
-                          </td>
-                          <td>
-                            {r.status !== 'credited' && r.status !== 'rejected' && (
-                              <div style={{ display: 'flex', gap: 6 }}>
-                                <button
-                                  type="button"
-                                  className="admin-mini-btn"
-                                  onClick={() => handleResolveReferral(r.id, 'approve')}
-                                >
-                                  Approve &amp; Credit
-                                </button>
-                                <button
-                                  type="button"
-                                  className="admin-mini-btn admin-mini-danger"
-                                  onClick={() => handleResolveReferral(r.id, 'reject')}
-                                >
-                                  Reject
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-
-            </section>
-          )}
-
-          {activeTab === 'delivery' && (() => {
-            const q = deliverySearch.trim().toLowerCase();
-            const filteredPartners = !q
-              ? deliveryBoysList
-              : deliveryBoysList.filter((b) =>
-                  [
-                    b.fullName,
-                    b.phone,
-                    b.email,
-                    b.id,
-                    b.availability,
-                    b.active ? 'active' : 'inactive',
-                  ]
-                    .filter(Boolean)
-                    .some((v) => String(v).toLowerCase().includes(q))
-                );
-            const selectedPartner = selectedPartnerId
-              ? deliveryBoysList.find((b) => b.id === selectedPartnerId) || null
-              : null;
-            const partnerOrders = selectedPartner
-              ? allOrders.filter((o) => o.deliveryAssignment?.deliveryBoyId === selectedPartner.id)
-              : [];
-            return (
-            <section className="admin-panel">
-              <div className="admin-panel-head">
-                <h2>Delivery Partner Management ({filteredPartners.length})</h2>
-                <div className="admin-delivery-head-actions">
-                  <input
-                    type="search"
-                    aria-label="Search delivery partners"
-                    placeholder="Search by name, phone, email, status..."
-                    className="menu-select admin-delivery-search"
-                    value={deliverySearch}
-                    onChange={(e) => setDeliverySearch(e.target.value)}
-                  />
-                  {deliveryBoysList.length > 0 && (
-                    <button
-                      type="button"
-                      className="admin-mini-btn admin-mini-danger"
-                      onClick={handleDeleteAllDeliveryBoys}
-                    >
-                      <FiTrash2 size={13} /> Remove All
-                    </button>
-                  )}
-                </div>
-              </div>
-              <form className="admin-form admin-delivery-form" onSubmit={handleSaveDeliveryBoy}>
-                <div className="admin-form-row">
-                  <div className="admin-field">
-                    <label htmlFor="db-name">Full Name</label>
-                    <input
-                      id="db-name"
-                      required
-                      value={deliveryBoyForm.fullName}
-                      onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, fullName: e.target.value })}
-                      placeholder="Delivery Partner Name"
-                    />
-                  </div>
-                  <div className="admin-field">
-                    <label htmlFor="db-phone">Phone Number</label>
-                    <input
-                      id="db-phone"
-                      required
-                      value={deliveryBoyForm.phone}
-                      onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, phone: e.target.value })}
-                      placeholder="9876543210"
-                    />
-                  </div>
-                </div>
-                <div className="admin-form-row">
-                  <div className="admin-field">
-                    <label htmlFor="db-email">Email</label>
-                    <input
-                      id="db-email"
-                      type="email"
-                      required={!deliveryBoyForm.id}
-                      disabled={Boolean(deliveryBoyForm.id)}
-                      value={deliveryBoyForm.email}
-                      onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, email: e.target.value })}
-                      placeholder="partner@hruvita.com"
-                    />
-                  </div>
-                  <div className="admin-field">
-                    <label htmlFor="db-pass">{deliveryBoyForm.id ? 'New Password (optional)' : 'Password (8+ chars)'}</label>
-                    <input
-                      id="db-pass"
-                      type="password"
-                      required={!deliveryBoyForm.id}
-                      minLength={8}
-                      value={deliveryBoyForm.password}
-                      onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, password: e.target.value })}
-                    />
-                  </div>
-                </div>
-                <div className="admin-form-row admin-delivery-form-footer">
-                  <div className="admin-field">
-                    <label htmlFor="db-availability">Availability</label>
-                    <select
-                      id="db-availability"
-                      value={deliveryBoyForm.availability}
-                      onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, availability: e.target.value })}
-                    >
-                      <option value="available">Available</option>
-                      <option value="busy">Busy</option>
-                      <option value="offline">Offline</option>
-                    </select>
-                  </div>
-                  <div className="admin-form-actions">
-                    <Button type="submit" size="sm">
-                      {deliveryBoyForm.id ? 'Update Partner' : 'Add Delivery Partner'}
-                    </Button>
-                    {deliveryBoyForm.id && (
-                      <button
-                        type="button"
-                        className="admin-mini-btn"
-                        onClick={() =>
-                          setDeliveryBoyForm({ id: '', fullName: '', phone: '', email: '', password: '', availability: 'available' })
-                        }
-                      >
-                        Cancel Edit
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </form>
-
-              <div className="admin-table-wrap">
-                <table className="admin-table admin-delivery-table">
-                  <thead>
-                    <tr>
-                      <th>Partner</th>
-                      <th>Phone</th>
-                      <th>Availability</th>
-                      <th>Performance</th>
-                      <th>Status</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredPartners.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="admin-empty-cell">
-                          {q
-                            ? `No delivery partners match "${deliverySearch}".`
-                            : 'No delivery partners added yet. Use the form above to add one.'}
-                        </td>
-                      </tr>
-                    ) : (
-                    filteredPartners.map((b) => (
-                      <tr
-                        key={b.id}
-                        className={`admin-order-row-clickable ${selectedPartnerId === b.id ? 'admin-order-row-selected' : ''}`.trim()}
-                        onClick={() => setSelectedPartnerId(b.id)}
-                      >
-                        <td>
-                          <strong>{b.fullName}</strong>
-                          <div className="admin-order-meta">{b.email}</div>
-                        </td>
-                        <td>{b.phone}</td>
-                        <td>
-                          <span className={`admin-avail-pill admin-avail-${b.availability || 'offline'}`}>
-                            {b.availability || 'offline'}
-                          </span>
-                        </td>
-                        <td>
-                          <div className="admin-perf-chips">
-                            <span className="admin-perf-chip">Assigned: <strong>{b.stats?.totalAssigned || 0}</strong></span>
-                            <span className="admin-perf-chip">Active: <strong>{b.stats?.active || 0}</strong></span>
-                            <span className="admin-perf-chip">Done: <strong>{b.stats?.completed || 0}</strong></span>
-                            <span className="admin-perf-chip">Failed: <strong>{b.stats?.failed || 0}</strong></span>
-                            <span className="admin-perf-chip admin-perf-rate">{b.stats?.completionRate ?? 100}%</span>
-                          </div>
-                        </td>
-                        <td>
-                          <span className={`admin-order-pill ${b.active ? 'admin-pill-green' : 'admin-pill-red'}`}>
-                            {b.active ? 'Active' : 'Inactive'}
-                          </span>
-                        </td>
-                        <td onClick={(e) => e.stopPropagation()}>
-                          <div className="admin-row-actions">
-                            <button
-                              type="button"
-                              className="admin-mini-btn"
-                              onClick={() =>
-                                setDeliveryBoyForm({
-                                  id: b.id,
-                                  fullName: b.fullName,
-                                  phone: b.phone,
-                                  email: b.email,
-                                  password: '',
-                                  availability: b.availability,
-                                })
-                              }
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="admin-mini-btn"
-                              onClick={() => handleToggleDeliveryBoy(b)}
-                            >
-                              {b.active ? 'Deactivate' : 'Activate'}
-                            </button>
-                            <button
-                              type="button"
-                              className="admin-mini-btn admin-mini-danger"
-                              onClick={() => handleDeleteDeliveryBoy(b)}
-                              aria-label={`Delete ${b.fullName}`}
-                            >
-                              <FiTrash2 size={13} /> Delete
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )))}
-                  </tbody>
-                </table>
-              </div>
-
-              {selectedPartner && (
-                <div
-                  className="admin-order-modal-backdrop"
-                  onClick={() => setSelectedPartnerId(null)}
-                >
-                  <div
-                    className="admin-order-drawer"
-                    role="dialog"
-                    aria-modal="true"
-                    aria-label={`Delivery partner details for ${selectedPartner.fullName}`}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="admin-drawer-head">
-                      <div>
-                        <h3>{selectedPartner.fullName}</h3>
-                        <p>
-                          Partner ID: {selectedPartner.id} &bull;{' '}
-                          {selectedPartner.active ? 'Active' : 'Inactive'} &bull;{' '}
-                          <span style={{ textTransform: 'capitalize' }}>{selectedPartner.availability}</span>
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        className="admin-drawer-close"
-                        aria-label="Close partner details"
-                        onClick={() => setSelectedPartnerId(null)}
-                      >
-                        <FiX size={18} />
-                      </button>
-                    </div>
-
-                    <div className="admin-drawer-body">
-                      <div className="admin-drawer-grid">
-                        <div className="admin-drawer-section">
-                          <span className="admin-drawer-section-title">Partner Contact &amp; Profile</span>
-                          <div className="admin-drawer-kv">
-                            <span>Full Name</span>
-                            <strong>{selectedPartner.fullName}</strong>
-                          </div>
-                          <div className="admin-drawer-kv">
-                            <span>Phone</span>
-                            <strong>{selectedPartner.phone}</strong>
-                          </div>
-                          <div className="admin-drawer-kv">
-                            <span>Email</span>
-                            <strong>{selectedPartner.email || '—'}</strong>
-                          </div>
-                          <div className="admin-drawer-kv">
-                            <span>Account Status</span>
-                            <strong>{selectedPartner.active ? 'Active' : 'Inactive'}</strong>
-                          </div>
-                          <div className="admin-drawer-kv">
-                            <span>Availability</span>
-                            <strong style={{ textTransform: 'capitalize' }}>{selectedPartner.availability}</strong>
-                          </div>
-                          {selectedPartner.phone && (
-                            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                              <a href={`tel:${selectedPartner.phone}`} className="admin-mini-btn">
-                                <FiPhone size={13} /> Call Partner
-                              </a>
-                              <a
-                                href={`https://wa.me/${(() => {
-                                  const d = String(selectedPartner.phone).replace(/\D/g, '');
-                                  return d.length === 10 ? `91${d}` : d;
-                                })()}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="admin-mini-btn"
-                              >
-                                WhatsApp
-                              </a>
-                            </div>
-                          )}
+                      <section className="admin-panel">
+                        <div className="admin-panel-head">
+                          <h2>{comboForm.id ? `Edit Combo: ${comboForm.name}` : 'Create Combo (Any # of Items)'}</h2>
                         </div>
+                        <form className="admin-form" onSubmit={handleSaveCombo}>
+                          <div className="admin-field">
+                            <label>Combo Name</label>
+                            <input
+                              type="text"
+                              required
+                              value={comboForm.name}
+                              onChange={(e) => setComboForm({ ...comboForm, name: e.target.value })}
+                              placeholder="e.g. Morning Power Trio: Fruit Bowl + Juice + Shots"
+                            />
+                          </div>
+                          <div className="admin-field">
+                            <label>Description</label>
+                            <input
+                              type="text"
+                              value={comboForm.description}
+                              onChange={(e) => setComboForm({ ...comboForm, description: e.target.value })}
+                              placeholder="Fresh combo description..."
+                            />
+                          </div>
 
-                        <div className="admin-drawer-section">
-                          <span className="admin-drawer-section-title">Performance &amp; Collections</span>
-                          <div className="admin-drawer-kv">
-                            <span>Total Assigned</span>
-                            <strong>{selectedPartner.stats?.totalAssigned ?? partnerOrders.length}</strong>
-                          </div>
-                          <div className="admin-drawer-kv">
-                            <span>Active Deliveries</span>
-                            <strong>{selectedPartner.stats?.active ?? 0}</strong>
-                          </div>
-                          <div className="admin-drawer-kv">
-                            <span>Completed</span>
-                            <strong>{selectedPartner.stats?.completed ?? 0}</strong>
-                          </div>
-                          <div className="admin-drawer-kv">
-                            <span>Failed</span>
-                            <strong>{selectedPartner.stats?.failed ?? 0}</strong>
-                          </div>
-                          <div className="admin-drawer-kv">
-                            <span>Completion Rate</span>
-                            <strong>{selectedPartner.stats?.completionRate ?? 100}%</strong>
-                          </div>
-                          <div className="admin-drawer-kv">
-                            <span>COD Collected</span>
-                            <strong>
-                              {money(
-                                partnerOrders
-                                  .filter((o) => o.paymentMethod === 'cod' && o.paymentStatus === 'paid')
-                                  .reduce((sum, o) => sum + Number(o.pricing?.grandTotal || 0), 0)
-                              )}
-                            </strong>
-                          </div>
-                          <div className="admin-drawer-kv">
-                            <span>COD Pending</span>
-                            <strong>
-                              {money(
-                                partnerOrders
-                                  .filter(
-                                    (o) =>
-                                      o.paymentMethod === 'cod' &&
-                                      o.paymentStatus !== 'paid' &&
-                                      o.status !== 'cancelled'
-                                  )
-                                  .reduce((sum, o) => sum + Number(o.pricing?.grandTotal || 0), 0)
-                              )}
-                            </strong>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="admin-drawer-section">
-                        <span className="admin-drawer-section-title">
-                          Assigned Orders ({partnerOrders.length})
-                        </span>
-                        {partnerOrders.length === 0 ? (
-                          <p style={{ fontSize: '0.84rem', color: 'var(--muted)' }}>
-                            No orders assigned to this partner yet.
-                          </p>
-                        ) : (
-                          <div>
-                            {partnerOrders.map((ord) => (
-                              <div key={ord.id} className="admin-drawer-item">
-                                <div>
-                                  <strong>{ord.id}</strong> &bull;{' '}
-                                  <span>{ord.customerName}</span>
-                                  <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-                                    {ord.scheduledDate} &bull; {ord.slotLabel} &bull;{' '}
-                                    {(ord.items || []).map((it) => `${it.qty}× ${it.name}`).join(', ')}
-                                  </div>
-                                  <div style={{ fontSize: '0.74rem', color: 'var(--muted)', marginTop: 2 }}>
-                                    {[ord.address?.line1, ord.address?.area, ord.address?.city, ord.address?.pincode]
-                                      .filter(Boolean)
-                                      .join(', ')}
-                                  </div>
-                                </div>
-                                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                                  <strong>{money(ord.pricing?.grandTotal || 0)}</strong>
-                                  <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                                    {ord.paymentMethod} ({ord.paymentStatus})
-                                  </div>
-                                  <span
-                                    className={`admin-order-pill ${
-                                      ord.deliveryStatus === 'delivered' || ord.status === 'delivered'
-                                        ? 'admin-pill-green'
-                                        : ord.deliveryStatus === 'delivery_failed' || ord.status === 'cancelled'
-                                        ? 'admin-pill-red'
-                                        : 'admin-pill-blue'
-                                    }`}
-                                    style={{ marginTop: 4, fontSize: '0.66rem', padding: '2px 8px' }}
+                          <div className="admin-field">
+                            <div className="admin-combo-items-head">
+                                  <label>Combo Items ({comboForm.items?.length || 0})</label>
+                                  <button
+                                    type="button"
+                                    className="admin-mini-btn"
+                                    onClick={() =>
+                                      setComboForm((prev) => ({
+                                        ...prev,
+                                        items: [
+                                          ...(prev.items || []),
+                                          { productId: products[0]?.id || '', qty: 1 },
+                                        ],
+                                      }))
+                                    }
                                   >
-                                    {(ord.deliveryStatus || ord.status).replace(/_/g, ' ')}
-                                  </span>
+                                    <FiPlus size={12} /> Add Item
+                                  </button>
+                                </div>
+                                <div className="admin-combo-items-list">
+                                  {(comboForm.items || []).map((item, idx) => (
+                                    <div key={idx} className="admin-combo-item-row">
+                                      <select
+                                        value={item.productId}
+                                        onChange={(e) => {
+                                          const next = [...comboForm.items];
+                                          next[idx] = { ...next[idx], productId: e.target.value };
+                                          setComboForm({ ...comboForm, items: next });
+                                        }}
+                                      >
+                                        {products.map((p) => (
+                                          <option key={p.id} value={p.id}>
+                                            {p.name} ({money(p.discountPrice || p.price)})
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        max="20"
+                                        aria-label="Item quantity"
+                                        className="admin-combo-qty-input"
+                                        value={item.qty}
+                                        onChange={(e) => {
+                                          const next = [...comboForm.items];
+                                          next[idx] = { ...next[idx], qty: Math.max(1, Number(e.target.value) || 1) };
+                                          setComboForm({ ...comboForm, items: next });
+                                        }}
+                                      />
+                                      {comboForm.items.length > 1 && (
+                                        <button
+                                          type="button"
+                                          className="admin-mini-btn admin-mini-danger"
+                                          aria-label="Remove combo item"
+                                          onClick={() => {
+                                            const next = comboForm.items.filter((_, i) => i !== idx);
+                                            setComboForm({ ...comboForm, items: next });
+                                          }}
+                                        >
+                                          <FiTrash2 size={13} />
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
                                 </div>
                               </div>
-                            ))}
+
+                              <div className="admin-form-row">
+                                <div className="admin-field">
+                                  <label>Combo Price (₹)</label>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    required
+                                    value={comboForm.price}
+                                    onChange={(e) => setComboForm({ ...comboForm, price: e.target.value })}
+                                  />
+                                </div>
+                                <div className="admin-field">
+                                  <label>Original Price (₹)</label>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={comboForm.originalPrice}
+                                    onChange={(e) => setComboForm({ ...comboForm, originalPrice: e.target.value })}
+                                  />
+                                </div>
+                              </div>
+                              <div className="admin-form-row">
+                                <div className="admin-field">
+                                  <label>Schedule Start (HH:MM)</label>
+                                  <input
+                                    type="time"
+                                    value={comboForm.scheduleStart}
+                                    onChange={(e) => setComboForm({ ...comboForm, scheduleStart: e.target.value })}
+                                  />
+                                </div>
+                                <div className="admin-field">
+                                  <label>Schedule End (HH:MM)</label>
+                                  <input
+                                    type="time"
+                                    value={comboForm.scheduleEnd}
+                                    onChange={(e) => setComboForm({ ...comboForm, scheduleEnd: e.target.value })}
+                                  />
+                                </div>
+                              </div>
+                              <Button type="submit" size="sm">
+                                Save Combo
+                              </Button>
+                              <div className="admin-form-actions">
+                                <Button type="submit" size="sm">
+                                  {comboForm.id ? 'Update Combo' : 'Save Combo'}
+                                </Button>
+                                {comboForm.id && (
+                                  <button
+                                    type="button"
+                                    className="admin-mini-btn"
+                                    onClick={() =>
+                                      setComboForm({
+                                        id: '',
+                                        name: '',
+                                        description: '',
+                                        image: 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=700&q=80',
+                                        price: 99,
+                                        originalPrice: 120,
+                                        scheduleStart: '06:00',
+                                        scheduleEnd: '12:00',
+                                        items: [
+                                          { productId: products[0]?.id || 'p1', qty: 1 },
+                                          { productId: products[1]?.id || 'p7', qty: 1 },
+                                        ],
+                                        active: true,
+                                      })
+                                    }
+                                  >
+                                    Cancel Edit
+                                  </button>
+                                )}
+                              </div>
+                            </form>
+                          </section>
+                        </div>
+          )}
+
+                        {activeTab === 'plans' && (
+                          <div className="admin-grid-2">
+                            <section className="admin-panel">
+                              <div className="admin-panel-head">
+                                <h2>Subscription Plans ({adminPlans.length})</h2>
+                              </div>
+                              <div className="admin-table-wrap">
+                                <table className="admin-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Plan &amp; Highlights</th>
+                                      <th>Days</th>
+                                      <th>Price</th>
+                                      <th>Actions</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {adminPlans.length === 0 ? (
+                                      <tr>
+                                        <td colSpan={4} className="admin-empty-cell">
+                                          No subscription plans yet. Add one on the right.
+                                        </td>
+                                      </tr>
+                                    ) : (
+                        adminPlans.map((pl) => (
+                                              <tr key={pl.id}>
+                                                <td>
+                                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                    <strong>{pl.name}</strong>
+                                                    {(pl.popular || pl.badge) && (
+                                                      <span className="admin-badge">{pl.badge || 'Most Popular'}</span>
+                                                    )}
+                                                  </div>
+                                                  {Array.isArray(pl.perks) && pl.perks.length > 0 && (
+                                                    <ul className="admin-plan-perks-preview">
+                                                      {pl.perks.map((perk, idx) => (
+                                                        <li key={idx}>✓ {perk}</li>
+                                                      ))}
+                                                    </ul>
+                                                  )}
+                                                </td>
+                                                <td>{pl.days} days</td>
+                                                <td><strong>{money(pl.price)}</strong></td>
+                                                <td>
+                                                  <div className="admin-row-actions">
+                                                    <button
+                                                      type="button"
+                                                      className="admin-mini-btn"
+                                                      onClick={() =>
+                                                        setPlanForm({
+                                                          id: pl.id,
+                                                          name: pl.name || '',
+                                                          days: pl.days || 7,
+                                                          price: pl.price || 599,
+                                                          badge: pl.badge || '',
+                                                          popular: Boolean(pl.popular),
+                                                          perks: Array.isArray(pl.perks) ? [...pl.perks] : [],
+                                                          active: pl.active !== false,
+                                                        })
+                                                      }
+                                                    >
+                                                      Edit
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      className="admin-mini-btn admin-mini-danger"
+                                                      onClick={() => handleDeletePlan(pl.id)}
+                                                    >
+                                                      Delete
+                                                    </button>
+                                                  </div>
+                                                </td>
+                                              </tr>
+                                              ))
+                      )}
+                                            </tbody>
+                                          </table>
+                </div>
+                                    </section>
+
+                                    <section className="admin-panel">
+                                      <h2>Add / Edit Subscription Plan</h2>
+                                      <div className="admin-panel-head">
+                                        <h2>{planForm.id ? `Edit Plan: ${planForm.name}` : 'Add Subscription Plan'}</h2>
+                                      </div>
+                                      <form className="admin-form" onSubmit={handleSavePlan}>
+                                        <div className="admin-field">
+                                          <label>Plan Name</label>
+                                          <input
+                                            type="text"
+                                            required
+                                            value={planForm.name}
+                                            onChange={(e) => setPlanForm({ ...planForm, name: e.target.value })}
+                                            placeholder="e.g. 15-Day Wellness Morning"
+                                          />
+                                        </div>
+                                        <div className="admin-form-row">
+                                          <div className="admin-field">
+                                            <label>Duration (Days)</label>
+                                            <input
+                                              type="number"
+                                              min="1"
+                                              required
+                                              value={planForm.days}
+                                              onChange={(e) => setPlanForm({ ...planForm, days: Number(e.target.value) })}
+                                            />
+                                          </div>
+                                          <div className="admin-field">
+                                            <label>Total Price (₹)</label>
+                                            <input
+                                              type="number"
+                                              min="1"
+                                              required
+                                              value={planForm.price}
+                                              onChange={(e) => setPlanForm({ ...planForm, price: Number(e.target.value) })}
+                                            />
+                                          </div>
+                                        </div>
+                                        <div className="admin-form-row">
+                                          <div className="admin-field">
+                                            <label>Highlight Tag / Badge (Optional)</label>
+                                            <input
+                                              type="text"
+                                              value={planForm.badge}
+                                              onChange={(e) => setPlanForm({ ...planForm, badge: e.target.value })}
+                                              placeholder="e.g. Most Popular / Best Value"
+                                            />
+                                          </div>
+                                          <div className="admin-field" style={{ justifyContent: 'flex-end' }}>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', paddingBottom: 10 }}>
+                                              <input
+                                                type="checkbox"
+                                                checked={Boolean(planForm.popular)}
+                                                onChange={(e) => setPlanForm({ ...planForm, popular: e.target.checked })}
+                                              />
+                                              Highlight as Popular Plan
+                                            </label>
+                                          </div>
+                                        </div>
+
+                                        <div className="admin-field">
+                                          <label>Badge (Optional)</label>
+                                          <input
+                                            type="text"
+                                            value={planForm.badge}
+                                            onChange={(e) => setPlanForm({ ...planForm, badge: e.target.value })}
+                                            placeholder="e.g. Most Popular"
+                                          />
+                                          <label>Plan Highlights List (Shown on Website)</label>
+                                          <div className="admin-highlight-add-row">
+                                            <input
+                                              type="text"
+                                              value={planHighlightInput}
+                                              onChange={(e) => setPlanHighlightInput(e.target.value)}
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                  e.preventDefault();
+                                                  const val = planHighlightInput.trim();
+                                                  if (!val) return;
+                                                  setPlanForm((prev) => ({
+                                                    ...prev,
+                                                    perks: [...(Array.isArray(prev.perks) ? prev.perks : []), val],
+                                                  }));
+                                                  setPlanHighlightInput('');
+                                                }
+                                              }}
+                                              placeholder="e.g. Zero delivery fee every morning"
+                                            />
+                                            <button
+                                              type="button"
+                                              className="admin-mini-btn"
+                                              onClick={() => {
+                                                const val = planHighlightInput.trim();
+                                                if (!val) return;
+                                                setPlanForm((prev) => ({
+                                                  ...prev,
+                                                  perks: [...(Array.isArray(prev.perks) ? prev.perks : []), val],
+                                                }));
+                                                setPlanHighlightInput('');
+                                              }}
+                                            >
+                                              <FiPlus size={12} /> Add Highlight
+                                            </button>
+                                          </div>
+                                          {Array.isArray(planForm.perks) && planForm.perks.length > 0 && (
+                                            <div className="admin-highlights-list">
+                                              {planForm.perks.map((perk, idx) => (
+                                                <div key={idx} className="admin-highlight-chip">
+                                                  <span>✓ {perk}</span>
+                                                  <button
+                                                    type="button"
+                                                    aria-label={`Remove ${perk}`}
+                                                    onClick={() =>
+                                                      setPlanForm((prev) => ({
+                                                        ...prev,
+                                                        perks: prev.perks.filter((_, i) => i !== idx),
+                                                      }))
+                                                    }
+                                                  >
+                                                    <FiX size={12} />
+                                                  </button>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                        <Button type="submit" size="sm">
+                                          Save Subscription Plan
+                                        </Button>
+
+                                        <div className="admin-form-actions">
+                                          <Button type="submit" size="sm">
+                                            {planForm.id ? 'Update Plan' : 'Save Subscription Plan'}
+                                          </Button>
+                                          {planForm.id && (
+                                            <button
+                                              type="button"
+                                              className="admin-mini-btn"
+                                              onClick={() => {
+                                                setPlanHighlightInput('');
+                                                setPlanForm({
+                                                  id: '',
+                                                  name: '',
+                                                  days: 7,
+                                                  price: 599,
+                                                  badge: '',
+                                                  popular: false,
+                                                  perks: ['Fresh morning delivery', 'Free pause before 10 PM'],
+                                                  active: true,
+                                                });
+                                              }}
+                                            >
+                                              Cancel Edit
+                                            </button>
+                                          )}
+                                        </div>
+                                      </form>
+                                    </section>
+                                  </div>
+          )}
+
+                                  {activeTab === 'reviews' && (
+                                    <section className="admin-panel">
+                                      <h2>Customer Reviews Moderation ({adminReviews.length})</h2>
+                                      <div className="admin-table-wrap">
+                                        <table className="admin-table">
+                                          <thead>
+                                            <tr>
+                                              <th>Customer</th>
+                                              <th>Rating</th>
+                                              <th>Comment</th>
+                                              <th>Status</th>
+                                              <th>Action</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {adminReviews.length === 0 ? (
+                                              <tr>
+                                                <td colSpan="5" style={{ color: 'var(--muted)' }}>
+                                                  No customer reviews submitted yet.
+                                                </td>
+                                              </tr>
+                                            ) : (
+                                              adminReviews.map((rev) => (
+                                                <tr key={rev.id}>
+                                                  <td><strong>{rev.userName}</strong></td>
+                                                  <td>{'★'.repeat(rev.rating)}</td>
+                                                  <td>{rev.comment}</td>
+                                                  <td>{rev.visible !== false ? 'Visible' : 'Hidden'}</td>
+                                                  <td>
+                                                    <button
+                                                      type="button"
+                                                      className="admin-mini-btn"
+                                                      onClick={() => handleModerateReview(rev)}
+                                                    >
+                                                      {rev.visible !== false ? 'Hide Review' : 'Show Review'}
+                                                    </button>
+                                                  </td>
+                                                </tr>
+                                              ))
+                                            )}
+                                          </tbody>
+                                        </table>
+                                      </div>
+
+
+                                    </section>
+                                  )}
+
+                                  {activeTab === 'referrals' && (
+                                    <section className="admin-panel">
+                                      <h2>Referral Program &amp; Fraud Review ({adminReferrals.length})</h2>
+                                      <div className="admin-table-wrap">
+                                        <table className="admin-table">
+                                          <thead>
+                                            <tr>
+                                              <th>Referrer</th>
+                                              <th>Referred Friend</th>
+                                              <th>Code</th>
+                                              <th>Reward</th>
+                                              <th>Status / Fraud Flags</th>
+                                              <th>Action</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {adminReferrals.length === 0 ? (
+                                              <tr>
+                                                <td colSpan="6" style={{ color: 'var(--muted)' }}>
+                                                  No referrals recorded yet. Share a customer&apos;s referral link to test!
+                                                </td>
+                                              </tr>
+                                            ) : (
+                                              adminReferrals.map((r) => (
+                                                <tr key={r.id}>
+                                                  <td>{r.referrerEmail}</td>
+                                                  <td>{r.referredEmail}</td>
+                                                  <td><strong>{r.referralCode}</strong></td>
+                                                  <td>{r.rewardAmount} pts</td>
+                                                  <td>
+                                                    <strong>{r.status}</strong>
+                                                    {r.fraudFlags?.length > 0 && (
+                                                      <div style={{ fontSize: '0.78rem', color: 'var(--danger)' }}>
+                                                        ⚠ {r.fraudFlags.join(' • ')}
+                                                      </div>
+                                                    )}
+                                                  </td>
+                                                  <td>
+                                                    {r.status !== 'credited' && r.status !== 'rejected' && (
+                                                      <div style={{ display: 'flex', gap: 6 }}>
+                                                        <button
+                                                          type="button"
+                                                          className="admin-mini-btn"
+                                                          onClick={() => handleResolveReferral(r.id, 'approve')}
+                                                        >
+                                                          Approve &amp; Credit
+                                                        </button>
+                                                        <button
+                                                          type="button"
+                                                          className="admin-mini-btn admin-mini-danger"
+                                                          onClick={() => handleResolveReferral(r.id, 'reject')}
+                                                        >
+                                                          Reject
+                                                        </button>
+                                                      </div>
+                                                    )}
+                                                  </td>
+                                                </tr>
+                                              ))
+                                            )}
+                                          </tbody>
+                                        </table>
+                                      </div>
+
+
+                                    </section>
+                                  )}
+
+                                  {activeTab === 'delivery' && (() => {
+                                    const q = deliverySearch.trim().toLowerCase();
+                                    const filteredPartners = !q
+                                      ? deliveryBoysList
+                                      : deliveryBoysList.filter((b) =>
+                                        [
+                                          b.fullName,
+                                          b.phone,
+                                          b.email,
+                                          b.id,
+                                          b.availability,
+                                          b.active ? 'active' : 'inactive',
+                                        ]
+                                          .filter(Boolean)
+                                          .some((v) => String(v).toLowerCase().includes(q))
+                                      );
+                                    const selectedPartner = selectedPartnerId
+                                      ? deliveryBoysList.find((b) => b.id === selectedPartnerId) || null
+                                      : null;
+                                    const partnerOrders = selectedPartner
+                                      ? allOrders.filter((o) => o.deliveryAssignment?.deliveryBoyId === selectedPartner.id)
+                                      : [];
+                                    return (
+                                      <section className="admin-panel">
+                                        <div className="admin-panel-head">
+                                          <h2>Delivery Partner Management ({filteredPartners.length})</h2>
+                                          <div className="admin-delivery-head-actions">
+                                            <input
+                                              type="search"
+                                              aria-label="Search delivery partners"
+                                              placeholder="Search by name, phone, email, status..."
+                                              className="menu-select admin-delivery-search"
+                                              value={deliverySearch}
+                                              onChange={(e) => setDeliverySearch(e.target.value)}
+                                            />
+                                            {deliveryBoysList.length > 0 && (
+                                              <button
+                                                type="button"
+                                                className="admin-mini-btn admin-mini-danger"
+                                                onClick={handleDeleteAllDeliveryBoys}
+                                              >
+                                                <FiTrash2 size={13} /> Remove All
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <form className="admin-form admin-delivery-form" onSubmit={handleSaveDeliveryBoy}>
+                                          <div className="admin-form-row">
+                                            <div className="admin-field">
+                                              <label htmlFor="db-name">Full Name</label>
+                                              <input
+                                                id="db-name"
+                                                required
+                                                value={deliveryBoyForm.fullName}
+                                                onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, fullName: e.target.value })}
+                                                placeholder="Delivery Partner Name"
+                                              />
+                                            </div>
+                                            <div className="admin-field">
+                                              <label htmlFor="db-phone">Phone Number</label>
+                                              <input
+                                                id="db-phone"
+                                                required
+                                                value={deliveryBoyForm.phone}
+                                                onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, phone: e.target.value })}
+                                                placeholder="9876543210"
+                                              />
+                                            </div>
+                                          </div>
+                                          <div className="admin-form-row">
+                                            <div className="admin-field">
+                                              <label htmlFor="db-email">Email</label>
+                                              <input
+                                                id="db-email"
+                                                type="email"
+                                                required={!deliveryBoyForm.id}
+                                                disabled={Boolean(deliveryBoyForm.id)}
+                                                value={deliveryBoyForm.email}
+                                                onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, email: e.target.value })}
+                                                placeholder="partner@hruvita.com"
+                                              />
+                                            </div>
+                                            <div className="admin-field">
+                                              <label htmlFor="db-pass">{deliveryBoyForm.id ? 'New Password (optional)' : 'Password (8+ chars)'}</label>
+                                              <input
+                                                id="db-pass"
+                                                type="password"
+                                                required={!deliveryBoyForm.id}
+                                                minLength={8}
+                                                value={deliveryBoyForm.password}
+                                                onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, password: e.target.value })}
+                                              />
+                                            </div>
+                                          </div>
+                                          <div className="admin-form-row admin-delivery-form-footer">
+                                            <div className="admin-field">
+                                              <label htmlFor="db-availability">Availability</label>
+                                              <select
+                                                id="db-availability"
+                                                value={deliveryBoyForm.availability}
+                                                onChange={(e) => setDeliveryBoyForm({ ...deliveryBoyForm, availability: e.target.value })}
+                                              >
+                                                <option value="available">Available</option>
+                                                <option value="busy">Busy</option>
+                                                <option value="offline">Offline</option>
+                                              </select>
+                                            </div>
+                                            <div className="admin-form-actions">
+                                              <Button type="submit" size="sm">
+                                                {deliveryBoyForm.id ? 'Update Partner' : 'Add Delivery Partner'}
+                                              </Button>
+                                              {deliveryBoyForm.id && (
+                                                <button
+                                                  type="button"
+                                                  className="admin-mini-btn"
+                                                  onClick={() =>
+                                                    setDeliveryBoyForm({ id: '', fullName: '', phone: '', email: '', password: '', availability: 'available' })
+                                                  }
+                                                >
+                                                  Cancel Edit
+                                                </button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </form>
+
+                                        <div className="admin-table-wrap">
+                                          <table className="admin-table admin-delivery-table">
+                                            <thead>
+                                              <tr>
+                                                <th>Partner</th>
+                                                <th>Phone</th>
+                                                <th>Availability</th>
+                                                <th>Performance</th>
+                                                <th>Status</th>
+                                                <th>Actions</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {filteredPartners.length === 0 ? (
+                                                <tr>
+                                                  <td colSpan={6} className="admin-empty-cell">
+                                                    {q
+                                                      ? `No delivery partners match "${deliverySearch}".`
+                                                      : 'No delivery partners added yet. Use the form above to add one.'}
+                                                  </td>
+                                                </tr>
+                                              ) : (
+                                                filteredPartners.map((b) => (
+                                                  <tr
+                                                    key={b.id}
+                                                    className={`admin-order-row-clickable ${selectedPartnerId === b.id ? 'admin-order-row-selected' : ''}`.trim()}
+                                                    onClick={() => setSelectedPartnerId(b.id)}
+                                                  >
+                                                    <td>
+                                                      <strong>{b.fullName}</strong>
+                                                      <div className="admin-order-meta">{b.email}</div>
+                                                    </td>
+                                                    <td>{b.phone}</td>
+                                                    <td>
+                                                      <span className={`admin-avail-pill admin-avail-${b.availability || 'offline'}`}>
+                                                        {b.availability || 'offline'}
+                                                      </span>
+                                                    </td>
+                                                    <td>
+                                                      <div className="admin-perf-chips">
+                                                        <span className="admin-perf-chip">Assigned: <strong>{b.stats?.totalAssigned || 0}</strong></span>
+                                                        <span className="admin-perf-chip">Active: <strong>{b.stats?.active || 0}</strong></span>
+                                                        <span className="admin-perf-chip">Done: <strong>{b.stats?.completed || 0}</strong></span>
+                                                        <span className="admin-perf-chip">Failed: <strong>{b.stats?.failed || 0}</strong></span>
+                                                        <span className="admin-perf-chip admin-perf-rate">{b.stats?.completionRate ?? 100}%</span>
+                                                      </div>
+                                                    </td>
+                                                    <td>
+                                                      <span className={`admin-order-pill ${b.active ? 'admin-pill-green' : 'admin-pill-red'}`}>
+                                                        {b.active ? 'Active' : 'Inactive'}
+                                                      </span>
+                                                    </td>
+                                                    <td onClick={(e) => e.stopPropagation()}>
+                                                      <div className="admin-row-actions">
+                                                        <button
+                                                          type="button"
+                                                          className="admin-mini-btn"
+                                                          onClick={() =>
+                                                            setDeliveryBoyForm({
+                                                              id: b.id,
+                                                              fullName: b.fullName,
+                                                              phone: b.phone,
+                                                              email: b.email,
+                                                              password: '',
+                                                              availability: b.availability,
+                                                            })
+                                                          }
+                                                        >
+                                                          Edit
+                                                        </button>
+                                                        <button
+                                                          type="button"
+                                                          className="admin-mini-btn"
+                                                          onClick={() => handleToggleDeliveryBoy(b)}
+                                                        >
+                                                          {b.active ? 'Deactivate' : 'Activate'}
+                                                        </button>
+                                                        <button
+                                                          type="button"
+                                                          className="admin-mini-btn admin-mini-danger"
+                                                          onClick={() => handleDeleteDeliveryBoy(b)}
+                                                          aria-label={`Delete ${b.fullName}`}
+                                                        >
+                                                          <FiTrash2 size={13} /> Delete
+                                                        </button>
+                                                      </div>
+                                                    </td>
+                                                  </tr>
+                                                )))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+
+                                        {selectedPartner && (
+                                          <div
+                                            className="admin-order-modal-backdrop"
+                                            onClick={() => setSelectedPartnerId(null)}
+                                          >
+                                            <div
+                                              className="admin-order-drawer"
+                                              role="dialog"
+                                              aria-modal="true"
+                                              aria-label={`Delivery partner details for ${selectedPartner.fullName}`}
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              <div className="admin-drawer-head">
+                                                <div>
+                                                  <h3>{selectedPartner.fullName}</h3>
+                                                  <p>
+                                                    Partner ID: {selectedPartner.id} &bull;{' '}
+                                                    {selectedPartner.active ? 'Active' : 'Inactive'} &bull;{' '}
+                                                    <span style={{ textTransform: 'capitalize' }}>{selectedPartner.availability}</span>
+                                                  </p>
+                                                </div>
+                                                <button
+                                                  type="button"
+                                                  className="admin-drawer-close"
+                                                  aria-label="Close partner details"
+                                                  onClick={() => setSelectedPartnerId(null)}
+                                                >
+                                                  <FiX size={18} />
+                                                </button>
+                                              </div>
+
+                                              <div className="admin-drawer-body">
+                                                <div className="admin-drawer-grid">
+                                                  <div className="admin-drawer-section">
+                                                    <span className="admin-drawer-section-title">Partner Contact &amp; Profile</span>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>Full Name</span>
+                                                      <strong>{selectedPartner.fullName}</strong>
+                                                    </div>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>Phone</span>
+                                                      <strong>{selectedPartner.phone}</strong>
+                                                    </div>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>Email</span>
+                                                      <strong>{selectedPartner.email || '—'}</strong>
+                                                    </div>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>Account Status</span>
+                                                      <strong>{selectedPartner.active ? 'Active' : 'Inactive'}</strong>
+                                                    </div>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>Availability</span>
+                                                      <strong style={{ textTransform: 'capitalize' }}>{selectedPartner.availability}</strong>
+                                                    </div>
+                                                    {selectedPartner.phone && (
+                                                      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                                                        <a href={`tel:${selectedPartner.phone}`} className="admin-mini-btn">
+                                                          <FiPhone size={13} /> Call Partner
+                                                        </a>
+                                                        <a
+                                                          href={`https://wa.me/${(() => {
+                                                            const d = String(selectedPartner.phone).replace(/\D/g, '');
+                                                            return d.length === 10 ? `91${d}` : d;
+                                                          })()}`}
+                                                          target="_blank"
+                                                          rel="noreferrer"
+                                                          className="admin-mini-btn"
+                                                        >
+                                                          WhatsApp
+                                                        </a>
+                                                      </div>
+                                                    )}
+                                                  </div>
+
+                                                  <div className="admin-drawer-section">
+                                                    <span className="admin-drawer-section-title">Performance &amp; Collections</span>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>Total Assigned</span>
+                                                      <strong>{selectedPartner.stats?.totalAssigned ?? partnerOrders.length}</strong>
+                                                    </div>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>Active Deliveries</span>
+                                                      <strong>{selectedPartner.stats?.active ?? 0}</strong>
+                                                    </div>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>Completed</span>
+                                                      <strong>{selectedPartner.stats?.completed ?? 0}</strong>
+                                                    </div>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>Failed</span>
+                                                      <strong>{selectedPartner.stats?.failed ?? 0}</strong>
+                                                    </div>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>Completion Rate</span>
+                                                      <strong>{selectedPartner.stats?.completionRate ?? 100}%</strong>
+                                                    </div>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>COD Collected</span>
+                                                      <strong>
+                                                        {money(
+                                                          partnerOrders
+                                                            .filter((o) => o.paymentMethod === 'cod' && o.paymentStatus === 'paid')
+                                                            .reduce((sum, o) => sum + Number(o.pricing?.grandTotal || 0), 0)
+                                                        )}
+                                                      </strong>
+                                                    </div>
+                                                    <div className="admin-drawer-kv">
+                                                      <span>COD Pending</span>
+                                                      <strong>
+                                                        {money(
+                                                          partnerOrders
+                                                            .filter(
+                                                              (o) =>
+                                                                o.paymentMethod === 'cod' &&
+                                                                o.paymentStatus !== 'paid' &&
+                                                                o.status !== 'cancelled'
+                                                            )
+                                                            .reduce((sum, o) => sum + Number(o.pricing?.grandTotal || 0), 0)
+                                                        )}
+                                                      </strong>
+                                                    </div>
+                                                  </div>
+                                                </div>
+
+                                                <div className="admin-drawer-section">
+                                                  <span className="admin-drawer-section-title">
+                                                    Assigned Orders ({partnerOrders.length})
+                                                  </span>
+                                                  {partnerOrders.length === 0 ? (
+                                                    <p style={{ fontSize: '0.84rem', color: 'var(--muted)' }}>
+                                                      No orders assigned to this partner yet.
+                                                    </p>
+                                                  ) : (
+                                                    <div>
+                                                      {partnerOrders.map((ord) => (
+                                                        <div key={ord.id} className="admin-drawer-item">
+                                                          <div>
+                                                            <strong>{ord.id}</strong> &bull;{' '}
+                                                            <span>{ord.customerName}</span>
+                                                            <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                                                              {ord.scheduledDate} &bull; {ord.slotLabel} &bull;{' '}
+                                                              {(ord.items || []).map((it) => `${it.qty}× ${it.name}`).join(', ')}
+                                                            </div>
+                                                            <div style={{ fontSize: '0.74rem', color: 'var(--muted)', marginTop: 2 }}>
+                                                              {[ord.address?.line1, ord.address?.area, ord.address?.city, ord.address?.pincode]
+                                                                .filter(Boolean)
+                                                                .join(', ')}
+                                                            </div>
+                                                          </div>
+                                                          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                                            <strong>{money(ord.pricing?.grandTotal || 0)}</strong>
+                                                            <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                                                              {ord.paymentMethod} ({ord.paymentStatus})
+                                                            </div>
+                                                            <span
+                                                              className={`admin-order-pill ${ord.deliveryStatus === 'delivered' || ord.status === 'delivered'
+                                                                ? 'admin-pill-green'
+                                                                : ord.deliveryStatus === 'delivery_failed' || ord.status === 'cancelled'
+                                                                  ? 'admin-pill-red'
+                                                                  : 'admin-pill-blue'
+                                                                }`}
+                                                              style={{ marginTop: 4, fontSize: '0.66rem', padding: '2px 8px' }}
+                                                            >
+                                                              {(ord.deliveryStatus || ord.status).replace(/_/g, ' ')}
+                                                            </span>
+                                                          </div>
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  )}
+                                                </div>
+
+                                                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                                  <button
+                                                    type="button"
+                                                    className="admin-mini-btn"
+                                                    onClick={() => {
+                                                      setDeliveryBoyForm({
+                                                        id: selectedPartner.id,
+                                                        fullName: selectedPartner.fullName,
+                                                        phone: selectedPartner.phone,
+                                                        email: selectedPartner.email,
+                                                        password: '',
+                                                        availability: selectedPartner.availability,
+                                                      });
+                                                      setSelectedPartnerId(null);
+                                                    }}
+                                                  >
+                                                    Edit Partner
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    className={`admin-mini-btn ${selectedPartner.active ? 'admin-mini-danger' : ''}`}
+                                                    onClick={() => handleToggleDeliveryBoy(selectedPartner)}
+                                                  >
+                                                    {selectedPartner.active ? 'Deactivate Partner' : 'Activate Partner'}
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </section>
+                                    );
+                                  })()}
+
+                                  {activeTab === 'team' && user?.role === 'admin' && (
+                                    <section className="admin-panel">
+                                      <div className="admin-panel-head">
+                                        <h2>Admin &amp; Analyst Team Management</h2>
+                                      </div>
+                                      <form className="admin-form" onSubmit={handleCreateTeamMember} style={{ marginBottom: 20 }}>
+                                        <div className="admin-form-row">
+                                          <div className="admin-field">
+                                            <label htmlFor="tm-name">Full Name</label>
+                                            <input id="tm-name" required value={teamForm.fullName} onChange={(e) => setTeamForm({ ...teamForm, fullName: e.target.value })} placeholder="Analyst Name" />
+                                          </div>
+                                          <div className="admin-field">
+                                            <label htmlFor="tm-email">Email</label>
+                                            <input id="tm-email" type="email" required value={teamForm.email} onChange={(e) => setTeamForm({ ...teamForm, email: e.target.value })} placeholder="analyst@hruvita.com" />
+                                          </div>
+                                        </div>
+                                        <div className="admin-form-row">
+                                          <div className="admin-field">
+                                            <label htmlFor="tm-pass">Password (8+ chars)</label>
+                                            <input id="tm-pass" type="password" minLength={8} required value={teamForm.password} onChange={(e) => setTeamForm({ ...teamForm, password: e.target.value })} />
+                                          </div>
+                                          <div className="admin-field">
+                                            <label htmlFor="tm-role">Role</label>
+                                            <select id="tm-role" value={teamForm.role} onChange={(e) => setTeamForm({ ...teamForm, role: e.target.value })}>
+                                              <option value="admin_analyser">Admin Analyst (admin_analyser)</option>
+                                              <option value="staff">Staff</option>
+                                            </select>
+                                          </div>
+                                        </div>
+                                        <Button type="submit" size="sm">Create Team Account</Button>
+                                      </form>
+                                      <div className="admin-table-wrap">
+                                        <table className="admin-table">
+                                          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Action</th></tr></thead>
+                                          <tbody>
+                                            {team.map((m) => (
+                                              <tr key={m.id}>
+                                                <td><strong>{m.fullName}</strong></td>
+                                                <td>{m.email}</td>
+                                                <td><span className="admin-badge">{m.role}</span></td>
+                                                <td>{m.blocked ? 'Deactivated' : 'Active'}</td>
+                                                <td>
+                                                  {m.role !== 'admin' && (
+                                                    <button type="button" className="admin-mini-btn" onClick={() => handleToggleTeamStatus(m)}>
+                                                      {m.blocked ? 'Activate' : 'Deactivate'}
+                                                    </button>
+                                                  )}
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+
+
+                                    </section>
+                                  )}
+
+                                  {activeTab === 'audit' && (
+                                    <section className="admin-panel">
+                                      <div className="admin-panel-head">
+                                        <h2>Security &amp; Admin Audit Logs</h2>
+                                      </div>
+                                      <div className="admin-table-wrap">
+                                        <table className="admin-table">
+                                          <thead>
+                                            <tr>
+                                              <th>Action</th>
+                                              <th>Entity</th>
+                                              <th>Admin Actor</th>
+                                              <th>Timestamp</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {(overview?.auditLogs || []).map((log) => (
+                                              <tr key={log.id}>
+                                                <td>
+                                                  <strong>{log.action}</strong>
+                                                </td>
+                                                <td>
+                                                  {log.entity} ({log.entityId})
+                                                </td>
+                                                <td>{log.actorEmail}</td>
+                                                <td style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
+                                                  {log.createdAt ? new Date(log.createdAt).toLocaleString('en-IN') : 'Just now'}
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+
+
+                                    </section>
+                                  )}
+                              </div>
                           </div>
-                        )}
-                      </div>
-
-                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                        <button
-                          type="button"
-                          className="admin-mini-btn"
-                          onClick={() => {
-                            setDeliveryBoyForm({
-                              id: selectedPartner.id,
-                              fullName: selectedPartner.fullName,
-                              phone: selectedPartner.phone,
-                              email: selectedPartner.email,
-                              password: '',
-                              availability: selectedPartner.availability,
-                            });
-                            setSelectedPartnerId(null);
-                          }}
-                        >
-                          Edit Partner
-                        </button>
-                        <button
-                          type="button"
-                          className={`admin-mini-btn ${selectedPartner.active ? 'admin-mini-danger' : ''}`}
-                          onClick={() => handleToggleDeliveryBoy(selectedPartner)}
-                        >
-                          {selectedPartner.active ? 'Deactivate Partner' : 'Activate Partner'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </section>
-            );
-          })()}
-
-          {activeTab === 'team' && user?.role === 'admin' && (
-            <section className="admin-panel">
-              <div className="admin-panel-head">
-                <h2>Admin &amp; Analyst Team Management</h2>
-              </div>
-              <form className="admin-form" onSubmit={handleCreateTeamMember} style={{ marginBottom: 20 }}>
-                <div className="admin-form-row">
-                  <div className="admin-field">
-                    <label htmlFor="tm-name">Full Name</label>
-                    <input id="tm-name" required value={teamForm.fullName} onChange={(e) => setTeamForm({ ...teamForm, fullName: e.target.value })} placeholder="Analyst Name" />
-                  </div>
-                  <div className="admin-field">
-                    <label htmlFor="tm-email">Email</label>
-                    <input id="tm-email" type="email" required value={teamForm.email} onChange={(e) => setTeamForm({ ...teamForm, email: e.target.value })} placeholder="analyst@hruvita.com" />
-                  </div>
-                </div>
-                <div className="admin-form-row">
-                  <div className="admin-field">
-                    <label htmlFor="tm-pass">Password (8+ chars)</label>
-                    <input id="tm-pass" type="password" minLength={8} required value={teamForm.password} onChange={(e) => setTeamForm({ ...teamForm, password: e.target.value })} />
-                  </div>
-                  <div className="admin-field">
-                    <label htmlFor="tm-role">Role</label>
-                    <select id="tm-role" value={teamForm.role} onChange={(e) => setTeamForm({ ...teamForm, role: e.target.value })}>
-                      <option value="admin_analyser">Admin Analyst (admin_analyser)</option>
-                      <option value="staff">Staff</option>
-                    </select>
-                  </div>
-                </div>
-                <Button type="submit" size="sm">Create Team Account</Button>
-              </form>
-              <div className="admin-table-wrap">
-                <table className="admin-table">
-                  <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Action</th></tr></thead>
-                  <tbody>
-                    {team.map((m) => (
-                      <tr key={m.id}>
-                        <td><strong>{m.fullName}</strong></td>
-                        <td>{m.email}</td>
-                        <td><span className="admin-badge">{m.role}</span></td>
-                        <td>{m.blocked ? 'Deactivated' : 'Active'}</td>
-                        <td>
-                          {m.role !== 'admin' && (
-                            <button type="button" className="admin-mini-btn" onClick={() => handleToggleTeamStatus(m)}>
-                              {m.blocked ? 'Activate' : 'Deactivate'}
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-
-            </section>
-          )}
-
-          {activeTab === 'audit' && (
-            <section className="admin-panel">
-              <div className="admin-panel-head">
-                <h2>Security &amp; Admin Audit Logs</h2>
-              </div>
-              <div className="admin-table-wrap">
-                <table className="admin-table">
-                  <thead>
-                    <tr>
-                      <th>Action</th>
-                      <th>Entity</th>
-                      <th>Admin Actor</th>
-                      <th>Timestamp</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(overview?.auditLogs || []).map((log) => (
-                      <tr key={log.id}>
-                        <td>
-                          <strong>{log.action}</strong>
-                        </td>
-                        <td>
-                          {log.entity} ({log.entityId})
-                        </td>
-                        <td>{log.actorEmail}</td>
-                        <td style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
-                          {log.createdAt ? new Date(log.createdAt).toLocaleString('en-IN') : 'Just now'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-
-            </section>
-          )}
-        </div>
-      </div>
 
       {/* Add / Edit Product Modal */}
-      {productModalOpen && (
-        <div className="rzp-backdrop" role="dialog" aria-modal="true" aria-label="Product Editor">
-          <div className="rzp-modal" style={{ width: 'min(100%, 560px)', maxHeight: '92vh', overflowY: 'auto' }}>
-            <div className="rzp-head">
-              <strong>{prodForm.id ? `Edit Product: ${prodForm.name}` : 'Add New Product'}</strong>
-              <button
-                type="button"
-                onClick={() => setProductModalOpen(false)}
-                style={{ border: 0, background: 'transparent', color: 'var(--bg)', fontWeight: 700 }}
-              >
-                ✕
-              </button>
-            </div>
-            <div className="rzp-body">
-              <form className="admin-form" onSubmit={handleProductSave}>
-                <div className="admin-field">
-                  <label htmlFor="prod-name">Product Name</label>
-                  <input
-                    id="prod-name"
-                    name="name"
-                    type="text"
-                    required
-                    value={prodForm.name}
-                    onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })}
-                    placeholder="e.g. Pesarattu Upma"
-                  />
-                </div>
+                        {productModalOpen && (
+                          <div className="rzp-backdrop" role="dialog" aria-modal="true" aria-label="Product Editor">
+                            <div className="rzp-modal" style={{ width: 'min(100%, 560px)', maxHeight: '92vh', overflowY: 'auto' }}>
+                              <div className="rzp-head">
+                                <strong>{prodForm.id ? `Edit Product: ${prodForm.name}` : 'Add New Product'}</strong>
+                                <button
+                                  type="button"
+                                  onClick={() => setProductModalOpen(false)}
+                                  style={{ border: 0, background: 'transparent', color: 'var(--bg)', fontWeight: 700 }}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                              <div className="rzp-body">
+                                <form className="admin-form" onSubmit={handleProductSave}>
+                                  <div className="admin-field">
+                                    <label htmlFor="prod-name">Product Name</label>
+                                    <input
+                                      id="prod-name"
+                                      name="name"
+                                      type="text"
+                                      required
+                                      value={prodForm.name}
+                                      onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })}
+                                      placeholder="e.g. Pesarattu Upma"
+                                    />
+                                  </div>
 
-                <div className="admin-form-row">
-                  <div className="admin-field">
-                    <label htmlFor="prod-cat">Category</label>
-                    <select
-                      id="prod-cat"
-                      name="category"
-                      value={prodForm.category}
-                      onChange={(e) => setProdForm({ ...prodForm, category: e.target.value })}
-                    >
-                      {categories.map((c) => (
-                        <option key={c.slug} value={c.slug}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="admin-field">
-                    <label htmlFor="prod-img">Food Photo URL</label>
-                    <input
-                      id="prod-img"
-                      name="image"
-                      type="url"
-                      value={prodForm.image}
-                      onChange={(e) => setProdForm({ ...prodForm, image: e.target.value })}
-                    />
-                  </div>
-                </div>
+                                  <div className="admin-form-row">
+                                    <div className="admin-field">
+                                      <label htmlFor="prod-cat">Category</label>
+                                      <select
+                                        id="prod-cat"
+                                        name="category"
+                                        value={prodForm.category}
+                                        onChange={(e) => setProdForm({ ...prodForm, category: e.target.value })}
+                                      >
+                                        {categories.map((c) => (
+                                          <option key={c.slug} value={c.slug}>
+                                            {c.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="admin-field">
+                                      <label htmlFor="prod-img">Food Photo URL</label>
+                                      <input
+                                        id="prod-img"
+                                        name="image"
+                                        type="url"
+                                        value={prodForm.image}
+                                        onChange={(e) => setProdForm({ ...prodForm, image: e.target.value })}
+                                      />
+                                    </div>
+                                  </div>
 
-                <div className="admin-form-row">
-                  <div className="admin-field">
-                    <label htmlFor="prod-price">Price (₹)</label>
-                    <input
-                      id="prod-price"
-                      name="price"
-                      type="number"
-                      min="1"
-                      required
-                      value={prodForm.price}
-                      onChange={(e) => setProdForm({ ...prodForm, price: e.target.value })}
-                    />
-                  </div>
-                  <div className="admin-field">
-                    <label htmlFor="prod-disc">Offer Price (₹, optional)</label>
-                    <input
-                      id="prod-disc"
-                      name="discountPrice"
-                      type="number"
-                      min="0"
-                      value={prodForm.discountPrice}
-                      onChange={(e) => setProdForm({ ...prodForm, discountPrice: e.target.value })}
-                    />
-                  </div>
-                </div>
+                                  <div className="admin-form-row">
+                                    <div className="admin-field">
+                                      <label htmlFor="prod-price">Price (₹)</label>
+                                      <input
+                                        id="prod-price"
+                                        name="price"
+                                        type="number"
+                                        min="1"
+                                        required
+                                        value={prodForm.price}
+                                        onChange={(e) => setProdForm({ ...prodForm, price: e.target.value })}
+                                      />
+                                    </div>
+                                    <div className="admin-field">
+                                      <label htmlFor="prod-disc">Offer Price (₹, optional)</label>
+                                      <input
+                                        id="prod-disc"
+                                        name="discountPrice"
+                                        type="number"
+                                        min="0"
+                                        value={prodForm.discountPrice}
+                                        onChange={(e) => setProdForm({ ...prodForm, discountPrice: e.target.value })}
+                                      />
+                                    </div>
+                                  </div>
 
-                <div className="admin-form-row">
-                  <div className="admin-field">
-                    <label htmlFor="prod-stock">Stock Count</label>
-                    <input
-                      id="prod-stock"
-                      name="stock"
-                      type="number"
-                      min="0"
-                      required
-                      value={prodForm.stock}
-                      onChange={(e) => setProdForm({ ...prodForm, stock: e.target.value })}
-                    />
-                  </div>
-                  <div className="admin-field">
-                    <label htmlFor="prod-prep">Prep Time (mins)</label>
-                    <input
-                      id="prod-prep"
-                      name="prepMins"
-                      type="number"
-                      min="0"
-                      value={prodForm.prepMins}
-                      onChange={(e) => setProdForm({ ...prodForm, prepMins: e.target.value })}
-                    />
-                  </div>
-                </div>
+                                  <div className="admin-form-row">
+                                    <div className="admin-field">
+                                      <label htmlFor="prod-stock">Stock Count</label>
+                                      <input
+                                        id="prod-stock"
+                                        name="stock"
+                                        type="number"
+                                        min="0"
+                                        required
+                                        value={prodForm.stock}
+                                        onChange={(e) => setProdForm({ ...prodForm, stock: e.target.value })}
+                                      />
+                                    </div>
+                                    <div className="admin-field">
+                                      <label htmlFor="prod-prep">Prep Time (mins)</label>
+                                      <input
+                                        id="prod-prep"
+                                        name="prepMins"
+                                        type="number"
+                                        min="0"
+                                        value={prodForm.prepMins}
+                                        onChange={(e) => setProdForm({ ...prodForm, prepMins: e.target.value })}
+                                      />
+                                    </div>
+                                  </div>
 
-                <div className="admin-field">
-                  <label htmlFor="prod-desc">Description</label>
-                  <input
-                    id="prod-desc"
-                    name="description"
-                    type="text"
-                    required
-                    value={prodForm.description}
-                    onChange={(e) => setProdForm({ ...prodForm, description: e.target.value })}
-                  />
-                </div>
+                                  <div className="admin-field">
+                                    <label htmlFor="prod-desc">Description</label>
+                                    <input
+                                      id="prod-desc"
+                                      name="description"
+                                      type="text"
+                                      required
+                                      value={prodForm.description}
+                                      onChange={(e) => setProdForm({ ...prodForm, description: e.target.value })}
+                                    />
+                                  </div>
 
-                <div className="admin-field">
-                  <label htmlFor="prod-ing">Ingredients (comma separated)</label>
-                  <input
-                    id="prod-ing"
-                    name="ingredients"
-                    type="text"
-                    value={prodForm.ingredients}
-                    onChange={(e) => setProdForm({ ...prodForm, ingredients: e.target.value })}
-                  />
-                </div>
+                                  <div className="admin-field">
+                                    <label htmlFor="prod-ing">Ingredients (comma separated)</label>
+                                    <input
+                                      id="prod-ing"
+                                      name="ingredients"
+                                      type="text"
+                                      value={prodForm.ingredients}
+                                      onChange={(e) => setProdForm({ ...prodForm, ingredients: e.target.value })}
+                                    />
+                                  </div>
 
-                <div className="admin-checks">
-                  <label>
-                    <input
-                      id="prod-veg"
-                      name="veg"
-                      type="checkbox"
-                      checked={prodForm.veg}
-                      onChange={(e) => setProdForm({ ...prodForm, veg: e.target.checked })}
-                    />{' '}
-                    Vegetarian
-                  </label>
-                  <label>
-                    <input
-                      id="prod-best"
-                      name="bestseller"
-                      type="checkbox"
-                      checked={prodForm.bestseller}
-                      onChange={(e) => setProdForm({ ...prodForm, bestseller: e.target.checked })}
-                    />{' '}
-                    Bestseller
-                  </label>
-                  <label>
-                    <input
-                      id="prod-spec"
-                      name="special"
-                      type="checkbox"
-                      checked={prodForm.special}
-                      onChange={(e) => setProdForm({ ...prodForm, special: e.target.checked })}
-                    />{' '}
-                    Today&apos;s Special
-                  </label>
-                </div>
+                                  <div className="admin-checks">
+                                    <label>
+                                      <input
+                                        id="prod-veg"
+                                        name="veg"
+                                        type="checkbox"
+                                        checked={prodForm.veg}
+                                        onChange={(e) => setProdForm({ ...prodForm, veg: e.target.checked })}
+                                      />{' '}
+                                      Vegetarian
+                                    </label>
+                                    <label>
+                                      <input
+                                        id="prod-best"
+                                        name="bestseller"
+                                        type="checkbox"
+                                        checked={prodForm.bestseller}
+                                        onChange={(e) => setProdForm({ ...prodForm, bestseller: e.target.checked })}
+                                      />{' '}
+                                      Bestseller
+                                    </label>
+                                    <label>
+                                      <input
+                                        id="prod-spec"
+                                        name="special"
+                                        type="checkbox"
+                                        checked={prodForm.special}
+                                        onChange={(e) => setProdForm({ ...prodForm, special: e.target.checked })}
+                                      />{' '}
+                                      Today&apos;s Special
+                                    </label>
+                                  </div>
 
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <Button type="submit" size="sm">
-                    <FiPlus size={16} /> {prodForm.id ? 'Update Product' : 'Create Product'}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setProductModalOpen(false)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
+                                  <div style={{ display: 'flex', gap: 10 }}>
+                                    <Button type="submit" size="sm">
+                                      <FiPlus size={16} /> {prodForm.id ? 'Update Product' : 'Create Product'}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => setProductModalOpen(false)}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </form>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
-      {/* Kitchen Slip Modal */}
-      {kitchenSlipOrder && (
-        <div className="rzp-backdrop" role="dialog" aria-modal="true" aria-label="Kitchen Slip">
-          <div className="rzp-modal">
-            <div className="rzp-head">
-              <strong>KITCHEN SLIP — {kitchenSlipOrder.id}</strong>
-              <button
-                type="button"
-                onClick={() => setKitchenSlipOrder(null)}
-                style={{ border: 0, background: 'transparent', color: 'var(--bg)', fontWeight: 700 }}
-              >
-                ✕
-              </button>
-            </div>
-            <div className="rzp-body" style={{ fontFamily: 'monospace' }}>
-              <div>
-                <strong>Slot:</strong> {kitchenSlipOrder.scheduledDate} | {kitchenSlipOrder.slotLabel}
-              </div>
-              <div>
-                <strong>Customer:</strong> {kitchenSlipOrder.customerName} ({kitchenSlipOrder.customerPhone})
-              </div>
-              <div>
-                <strong>Address:</strong> {kitchenSlipOrder.address?.line1}, {kitchenSlipOrder.address?.pincode}
-              </div>
-              <hr style={{ border: 0, borderTop: '1px dashed var(--line)', width: '100%' }} />
-              {(kitchenSlipOrder.items || []).map((it) => (
-                <div key={it.productId} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>
-                    {it.qty} &times; {it.name}
-                  </span>
-                  <strong>{money(it.lineTotal)}</strong>
-                </div>
-              ))}
-              <hr style={{ border: 0, borderTop: '1px dashed var(--line)', width: '100%' }} />
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <strong>TOTAL ({kitchenSlipOrder.paymentMethod.toUpperCase()}):</strong>
-                <strong>{money(kitchenSlipOrder.pricing?.grandTotal)}</strong>
-              </div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <Button size="sm" onClick={() => window.print()}>
-                  <FiPrinter size={14} /> Print
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setKitchenSlipOrder(null)}>
-                  Close
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+                        {/* Kitchen Slip Modal */}
+                        {kitchenSlipOrder && (
+                          <div className="rzp-backdrop" role="dialog" aria-modal="true" aria-label="Kitchen Slip">
+                            <div className="rzp-modal">
+                              <div className="rzp-head">
+                                <strong>KITCHEN SLIP — {kitchenSlipOrder.id}</strong>
+                                <button
+                                  type="button"
+                                  onClick={() => setKitchenSlipOrder(null)}
+                                  style={{ border: 0, background: 'transparent', color: 'var(--bg)', fontWeight: 700 }}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                              <div className="rzp-body" style={{ fontFamily: 'monospace' }}>
+                                <div>
+                                  <strong>Slot:</strong> {kitchenSlipOrder.scheduledDate} | {kitchenSlipOrder.slotLabel}
+                                </div>
+                                <div>
+                                  <strong>Customer:</strong> {kitchenSlipOrder.customerName} ({kitchenSlipOrder.customerPhone})
+                                </div>
+                                <div>
+                                  <strong>Address:</strong> {kitchenSlipOrder.address?.line1}, {kitchenSlipOrder.address?.pincode}
+                                </div>
+                                <hr style={{ border: 0, borderTop: '1px dashed var(--line)', width: '100%' }} />
+                                {(kitchenSlipOrder.items || []).map((it) => (
+                                  <div key={it.productId} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span>
+                                      {it.qty} &times; {it.name}
+                                    </span>
+                                    <strong>{money(it.lineTotal)}</strong>
+                                  </div>
+                                ))}
+                                <hr style={{ border: 0, borderTop: '1px dashed var(--line)', width: '100%' }} />
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                  <strong>TOTAL ({kitchenSlipOrder.paymentMethod.toUpperCase()}):</strong>
+                                  <strong>{money(kitchenSlipOrder.pricing?.grandTotal)}</strong>
+                                </div>
+                                <div style={{ display: 'flex', gap: 10 }}>
+                                  <Button size="sm" onClick={() => window.print()}>
+                                    <FiPrinter size={14} /> Print
+                                  </Button>
+                                  <Button variant="outline" size="sm" onClick={() => setKitchenSlipOrder(null)}>
+                                    Close
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                    </div>
+                    );
 }

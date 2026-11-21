@@ -18,8 +18,10 @@ import './Navbar.css';
 const NAV_LINKS = [
   { to: '/', label: 'Home', end: true },
   { to: '/menu', label: 'Explore Menu' },
-  { to: '/build-bowl', label: 'Build Your Bowl' },
-  { to: '/subscriptions', label: 'Subscriptions' },
+  { to: '/groceries', label: 'Groceries' },
+  { to: '/build-bowl', label: 'Build Your Bowl', authOnly: true },
+  { to: '/subscriptions', label: 'Subscriptions', authOnly: true },
+  { to: '/group-drops', label: 'Group Drops', authOnly: true },
   { to: '/about', label: 'About Us' },
   { to: '/contact', label: 'Contact' },
 ];
@@ -48,7 +50,7 @@ export default function Navbar() {
         <Logo />
 
         <nav className="navbar-links" aria-label="Main Navigation">
-          {NAV_LINKS.map((item) => (
+          {NAV_LINKS.filter((item) => !item.authOnly || Boolean(user)).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -192,7 +194,7 @@ export default function Navbar() {
       {mobileOpen && (
         <div className="navbar-mobile-drawer">
           <nav className="container navbar-mobile-nav" aria-label="Mobile Navigation">
-            {NAV_LINKS.map((item) => (
+            {NAV_LINKS.filter((item) => !item.authOnly || Boolean(user)).map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}

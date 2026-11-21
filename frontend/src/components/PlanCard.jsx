@@ -42,7 +42,7 @@ export default function PlanCard({ plan, preferredBreakfast = 'Mixed Fruit Bowl'
 
   return (
     <article className={`plan-card ${plan.popular ? 'plan-card-popular' : ''}`.trim()}>
-      {plan.popular && <span className="plan-tag">Most Popular</span>}
+      {(plan.popular || plan.badge) && <span className="plan-tag">{plan.badge || 'Most Popular'}</span>}
       <span className="plan-duration">{plan.days} Days</span>
       <h3 className="plan-name">{plan.name}</h3>
       <p className="plan-price">
@@ -50,8 +50,8 @@ export default function PlanCard({ plan, preferredBreakfast = 'Mixed Fruit Bowl'
         <span>{money(perDay)} / morning delivery</span>
       </p>
       <ul className="plan-perks">
-        {plan.perks.map((p) => (
-          <li key={p}>
+        {(plan.perks || []).map((p, idx) => (
+          <li key={`${p}-${idx}`}>
             <FiCheck size={16} /> <span>{p}</span>
           </li>
         ))}

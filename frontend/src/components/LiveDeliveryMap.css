@@ -1,0 +1,308 @@
+.ldm-wrap {
+  width: 100%;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid #d5e4da;
+  background: #f7fbf8;
+  box-shadow: 0 12px 30px rgba(16, 53, 36, 0.1);
+}
+
+.ldm-map-shell {
+  position: relative;
+  width: 100%;
+  background: #e9f2ec;
+}
+
+.ldm-leaflet-canvas {
+  width: 100%;
+  min-height: 250px;
+  z-index: 1;
+}
+
+.ldm-map-shell .leaflet-tile-pane {
+  filter: saturate(0.84) contrast(1.03) brightness(1.03);
+}
+
+/* Clean zoom controls at bottom-right so top HUD stays uncluttered */
+.ldm-map-shell .leaflet-control-zoom {
+  border: 1px solid rgba(255, 255, 255, 0.8) !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 6px 18px rgba(15, 46, 32, 0.18) !important;
+  margin-bottom: 12px !important;
+  margin-right: 12px !important;
+  backdrop-filter: blur(8px);
+}
+
+.ldm-map-shell .leaflet-control-zoom a {
+  background: rgba(255, 255, 255, 0.94) !important;
+  color: #123728 !important;
+  font-weight: 800 !important;
+  width: 32px !important;
+  height: 32px !important;
+  line-height: 32px !important;
+}
+
+.ldm-map-shell .leaflet-control-zoom a:hover {
+  background: #ecfdf3 !important;
+}
+
+.ldm-map-shell .leaflet-control-attribution {
+  background: rgba(255, 255, 255, 0.78) !important;
+  backdrop-filter: blur(4px);
+  font-size: 9px !important;
+  padding: 2px 6px !important;
+  border-top-right-radius: 6px;
+}
+
+/* Glassmorphic Top HUD */
+.ldm-hud-top {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  z-index: 500;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.ldm-eta-pill {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(15, 45, 32, 0.9);
+  color: #ffffff;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 20px rgba(12, 38, 26, 0.28);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.ldm-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.28);
+  animation: ldmDotPulse 1.5s infinite;
+  flex-shrink: 0;
+}
+
+@keyframes ldmDotPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.25); opacity: 0.7; }
+}
+
+.ldm-hud-actions {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ldm-hud-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.94);
+  color: #123728;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 6px 16px rgba(15, 46, 32, 0.16);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.ldm-hud-btn:hover {
+  background: #ecfdf3;
+  transform: translateY(-1px);
+}
+
+/* Custom Markers */
+.ldm-div-icon {
+  background: transparent;
+  border: 0;
+}
+
+.ldm-scooter-pin {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+}
+
+.ldm-scooter-halo {
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34, 197, 94, 0.4) 0%, rgba(34, 197, 94, 0) 70%);
+  animation: ldmPulse 1.6s infinite;
+}
+
+@keyframes ldmPulse {
+  0% { transform: scale(0.78); opacity: 0.95; }
+  75% { transform: scale(1.48); opacity: 0; }
+  100% { transform: scale(1.48); opacity: 0; }
+}
+
+.ldm-scooter-bubble {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #ffffff 0%, #ecfdf3 100%);
+  border: 2.5px solid #16a34a;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 18px rgba(16, 53, 36, 0.34);
+  transition: transform 0.35s ease;
+}
+
+.ldm-pin-tag {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: #123728;
+  color: #ffffff;
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.24);
+}
+
+.ldm-home-pin {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #1b4d38 0%, #113425 100%);
+  border: 2.5px solid #ffffff;
+  display: grid;
+  place-items: center;
+  font-size: 1.08rem;
+  box-shadow: 0 8px 18px rgba(16, 53, 36, 0.34);
+}
+
+/* Bottom Telemetry Strip */
+.ldm-footer-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  background: linear-gradient(90deg, #f3faf5 0%, #ffffff 100%);
+  border-top: 1px solid #e1ece4;
+  font-size: 0.8rem;
+  color: #164430;
+}
+
+.ldm-footer-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.ldm-speed-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.ldm-sync-label {
+  font-size: 0.74rem;
+  color: #5c7566;
+  font-weight: 600;
+}
+
+/* Attractive Fallback Card when waiting for initial GPS lock */
+.ldm-fallback-card {
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid #d2e4d8;
+  background:
+    radial-gradient(circle at 85% 20%, rgba(74, 222, 128, 0.16), transparent 45%),
+    repeating-linear-gradient(0deg, rgba(27, 77, 56, 0.03) 0 1px, transparent 1px 28px),
+    repeating-linear-gradient(90deg, rgba(27, 77, 56, 0.03) 0 1px, transparent 1px 28px),
+    linear-gradient(135deg, #f4fbf6 0%, #eef6f0 100%);
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.ldm-fallback-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ldm-fallback-node {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #cbe0d2;
+  display: grid;
+  place-items: center;
+  font-size: 1.05rem;
+  box-shadow: 0 4px 10px rgba(16, 53, 36, 0.08);
+  flex-shrink: 0;
+}
+
+.ldm-fallback-road {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: #d7e8dc;
+  overflow: visible;
+}
+
+.ldm-fallback-progress {
+  height: 100%;
+  width: 48%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22c55e, #15803d);
+}
+
+.ldm-fallback-bike {
+  position: absolute;
+  top: 50%;
+  left: 48%;
+  transform: translate(-50%, -50%);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #16a34a;
+  display: grid;
+  place-items: center;
+  font-size: 0.95rem;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.28);
+  animation: ldmBikeGlide 2.2s ease-in-out infinite;
+}
+
+@keyframes ldmBikeGlide {
+  0%, 100% { transform: translate(-50%, -50%) translateX(-4px); }
+  50% { transform: translate(-50%, -50%) translateX(4px); }
+}

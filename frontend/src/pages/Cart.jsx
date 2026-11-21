@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { FiCheckCircle, FiCrosshair, FiMinus, FiPlus, FiShield, FiTrash2 } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
+import PincodeChecker from '../components/PincodeChecker.jsx';
 import { useCart } from '../context/CartContext.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -62,20 +63,33 @@ export default function Cart() {
   const [searchParams] = useSearchParams();
   const [scheduledDate, setScheduledDate] = useState(todayStr);
   const [slotId, setSlotId] = useState('morning');
-  const [paymentMethod, setPaymentMethod] = useState(() =>
-    searchParams.get('pay') === 'razorpay' ? 'razorpay' : 'cod'
-  );
+  const [paymentMethod, setPaymentMethod] = useState(() => {
+    const p = searchParams.get('pay');
+    return p === 'razorpay' || p === 'wallet' ? p : 'cod';
+  });
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [pincodeResult, setPincodeResult] = useState(null);
+
+  useEffect(() => {
+    if (!user) {
+      setWalletBalance(0);
+      return;
+    }
+    apiRequest('/api/wallet')
+      .then((res) => setWalletBalance(Number(res.balance || 0)))
+      .catch(() => {});
+  }, [user]);
 
   useEffect(() => {
     const payParam = searchParams.get('pay');
-    if (payParam === 'razorpay' || payParam === 'cod') {
+    if (payParam === 'razorpay' || payParam === 'cod' || payParam === 'wallet') {
       setPaymentMethod(payParam);
     }
   }, [searchParams]);
 
   useEffect(() => {
     const onVoicePay = (ev) => {
-      if (ev.detail === 'razorpay' || ev.detail === 'cod') {
+      if (ev.detail === 'razorpay' || ev.detail === 'cod' || ev.detail === 'wallet') {
         setPaymentMethod(ev.detail);
       }
     };
@@ -335,6 +349,10 @@ export default function Cart() {
       setError('Please select a saved delivery address or enter complete delivery details.');
       return;
     }
+    if (pincodeResult && !pincodeResult.serviceable) {
+      setError(`Delivery is currently unavailable for pincode ${address.pincode}.`);
+      return;
+    }
 
     setBusy(true);
     try {
@@ -353,10 +371,15 @@ export default function Cart() {
         }),
       });
 
-      if (paymentMethod === 'cod') {
+      if (paymentMethod === 'cod' || paymentMethod === 'wallet') {
         clear();
         await refreshCatalog();
-        showToast('Order placed successfully.');
+        if (typeof res.walletBalance === 'number') setWalletBalance(res.walletBalance);
+        showToast(
+          paymentMethod === 'wallet'
+            ? 'Paid in 1 tap via HRUVITA Wallet!'
+            : 'Order placed successfully.'
+        );
         setConfirmedOrder(res.order);
       } else if (res.razorpay?.isRealGateway && (await loadRazorpayScript()) && window.Razorpay) {
         const rzpOptions = {
@@ -735,6 +758,11 @@ export default function Cart() {
                     </div>
                   </>
                 )}
+                <PincodeChecker
+                  pincode={getSelectedAddressObject().pincode}
+                  area={getSelectedAddressObject().area || getSelectedAddressObject().city}
+                  onStatusChange={setPincodeResult}
+                />
               </>
             )}
           </div>
@@ -872,7 +900,23 @@ export default function Cart() {
               >
                 Online (Razorpay)
               </button>
+              {user && (
+                <button
+                  type="button"
+                  className={`cart-pay-option ${
+                    paymentMethod === 'wallet' ? 'cart-pay-option-active' : ''
+                  }`.trim()}
+                  onClick={() => setPaymentMethod('wallet')}
+                >
+                  ⚡ 1-Tap Wallet ({money(walletBalance)})
+                </button>
+              )}
             </div>
+            {paymentMethod === 'wallet' && walletBalance < pricing.grandTotal && (
+              <p style={{ fontSize: '0.78rem', color: '#b45309', marginTop: 6 }}>
+                Wallet balance is {money(walletBalance)}. Top up in Account → Wallet or choose COD/Razorpay.
+              </p>
+            )}
           </div>
 
           {!user ? (
@@ -884,11 +928,19 @@ export default function Cart() {
               type="button"
               variant="primary"
               size="lg"
-              disabled={busy}
+              disabled={
+                busy ||
+                (pincodeResult && !pincodeResult.serviceable) ||
+                (paymentMethod === 'wallet' && walletBalance < pricing.grandTotal)
+              }
               onClick={handlePlaceOrder}
             >
               {busy
                 ? 'Processing...'
+                : pincodeResult && !pincodeResult.serviceable
+                ? `Delivery Unavailable (${pincodeResult.pincode})`
+                : paymentMethod === 'wallet'
+                ? `⚡ 1-Tap Pay ${money(pricing.grandTotal)} (Wallet)`
                 : paymentMethod === 'razorpay'
                 ? `Pay ${money(pricing.grandTotal)}`
                 : `Place Order (${money(pricing.grandTotal)})`}

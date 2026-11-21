@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { isGroceryProduct } from '../utils/businessScope.js';
 import {
   listProducts,
   listCategories,
@@ -374,6 +375,51 @@ router.get('/analytics', async (req, res) => {
         popularBowls: [...bowlComboMap.entries()].map(([combo, qty]) => ({ combo, qty })).slice(0, 5),
       },
       categories: categories.map((c) => c.slug),
+      businessSplit: (() => {
+        const fruitProds = products.filter((p) => !isGroceryProduct(p));
+        const groceryProds = products.filter((p) => isGroceryProduct(p));
+        let fruitRev = 0;
+        let groceryRev = 0;
+        let fruitUnits = 0;
+        let groceryUnits = 0;
+        const fruitOrderIds = new Set();
+        const groceryOrderIds = new Set();
+
+        for (const o of validOrders) {
+          for (const it of o.items || []) {
+            const rawId = String(it.productId || '').replace(/^combo:/, '');
+            const prod = prodMap.get(rawId) || { id: rawId, category: it.category || '' };
+            const qty = Number(it.qty || 1);
+            const amt = Number(it.lineTotal || 0);
+            if (isGroceryProduct(prod)) {
+              groceryRev += amt;
+              groceryUnits += qty;
+              groceryOrderIds.add(o.id);
+            } else {
+              fruitRev += amt;
+              fruitUnits += qty;
+              fruitOrderIds.add(o.id);
+            }
+          }
+        }
+
+        return {
+          fruits: {
+            revenue: Math.round(fruitRev),
+            ordersCount: fruitOrderIds.size,
+            unitsSold: fruitUnits,
+            productCount: fruitProds.length,
+            lowStockCount: fruitProds.filter((p) => p.stock > 0 && p.stock <= Number(p.lowStockThreshold ?? 5)).length,
+          },
+          grocery: {
+            revenue: Math.round(groceryRev),
+            ordersCount: groceryOrderIds.size,
+            unitsSold: groceryUnits,
+            productCount: groceryProds.length,
+            lowStockCount: groceryProds.filter((p) => p.stock > 0 && p.stock <= Number(p.lowStockThreshold ?? 5)).length,
+          },
+        };
+      })(),
     });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Failed to compute analytics.' });

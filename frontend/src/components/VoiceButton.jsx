@@ -24,9 +24,38 @@ import { money } from '../lib/format.js';
 import './VoiceButton.css';
 
 const GREETINGS = {
-  'en-IN': 'Hello! Welcome to HRUVITA. What would you like to eat today?',
-  'te-IN': 'నమస్కారం! HRUVITA కి స్వాగతం. ఈరోజు మీకు ఏమి కావాలి?',
+  'en-IN':
+    "Hi! I'm your HRUVITA AI Bowl Nutritionist & Voice Assistant. Tap a health goal below to build a custom bowl, reorder your last order in 1 tap, or speak/type anytime!",
+  'te-IN':
+    'నమస్కారం! నేను మీ HRUVITA AI న్యూట్రిషనిస్ట్ & వాయిస్ అసిస్టెంట్. మీ ఆరోగ్య లక్ష్యం ఎంచుకుని కస్టమ్ బౌల్ తయారు చేసుకోండి లేదా మీ పాత ఆర్డర్‌ను మళ్ళీ ఆర్డర్ చేయండి!',
 };
+
+const NUTRITIONIST_GOALS = [
+  {
+    id: 'protein',
+    label: '💪 High Protein',
+    promptEn: 'Build me a high-protein custom fruit bowl, show its nutrition & price, and add it to cart.',
+    promptTe: 'నాకు హై-ప్రోటీన్ కస్టమ్ ఫ్రూట్ బౌల్ తయారు చేసి కార్ట్‌లో యాడ్ చేయండి.',
+  },
+  {
+    id: 'weight-loss',
+    label: '🔥 Weight Loss',
+    promptEn: 'Build me a low-calorie weight-loss custom fruit bowl, show its nutrition & price, and add it to cart.',
+    promptTe: 'నాకు తక్కువ క్యాలరీల వెయిట్-లాస్ కస్టమ్ ఫ్రూట్ బౌల్ తయారు చేసి కార్ట్‌లో యాడ్ చేయండి.',
+  },
+  {
+    id: 'immunity',
+    label: '🛡️ Immunity Boost',
+    promptEn: 'Build me a vitamin-C immunity boost custom fruit bowl, show its nutrition & price, and add it to cart.',
+    promptTe: 'నాకు ఇమ్యూనిటీ బూస్ట్ కస్టమ్ ఫ్రూట్ బౌల్ తయారు చేసి కార్ట్‌లో యాడ్ చేయండి.',
+  },
+  {
+    id: 'low-sugar',
+    label: '🩺 Low Sugar',
+    promptEn: 'Build me a diabetic-friendly low-sugar custom fruit bowl, show its nutrition & price, and add it to cart.',
+    promptTe: 'నాకు తక్కువ షుగర్ ఉన్న కస్టమ్ ఫ్రూట్ బౌల్ తయారు చేసి కార్ట్‌లో యాడ్ చేయండి.',
+  },
+];
 
 const FEMALE_VOICE_HINTS =
   /(shruti|neerja|heera|veena|lekha|aditi|raveena|kanya|samantha|zira|female|google.*తెలుగు|google.*हिन्दी|google uk english female)/i;
@@ -801,14 +830,14 @@ export default function VoiceButton() {
   const sendMessageRef = useRef(sendMessage);
   sendMessageRef.current = sendMessage;
 
-  if (settings?.aiEnabled === false) {
+  if (!user || settings?.aiEnabled === false) {
     return null;
   }
 
   const quickPrompts =
     lang === 'te-IN'
-      ? ['నాకు ఇడ్లీ చూపించండి', '2 ఇడ్లీ యాడ్ చేయండి', 'ఆఫర్లు ఏంటి?', 'చెక్ అవుట్ ఓపెన్ చేయండి']
-      : ['Show breakfast', 'Build my own bowl', 'Active Offers', 'Open checkout'];
+      ? ['నా లాస్ట్ ఆర్డర్ మళ్ళీ ఆర్డర్ చేయండి', 'హై ప్రోటీన్ బౌల్ తయారు చేయండి', 'బౌల్ బిల్డర్ ఓపెన్ చేయండి', 'చెక్ అవుట్ ఓపెన్ చేయండి']
+      : ['Reorder my last order', 'High protein bowl', 'Open Bowl Builder', 'Open checkout'];
 
   const handleLanguageSwitch = (nextLang) => {
     setLang(nextLang);
@@ -838,7 +867,7 @@ export default function VoiceButton() {
                     ? 'Listening...'
                     : busy
                     ? 'Thinking...'
-                    : 'Telugu & English Assistant'}
+                    : 'AI Bowl Nutritionist & Voice Reorder'}
                 </span>
               </div>
             </div>
@@ -969,6 +998,43 @@ export default function VoiceButton() {
               </div>
             </div>
           )}
+
+          <div className="voice-nutrition-bar">
+            <div className="voice-nutrition-head">
+              <span>🥗 AI Bowl Nutritionist</span>
+              <button
+                type="button"
+                className="voice-reorder-btn"
+                disabled={busy}
+                onClick={() => {
+                  voiceActiveRef.current = false;
+                  sendMessage(
+                    lang === 'te-IN'
+                      ? 'నా లాస్ట్ ఆర్డర్ మళ్ళీ ఆర్డర్ చేయండి'
+                      : 'Reorder my previous order into my cart'
+                  );
+                }}
+              >
+                <FiRefreshCw size={11} /> 1-Tap Reorder
+              </button>
+            </div>
+            <div className="voice-goal-grid">
+              {NUTRITIONIST_GOALS.map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  className="voice-goal-btn"
+                  disabled={busy}
+                  onClick={() => {
+                    voiceActiveRef.current = false;
+                    sendMessage(lang === 'te-IN' ? g.promptTe : g.promptEn);
+                  }}
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div className="voice-messages">
             {messages.map((m, idx) => (

@@ -7,6 +7,7 @@ const AuthContext = createContext(null);
 
 export function getDashboardPathForRole(role) {
   if (role === 'admin' || role === 'staff') return '/admin';
+  if (role === 'grocery_admin') return '/grocery-admin';
   if (role === 'admin_analyser') return '/admin-analyser';
   if (role === 'delivery_boy') return '/delivery';
   return '/dashboard';
@@ -290,6 +291,7 @@ export function AuthProvider({ children }) {
         setSelectedAddressId,
         loading,
         isAdmin: user?.role === 'admin' || user?.role === 'staff',
+        isGroceryAdmin: user?.role === 'grocery_admin',
         getCurrentUser: () => user,
         isAuthenticated: () => Boolean(user),
         hasRole: (role) => user?.role === role,

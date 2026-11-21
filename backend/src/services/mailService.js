@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { createNotification } from '../store/repository.js';
+import { sendPushToUser } from '../utils/webPushService.js';
 import { buildOtpEmail } from '../emails/otpTemplate.js';
 import { buildWelcomeEmail } from '../emails/welcomeTemplate.js';
 import { buildPasswordResetEmail } from '../emails/passwordResetTemplate.js';
@@ -235,6 +236,13 @@ export async function sendUserNotification({
   }
 
   if (userId) {
+    sendPushToUser(userId, {
+      title: title || 'HRUVITA Update',
+      body: message || 'You have a new notification.',
+      url: orderId ? '/account?section=orders' : '/account',
+      tag: orderId ? `order-${orderId}` : `notif-${type}`,
+    }).catch(() => {});
+
     return createNotification({
       userId,
       type,

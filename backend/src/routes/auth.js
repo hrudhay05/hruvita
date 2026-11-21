@@ -19,6 +19,9 @@ import {
   findValidRefreshSession,
   revokeRefreshSessionByHash,
   revokeAllUserRefreshSessions,
+  listUserRefreshSessions,
+  revokeRefreshSessionById,
+  revokeOtherUserRefreshSessions,
   createNotification,
   findUserByReferralCode,
   createReferralRecord,
@@ -303,11 +306,11 @@ router.post('/verify-email', async (req, res) => {
 
     const session = await issueSessionAndCookies(req, res, verifiedUser, Boolean(rememberMe));
 
-    if (session.user.role === 'admin' || session.user.role === 'staff') {
+    if (session.user.role === 'admin' || session.user.role === 'staff' || session.user.role === 'grocery_admin') {
       await recordAudit({
         actorId: session.user.id,
         actorEmail: session.user.email,
-        action: 'ADMIN_LOGIN',
+        action: session.user.role === 'grocery_admin' ? 'GROCERY_ADMIN_LOGIN' : 'ADMIN_LOGIN',
         entity: 'user',
         entityId: session.user.id,
       });
@@ -445,6 +448,7 @@ router.post('/login', async (req, res) => {
         user.email === 'admin@hruvita.com' ||
         user.email === 'analyst@hruvita.com' ||
         user.role === 'admin_analyser' ||
+        user.role === 'grocery_admin' ||
         user.role === 'delivery_boy' ||
         user.email === configuredAdminEmail)
     ) {
@@ -927,6 +931,59 @@ router.post('/passkey/login-verify', async (req, res) => {
   } catch (err) {
     return res.status(400).json({ error: err.message || 'Biometric sign-in failed.' });
   }
+});
+
+// ---------------- Active Sessions & Device Manager ----------------
+function parseUserAgentLabel(ua = '') {
+  const s = String(ua);
+  let browser = 'Browser';
+  if (/Edg\//i.test(s)) browser = 'Edge';
+  else if (/Chrome\//i.test(s) && !/Chromium/i.test(s)) browser = 'Chrome';
+  else if (/Safari\//i.test(s) && !/Chrome\//i.test(s)) browser = 'Safari';
+  else if (/Firefox\//i.test(s)) browser = 'Firefox';
+
+  let os = 'Unknown Device';
+  if (/Android/i.test(s)) os = 'Android';
+  else if (/iPhone/i.test(s)) os = 'iPhone';
+  else if (/iPad/i.test(s)) os = 'iPad';
+  else if (/Windows/i.test(s)) os = 'Windows';
+  else if (/Mac OS X|Macintosh/i.test(s)) os = 'Mac';
+  else if (/Linux/i.test(s)) os = 'Linux';
+
+  return `${browser} on ${os}`;
+}
+
+router.get('/sessions', requireAuth, async (req, res) => {
+  const rawRefresh = req.cookies?.[REFRESH_COOKIE_NAME] || '';
+  const currentHash = rawRefresh ? hashToken(rawRefresh) : '';
+  const sessions = await listUserRefreshSessions(req.user.id);
+  return res.json({
+    sessions: sessions.map((s) => ({
+      id: s.id,
+      deviceLabel: parseUserAgentLabel(s.userAgent),
+      userAgent: s.userAgent,
+      ipAddress: s.ipAddress || 'Unknown IP',
+      rememberMe: s.rememberMe,
+      createdAt: s.createdAt,
+      expiresAt: s.expiresAt,
+      isCurrent: Boolean(currentHash && s.hashedRefreshToken === currentHash),
+    })),
+  });
+});
+
+router.delete('/sessions/:id', requireAuth, async (req, res) => {
+  const revoked = await revokeRefreshSessionById(req.user.id, req.params.id);
+  if (!revoked) {
+    return res.status(404).json({ error: 'Session not found or already signed out.' });
+  }
+  return res.json({ revoked: true, id: req.params.id });
+});
+
+router.post('/sessions/revoke-others', requireAuth, async (req, res) => {
+  const rawRefresh = req.cookies?.[REFRESH_COOKIE_NAME] || '';
+  const currentHash = rawRefresh ? hashToken(rawRefresh) : '';
+  const count = await revokeOtherUserRefreshSessions(req.user.id, currentHash);
+  return res.json({ revokedCount: count });
 });
 
 export default router;

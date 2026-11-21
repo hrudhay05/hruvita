@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { ORDER_STATUSES, Order } from '../models/Order.js';
+import { DeliveryPayout } from '../models/DeliveryPayout.js';
 import {
   sendUserNotification,
   sendDeliveryPartnerWelcomeEmail,
@@ -1272,6 +1274,51 @@ router.get('/delivery-reports', async (req, res) => {
     },
     partnerPerformance,
   });
+});
+
+router.get('/delivery-payouts', async (_req, res) => {
+  if (mongoose.connection.readyState !== 1) return res.json({ payouts: [] });
+  const docs = await DeliveryPayout.find().sort({ createdAt: -1 }).limit(100).lean();
+  return res.json({
+    payouts: docs.map((p) => ({
+      id: String(p._id),
+      partnerId: p.partnerId,
+      partnerName: p.partnerName,
+      periodLabel: p.periodLabel,
+      deliveriesCount: p.deliveriesCount,
+      commissionEarned: p.commissionEarned,
+      incentiveBonus: p.incentiveBonus,
+      totalAmount: p.totalAmount,
+      status: p.status,
+      utrNumber: p.utrNumber,
+      paidAt: p.paidAt,
+      createdAt: p.createdAt,
+    })),
+  });
+});
+
+router.patch('/delivery-payouts/:id', async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: 'Database required to update payouts.' });
+  }
+  const { status = 'paid', utrNumber = '', notes = '' } = req.body || {};
+  if (!['pending', 'processing', 'paid'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid payout status.' });
+  }
+  const updated = await DeliveryPayout.findByIdAndUpdate(
+    req.params.id,
+    {
+      $set: {
+        status,
+        utrNumber: String(utrNumber).trim(),
+        notes: String(notes).trim(),
+        paidAt: status === 'paid' ? new Date() : null,
+      },
+    },
+    { new: true }
+  ).lean();
+  if (!updated) return res.status(404).json({ error: 'Payout request not found.' });
+  return res.json({ payout: { ...updated, id: String(updated._id) } });
 });
 
 export default router;

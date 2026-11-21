@@ -42,7 +42,7 @@ const userSchema = new mongoose.Schema(
     termsAccepted: { type: Boolean, default: false },
     role: {
       type: String,
-      enum: ['customer', 'staff', 'admin_analyser', 'delivery_boy', 'admin'],
+      enum: ['customer', 'staff', 'admin_analyser', 'delivery_boy', 'grocery_admin', 'admin'],
       default: 'customer',
       index: true,
     },
@@ -58,6 +58,8 @@ const userSchema = new mongoose.Schema(
     referralCode: { type: String, unique: true, sparse: true },
     referredBy: { type: String, default: '' },
     rewardPoints: { type: Number, default: 0, min: 0 },
+    walletBalance: { type: Number, default: 0, min: 0 },
+    walletTransactions: { type: Array, default: [] },
     passkeys: { type: Array, default: [] },
     preferences: {
       vegOnly: { type: Boolean, default: true },

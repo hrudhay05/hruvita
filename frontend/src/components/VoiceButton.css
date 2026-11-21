@@ -14,7 +14,7 @@
 .voice-drawer {
   width: 100%;
   max-width: 392px;
-  max-height: min(72dvh, 520px);
+  max-height: min(76dvh, 560px);
   border-radius: var(--radius-lg);
   background: var(--surface);
   border: 1px solid var(--line);
@@ -23,6 +23,81 @@
   display: flex;
   flex-direction: column;
   animation: voiceAppear 0.18s ease both;
+}
+
+.voice-nutrition-bar {
+  padding: 9px 12px;
+  background: #f4faf6;
+  border-bottom: 1px solid #dce8e0;
+  display: grid;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.voice-nutrition-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.voice-nutrition-head > span {
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: var(--green-900);
+}
+
+.voice-reorder-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #1b4d38;
+  background: #1b4d38;
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.voice-reorder-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.voice-reorder-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.voice-goal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.voice-goal-btn {
+  padding: 6px 8px;
+  border-radius: 9px;
+  border: 1px solid #cfe0d5;
+  background: #ffffff;
+  color: var(--green-900);
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.voice-goal-btn:hover:not(:disabled) {
+  background: #e7f4eb;
+  border-color: #2f7d4d;
+}
+
+.voice-goal-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .voice-wrap > * {

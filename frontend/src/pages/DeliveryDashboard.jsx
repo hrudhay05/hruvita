@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   FiBell,
@@ -20,7 +20,7 @@ import Button from '../components/Button.jsx';
 import Logo from '../components/Logo.jsx';
 import RealtimeBadge from '../components/RealtimeBadge.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
-import { useSocketEvents } from '../context/SocketContext.jsx';
+import { useSocket, useSocketEvents } from '../context/SocketContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { apiRequest } from '../lib/api.js';
 import { money } from '../lib/format.js';
@@ -59,6 +59,10 @@ export default function DeliveryDashboard() {
   const [orders, setOrders] = useState([]);
   const [stats, setStats] = useState({});
   const [earnings, setEarnings] = useState({});
+  const [dailyBreakdown, setDailyBreakdown] = useState([]);
+  const [codSummary, setCodSummary] = useState({});
+  const [payouts, setPayouts] = useState([]);
+  const [payoutBusy, setPayoutBusy] = useState(false);
   const [profile, setProfile] = useState(null);
   const [liveNotifs, setLiveNotifs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -90,6 +94,9 @@ export default function DeliveryDashboard() {
       setOrders(data.orders || []);
       setStats(data.stats || {});
       setEarnings(data.earnings || {});
+      setDailyBreakdown(data.dailyBreakdown || []);
+      setCodSummary(data.codSummary || {});
+      setPayouts(data.payouts || []);
       setProfile(data.profile || null);
     } catch (err) {
       setError(err.message || 'Could not load assigned orders.');
@@ -123,8 +130,19 @@ export default function DeliveryDashboard() {
           },
           'delivery:order-updated': () => loadDeliveryOrders(),
           'delivery:updated': () => loadDeliveryOrders(),
+          'delivery:tracking-stopped': (p) => {
+            if (p?.orderId && p.orderId === watchingOrderId) {
+              stopLiveGpsWatch();
+            }
+            loadDeliveryOrders();
+          },
           'order:updated': () => loadDeliveryOrders(),
-          'order:cancelled': () => loadDeliveryOrders(),
+          'order:cancelled': (p) => {
+            if (p?.orderId && p.orderId === watchingOrderId) {
+              stopLiveGpsWatch();
+            }
+            loadDeliveryOrders();
+          },
           'payment:updated': () => loadDeliveryOrders(),
         }
       : null,
@@ -182,20 +200,147 @@ export default function DeliveryDashboard() {
         }),
       });
       showToast(`Order ${order.id} updated to ${deliveryStatus.replace(/_/g, ' ')}.`);
+      if (deliveryStatus === 'delivered' && watchingOrderId === order.id) {
+        stopLiveGpsWatch();
+      }
       setFailModalOrder(null);
       setFailReason('');
       await loadDeliveryOrders();
+      return true;
     } catch (err) {
       setError(err.message || 'Failed to update delivery status.');
+      return false;
     }
   };
 
   const handleResendOtp = async (orderId) => {
     try {
       await apiRequest(`/api/delivery/orders/${orderId}/resend-otp`, { method: 'POST' });
-      showToast('Delivery OTP resent to customer email.');
+      showToast('Delivery OTP refreshed in customer Order Details.');
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const sockCtx = useSocket();
+  const [watchingOrderId, setWatchingOrderId] = useState('');
+  const watchIdRef = useRef(null);
+  const lastGpsSentRef = useRef(0);
+
+  const stopLiveGpsWatch = useCallback(() => {
+    if (watchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    setWatchingOrderId('');
+  }, []);
+
+  useEffect(() => () => stopLiveGpsWatch(), [stopLiveGpsWatch]);
+
+  const emitOrPostLocation = useCallback(
+    (orderId, lat, lng, etaMinutes = 15) => {
+      const sock = sockCtx?.socket;
+      if (sock && sock.connected) {
+        sock.emit('delivery:location-stream', { orderId, lat, lng, etaMinutes });
+      } else {
+        apiRequest(`/api/delivery/orders/${orderId}/location`, {
+          method: 'POST',
+          body: JSON.stringify({ lat, lng, etaMinutes }),
+        }).catch(() => {});
+      }
+    },
+    [sockCtx?.socket]
+  );
+
+  const startLiveGpsWatch = useCallback(
+    (ord) => {
+      if (typeof navigator === 'undefined' || !navigator.geolocation) {
+        setError('GPS not supported in this browser. Use the quick ETA buttons.');
+        return;
+      }
+      stopLiveGpsWatch();
+      setError('');
+      setWatchingOrderId(ord.id);
+      lastGpsSentRef.current = 0;
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (pos) => {
+          const now = Date.now();
+          if (now - lastGpsSentRef.current < 3500) return;
+          lastGpsSentRef.current = now;
+          emitOrPostLocation(
+            ord.id,
+            pos.coords.latitude,
+            pos.coords.longitude,
+            ord.delivery?.etaMinutes || 15
+          );
+        },
+        () => {
+          stopLiveGpsWatch();
+          setError('Location permission denied. Enable GPS or use the quick ETA buttons.');
+        },
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+      );
+    },
+    [emitOrPostLocation, stopLiveGpsWatch]
+  );
+
+  const handleToggleLiveTracking = (ord) => {
+    if (watchingOrderId === ord.id) {
+      stopLiveGpsWatch();
+      showToast(`Stopped live bike tracking for ${ord.id}.`);
+      return;
+    }
+    showToast(`Live bike tracking started for ${ord.id}!`);
+    startLiveGpsWatch(ord);
+  };
+
+  const handleStartDeliveryAndTrack = async (ord) => {
+    const ok = await handleStatusUpdate(ord, 'out_for_delivery');
+    if (ok) {
+      startLiveGpsWatch(ord);
+    }
+  };
+
+  const handleShareLocation = async (ord, etaMinutes = null) => {
+    setError('');
+    const sendPatch = async (payload) => {
+      try {
+        await apiRequest(`/api/delivery/orders/${ord.id}/location`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        showToast(
+          payload.lat
+            ? `Live GPS & ETA shared for ${ord.id}.`
+            : `ETA updated to ${payload.etaMinutes} mins for ${ord.id}.`
+        );
+        await loadDeliveryOrders();
+      } catch (err) {
+        setError(err.message || 'Could not share location.');
+      }
+    };
+
+    if (etaMinutes !== null) {
+      await sendPatch({ etaMinutes });
+      return;
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          sendPatch({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            etaMinutes: ord.delivery?.etaMinutes || 15,
+          });
+        },
+        () => {
+          setError('Location permission denied. Use the quick ETA buttons instead.');
+        },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    } else {
+      setError('GPS not supported in this browser. Use the quick ETA buttons.');
     }
   };
 
@@ -345,9 +490,35 @@ export default function DeliveryDashboard() {
         )}
 
         {section === 'earnings' && (
-          <section className="del-card">
-            <h2>Earnings &amp; Commission Summary</h2>
-            <p className="del-sub">Note: Cash collected on COD orders belongs to HRUVITA and is separate from your delivery commission.</p>
+          <section className="del-card" style={{ display: 'grid', gap: 18 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Earnings &amp; Daily Payout Tracker</h2>
+                <p className="del-sub" style={{ margin: '4px 0 0' }}>
+                  Note: Cash collected on COD orders belongs to HRUVITA and is separate from your delivery commission.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={payoutBusy || !(earnings.todayCount > 0)}
+                onClick={async () => {
+                  setPayoutBusy(true);
+                  try {
+                    const res = await apiRequest('/api/delivery/payouts/request', { method: 'POST' });
+                    showToast(`Payout requested for ${money(res.payout?.totalAmount || 0)}!`);
+                    loadDeliveryOrders();
+                  } catch (err) {
+                    showToast(err.message || 'Could not request payout.', 'error');
+                  } finally {
+                    setPayoutBusy(false);
+                  }
+                }}
+              >
+                {payoutBusy ? 'Requesting...' : "Request Today's Payout"}
+              </Button>
+            </div>
+
             <div className="del-kpi-grid">
               <div className="del-kpi"><span>Completed Deliveries</span><strong>{earnings.totalCompleted || 0}</strong></div>
               <div className="del-kpi"><span>Per-Delivery Commission</span><strong>{money(earnings.perDeliveryCommission || 40)}</strong></div>
@@ -355,6 +526,107 @@ export default function DeliveryDashboard() {
               <div className="del-kpi"><span>Weekly Earnings</span><strong>{money(earnings.weekly || 0)}</strong></div>
               <div className="del-kpi"><span>Monthly Earnings</span><strong>{money(earnings.monthly || 0)}</strong></div>
               <div className="del-kpi"><span>Total Earned</span><strong>{money(earnings.totalEarned || 0)}</strong></div>
+              <div className="del-kpi"><span>COD Cash Today</span><strong>{money(codSummary.totalCodCollectedToday || 0)}</strong></div>
+              <div className="del-kpi"><span>Total COD Collected</span><strong>{money(codSummary.totalCodCollectedAll || 0)}</strong></div>
+            </div>
+
+            <div style={{ padding: 14, borderRadius: 12, background: '#f6faf7', border: '1px solid #dbe7df' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.86rem', marginBottom: 6 }}>
+                <strong>Today&apos;s Bonus Progress ({earnings.todayCount || 0} / {earnings.nextBonusTarget || 10} deliveries)</strong>
+                <span>+{money(earnings.incentivePer10Orders || 100)} every 10 deliveries</span>
+              </div>
+              <div style={{ height: 10, borderRadius: 999, background: '#dce8e0', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${Math.min(100, (((earnings.todayCount || 0) % 10) / 10) * 100)}%`,
+                    background: '#1b4d38',
+                    transition: 'width 0.3s ease',
+                  }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <h3 style={{ fontSize: '0.98rem', marginBottom: 8 }}>Daily Breakdown (Last 14 Days)</h3>
+              {dailyBreakdown.length === 0 ? (
+                <p className="del-sub">No completed deliveries recorded yet.</p>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.86rem' }}>
+                    <thead>
+                      <tr style={{ textAlign: 'left', borderBottom: '1px solid #dce6df', color: 'var(--muted)' }}>
+                        <th style={{ padding: '8px 6px' }}>Date</th>
+                        <th style={{ padding: '8px 6px' }}>Deliveries</th>
+                        <th style={{ padding: '8px 6px' }}>Commission</th>
+                        <th style={{ padding: '8px 6px' }}>Bonus</th>
+                        <th style={{ padding: '8px 6px' }}>Total Earned</th>
+                        <th style={{ padding: '8px 6px' }}>COD Collected</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dailyBreakdown.map((row) => (
+                        <tr key={row.date} style={{ borderBottom: '1px solid #eef3ef' }}>
+                          <td style={{ padding: '8px 6px', fontWeight: 600 }}>{row.date}</td>
+                          <td style={{ padding: '8px 6px' }}>{row.deliveries}</td>
+                          <td style={{ padding: '8px 6px' }}>{money(row.commission)}</td>
+                          <td style={{ padding: '8px 6px' }}>{money(row.bonus)}</td>
+                          <td style={{ padding: '8px 6px', fontWeight: 700, color: '#166534' }}>{money(row.total)}</td>
+                          <td style={{ padding: '8px 6px' }}>{money(row.codCollected)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <h3 style={{ fontSize: '0.98rem', marginBottom: 8 }}>Payout History</h3>
+              {payouts.length === 0 ? (
+                <p className="del-sub">No payout requests submitted yet.</p>
+              ) : (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {payouts.map((p) => (
+                    <div
+                      key={p.id}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: 10,
+                        padding: '10px 12px',
+                        borderRadius: 10,
+                        border: '1px solid #e1ebe4',
+                        background: '#f9fcfa',
+                        fontSize: '0.86rem',
+                      }}
+                    >
+                      <div>
+                        <strong>{p.periodLabel}</strong> &bull; {p.deliveriesCount} deliveries
+                        {p.utrNumber ? <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>UTR: {p.utrNumber}</div> : null}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <strong>{money(p.totalAmount)}</strong>
+                        <span
+                          style={{
+                            padding: '3px 9px',
+                            borderRadius: 999,
+                            fontSize: '0.74rem',
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            background: p.status === 'paid' ? '#dcfce7' : p.status === 'processing' ? '#fef3c7' : '#e0f2fe',
+                            color: p.status === 'paid' ? '#166534' : p.status === 'processing' ? '#92400e' : '#075985',
+                          }}
+                        >
+                          {p.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
         )}
@@ -530,8 +802,8 @@ export default function DeliveryDashboard() {
                           </button>
                         )}
                         {['assigned', 'accepted', 'picked_up'].includes(ord.deliveryStatus) && (
-                          <button type="button" className="del-btn del-btn-primary" onClick={() => handleStatusUpdate(ord, 'out_for_delivery')}>
-                            Start Delivery (Send OTP)
+                          <button type="button" className="del-btn del-btn-primary" onClick={() => handleStartDeliveryAndTrack(ord)}>
+                            🛵 Start Delivery &amp; Share Live Location
                           </button>
                         )}
 
@@ -560,6 +832,28 @@ export default function DeliveryDashboard() {
                             <button type="button" className="del-btn" onClick={() => handleResendOtp(ord.id)}>
                               Resend OTP
                             </button>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, width: '100%', marginTop: 4 }}>
+                              <button
+                                type="button"
+                                className={`del-btn ${watchingOrderId === ord.id ? 'del-btn-primary' : ''}`}
+                                onClick={() => handleToggleLiveTracking(ord)}
+                              >
+                                {watchingOrderId === ord.id ? '📡 Tracking Bike (Tap to Stop)' : '🛵 Start Live Bike Tracking'}
+                              </button>
+                              <button type="button" className="del-btn" onClick={() => handleShareLocation(ord)}>
+                                📍 Send GPS Now
+                              </button>
+                              {[10, 15, 25].map((mins) => (
+                                <button
+                                  key={mins}
+                                  type="button"
+                                  className="del-btn"
+                                  onClick={() => handleShareLocation(ord, mins)}
+                                >
+                                  ETA {mins}m
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         )}
 

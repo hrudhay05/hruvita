@@ -1,10 +1,13 @@
 import crypto from 'crypto';
+import mongoose from 'mongoose';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { DeliveryPayout } from '../models/DeliveryPayout.js';
 import {
   listAllOrders,
   getOrderById,
+  updateOrderDeliveryLocation,
   getSettings,
   updateUser,
   recordAudit,
@@ -19,6 +22,7 @@ import {
   sendDeliveryFailedEmail,
 } from '../utils/emailService.js';
 import { encryptDeliveryOtp } from '../utils/deliveryOtpCrypto.js';
+import { collectAndValidateLocation } from '../utils/locationTracker.js';
 import { notifyAdmins } from '../utils/adminNotifier.js';
 import { emitToAdmins, emitToDeliveryPartner, emitToUser } from '../utils/socketServer.js';
 import { emitDeliveryUpdated, emitOrderUpdated, emitPaymentUpdated } from '../services/realtimeService.js';
@@ -150,12 +154,58 @@ router.get('/orders', async (req, res) => {
     weekly: calcEarn(deliveredWeek.length),
     monthly: calcEarn(deliveredMonth.length),
     totalEarned: calcEarn(deliveredOrders.length),
+    todayCount: deliveredToday.length,
+    nextBonusTarget: (Math.floor(deliveredToday.length / 10) + 1) * 10,
   };
+
+  // Last 14 days daily breakdown
+  const dayMap = new Map();
+  for (const o of deliveredOrders) {
+    const dStr = String(o.delivery?.deliveredAt || o.deliveryAssignment?.deliveredAt || o.createdAt || '').slice(0, 10);
+    if (!dStr) continue;
+    const cur = dayMap.get(dStr) || { date: dStr, deliveries: 0, codCollected: 0 };
+    cur.deliveries += 1;
+    cur.codCollected += Number(o.delivery?.collectedCash || 0);
+    dayMap.set(dStr, cur);
+  }
+  const dailyBreakdown = [...dayMap.values()]
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 14)
+    .map((row) => ({
+      ...row,
+      commission: row.deliveries * commission,
+      bonus: Math.floor(row.deliveries / 10) * incentivePer10,
+      total: calcEarn(row.deliveries),
+    }));
+
+  const codSummary = {
+    totalCodCollectedToday: deliveredToday.reduce((s, o) => s + Number(o.delivery?.collectedCash || 0), 0),
+    totalCodCollectedAll: deliveredOrders.reduce((s, o) => s + Number(o.delivery?.collectedCash || 0), 0),
+  };
+
+  const payouts =
+    mongoose.connection.readyState === 1
+      ? (await DeliveryPayout.find({ partnerId: req.user.id }).sort({ createdAt: -1 }).limit(20).lean()).map((p) => ({
+          id: String(p._id),
+          periodLabel: p.periodLabel,
+          deliveriesCount: p.deliveriesCount,
+          commissionEarned: p.commissionEarned,
+          incentiveBonus: p.incentiveBonus,
+          totalAmount: p.totalAmount,
+          status: p.status,
+          utrNumber: p.utrNumber,
+          paidAt: p.paidAt,
+          createdAt: p.createdAt,
+        }))
+      : [];
 
   res.json({
     orders: mine,
     stats,
     earnings,
+    dailyBreakdown,
+    codSummary,
+    payouts,
     profile: {
       id: req.user.id,
       fullName: req.user.fullName || req.user.name,
@@ -164,6 +214,71 @@ router.get('/orders', async (req, res) => {
       address: req.user.address || '',
       profileImage: req.user.profileImage || '',
       availability: req.user.deliveryAvailability || 'available',
+    },
+  });
+});
+
+router.post('/payouts/request', async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: 'Database connection required to request payouts.' });
+  }
+  const [all, settings] = await Promise.all([listAllOrders(), getSettings()]);
+  const { todayStr } = getBusinessDateParts();
+  const mineDelivered = all.filter(
+    (o) =>
+      (o.deliveryAssignment?.deliveryBoyId === req.user.id || o.delivery?.partnerId === req.user.id) &&
+      o.deliveryStatus === 'delivered'
+  );
+  const todayDelivered = mineDelivered.filter(
+    (o) => String(o.delivery?.deliveredAt || o.deliveryAssignment?.deliveredAt || '').slice(0, 10) === todayStr
+  );
+  if (todayDelivered.length === 0) {
+    return res.status(400).json({ error: 'Complete at least 1 delivery today before requesting a daily payout.' });
+  }
+
+  const existingToday = await DeliveryPayout.findOne({
+    partnerId: req.user.id,
+    periodLabel: todayStr,
+  }).lean();
+  if (existingToday) {
+    return res.status(409).json({ error: `Payout request for ${todayStr} is already ${existingToday.status}.` });
+  }
+
+  const commission = Number(settings.deliveryCommissionPerOrder ?? 40);
+  const incentivePer10 = Number(settings.deliveryIncentivePer10Orders ?? 100);
+  const deliveriesCount = todayDelivered.length;
+  const commissionEarned = deliveriesCount * commission;
+  const incentiveBonus = Math.floor(deliveriesCount / 10) * incentivePer10;
+  const totalAmount = commissionEarned + incentiveBonus;
+
+  const created = await DeliveryPayout.create({
+    partnerId: req.user.id,
+    partnerName: req.user.fullName || req.user.name || req.user.email,
+    periodLabel: todayStr,
+    deliveriesCount,
+    commissionEarned,
+    incentiveBonus,
+    totalAmount,
+    status: 'pending',
+    notes: String(req.body?.notes || '').trim().slice(0, 200),
+  });
+
+  await notifyAdmins({
+    type: 'delivery_payout_request',
+    title: `Payout Request: ${req.user.fullName || req.user.name}`,
+    message: `${req.user.fullName || req.user.name} requested ₹${totalAmount} for ${deliveriesCount} deliveries (${todayStr}).`,
+  });
+
+  return res.status(201).json({
+    payout: {
+      id: String(created._id),
+      periodLabel: created.periodLabel,
+      deliveriesCount: created.deliveriesCount,
+      commissionEarned: created.commissionEarned,
+      incentiveBonus: created.incentiveBonus,
+      totalAmount: created.totalAmount,
+      status: created.status,
+      createdAt: created.createdAt,
     },
   });
 });
@@ -183,27 +298,38 @@ router.patch('/availability', async (req, res) => {
 });
 
 router.post('/location', async (req, res) => {
-  const { orderId, lat, lng } = req.body || {};
-  if (!orderId || typeof lat !== 'number' || typeof lng !== 'number') {
-    return res.status(400).json({ error: 'orderId, lat, and lng are required.' });
-  }
-  const order = await getOrderById(orderId);
-  if (
-    !order ||
-    (order.deliveryAssignment?.deliveryBoyId !== req.user.id && order.delivery?.partnerId !== req.user.id)
-  ) {
-    return res.status(403).json({ error: 'Forbidden.' });
-  }
-  if (order.deliveryStatus !== 'out_for_delivery') {
-    return res.status(400).json({ error: 'Location sharing is active only during Out for Delivery.' });
-  }
-  emitToUser(order.userId, 'order:location-updated', {
-    orderId: order.id,
+  const { orderId, lat, lng, accuracy = null, etaMinutes } = req.body || {};
+  const result = await collectAndValidateLocation({
+    orderId,
+    partnerId: req.user.id,
     lat,
     lng,
-    updatedAt: new Date().toISOString(),
+    accuracy,
+    etaMinutes,
   });
-  return res.json({ shared: true });
+
+  if (!result.ok) {
+    return res.status(result.status || 400).json({ error: result.error });
+  }
+
+  const eventPayload = {
+    orderId: result.order.id,
+    lat: result.liveLocation.lat,
+    lng: result.liveLocation.lng,
+    heading: result.liveLocation.heading,
+    speedKmh: result.liveLocation.speedKmh,
+    updatedAt: result.liveLocation.updatedAt,
+    delivery: result.order.delivery,
+    liveLocation: result.liveLocation,
+    order: result.order,
+    ts: Date.now(),
+  };
+
+  emitToUser(result.order.userId, 'delivery:location-updated', eventPayload);
+  emitToUser(result.order.userId, 'order:location-updated', eventPayload);
+  emitToAdmins('delivery:location-updated', eventPayload);
+
+  return res.json({ shared: true, liveLocation: result.liveLocation });
 });
 
 router.post('/orders/:id/resend-otp', otpVerifyLimiter, async (req, res) => {
@@ -248,6 +374,45 @@ router.post('/orders/:id/resend-otp', otpVerifyLimiter, async (req, res) => {
   }).catch(() => {});
 
   return res.json({ sent: true, message: 'New Delivery OTP generated in customer Order Details.' });
+});
+
+router.post('/orders/:id/location', async (req, res) => {
+  try {
+    const { lat = null, lng = null, etaMinutes = null } = req.body || {};
+    const orderDoc = await getOrderById(req.params.id);
+    if (!orderDoc) return res.status(404).json({ error: 'Order not found.' });
+    const assignedId = orderDoc.deliveryAssignment?.deliveryBoyId || orderDoc.delivery?.partnerId;
+    if (assignedId !== req.user.id) {
+      return res.status(403).json({ error: 'You are not assigned to this order.' });
+    }
+
+    const patch = {};
+    if (lat !== null && lng !== null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))) {
+      patch.liveLocation = {
+        lat: Number(lat),
+        lng: Number(lng),
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    if (etaMinutes !== null && Number.isFinite(Number(etaMinutes))) {
+      const mins = Math.max(1, Math.min(180, Math.round(Number(etaMinutes))));
+      patch.etaMinutes = mins;
+      patch.estimatedArrivalAt = new Date(Date.now() + mins * 60 * 1000).toISOString();
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: 'Provide GPS coordinates or ETA minutes.' });
+    }
+
+    const updated = await updateOrderDeliveryLocation(orderDoc.id, patch);
+    const finalOrd = updated || orderDoc;
+
+    emitOrderUpdated(finalOrd);
+    emitDeliveryUpdated(finalOrd, 'delivery:location-updated');
+    return res.json({ order: sanitizeOrderForDelivery(finalOrd) });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Could not update live delivery location.' });
+  }
 });
 
 router.patch('/orders/:id/status', otpVerifyLimiter, async (req, res) => {
@@ -364,6 +529,8 @@ router.patch('/orders/:id/status', otpVerifyLimiter, async (req, res) => {
       deliverySet['delivery.deliveryOtpEncrypted'] = encryptDeliveryOtp(generatedOtp);
       deliverySet['delivery.otpExpiry'] = new Date(Date.now() + 4 * 60 * 60 * 1000);
       deliverySet['delivery.otpAttempts'] = 0;
+      deliverySet['delivery.etaMinutes'] = 20;
+      deliverySet['delivery.estimatedArrivalAt'] = new Date(Date.now() + 20 * 60 * 1000).toISOString();
 
       notifTitle = `Out for Delivery (${orderDoc.id})`;
       notifMsg = 'Your order is out for delivery. Your delivery OTP is available in Order Details.';
@@ -469,6 +636,9 @@ router.patch('/orders/:id/status', otpVerifyLimiter, async (req, res) => {
 
     emitToDeliveryPartner(req.user.id, 'delivery:order-updated', { orderId: orderDoc.id, deliveryStatus });
     const finalOrd = updated || orderDoc;
+    if (deliveryStatus === 'delivered' || FAILED_STATUSES.has(deliveryStatus)) {
+      emitToDeliveryPartner(req.user.id, 'delivery:tracking-stopped', { orderId: orderDoc.id, deliveryStatus });
+    }
     emitDeliveryUpdated(finalOrd, `delivery:${deliveryStatus === 'out_for_delivery' ? 'started' : deliveryStatus === 'delivered' ? 'completed' : deliveryStatus === 'accepted' ? 'accepted' : FAILED_STATUSES.has(deliveryStatus) ? 'failed' : 'updated'}`);
     emitOrderUpdated(finalOrd);
     if (deliveryStatus === 'delivered' && assignmentPatch.codCollected) {

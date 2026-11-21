@@ -5,7 +5,7 @@ const paymentSchema = new mongoose.Schema(
     id: { type: String, required: true, unique: true, index: true },
     orderId: { type: String, required: true, index: true },
     userId: { type: String, required: true, index: true },
-    method: { type: String, enum: ['razorpay', 'cod'], required: true },
+    method: { type: String, enum: ['razorpay', 'cod', 'wallet'], required: true },
     amount: { type: Number, required: true },
     currency: { type: String, default: 'INR' },
     razorpayOrderId: { type: String, default: '', index: true },

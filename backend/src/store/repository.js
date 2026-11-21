@@ -146,6 +146,25 @@ async function seedMongoIfNeeded() {
     addrCount === 0 ? Address.insertMany(initialAddresses) : null,
   ]);
 
+  // Ensure grocery categories and starter grocery items exist even on previously seeded DBs
+  await Promise.all([
+    ...initialCategories
+      .filter((c) =>
+        [
+          'fresh-fruits',
+          'fresh-vegetables',
+          'organic-staples',
+          'cooking-essentials',
+          'bath-personal-care',
+          'home-cleaning',
+        ].includes(c.slug)
+      )
+      .map((c) => Category.updateOne({ slug: c.slug }, { $setOnInsert: c }, { upsert: true })),
+    ...initialProducts
+      .filter((p) => String(p.id).startsWith('g'))
+      .map((p) => Product.updateOne({ id: p.id }, { $setOnInsert: p }, { upsert: true })),
+  ]);
+
   const initialUsers = buildInitialUsers();
   await Promise.all(
     initialUsers.map(async (u) => {
@@ -393,21 +412,21 @@ export async function createProduct(data) {
     ingredients: Array.isArray(data.ingredients)
       ? data.ingredients
       : String(data.ingredients || '')
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
     dietTags: Array.isArray(data.dietTags)
       ? data.dietTags
       : String(data.dietTags || '')
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
     allergenTags: Array.isArray(data.allergenTags)
       ? data.allergenTags
       : String(data.allergenTags || '')
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
     sizes: Array.isArray(data.sizes) && data.sizes.length > 0 ? data.sizes : [{ name: 'Regular', priceDelta: 0 }],
     active: data.active !== undefined ? Boolean(data.active) : true,
   };
@@ -435,11 +454,11 @@ export async function updateProduct(id, patch) {
     ...(patch.price !== undefined ? { price: Math.max(0, Number(patch.price) || 0) } : {}),
     ...(patch.discountPrice !== undefined
       ? {
-          discountPrice:
-            patch.discountPrice !== null && patch.discountPrice !== '' && Number(patch.discountPrice) > 0
-              ? Number(patch.discountPrice)
-              : null,
-        }
+        discountPrice:
+          patch.discountPrice !== null && patch.discountPrice !== '' && Number(patch.discountPrice) > 0
+            ? Number(patch.discountPrice)
+            : null,
+      }
       : {}),
     ...(patch.veg !== undefined ? { veg: Boolean(patch.veg) } : {}),
     ...(patch.bestseller !== undefined ? { bestseller: Boolean(patch.bestseller) } : {}),
@@ -449,33 +468,33 @@ export async function updateProduct(id, patch) {
     ...(patch.description !== undefined ? { description: String(patch.description).trim() } : {}),
     ...(patch.ingredients !== undefined
       ? {
-          ingredients: Array.isArray(patch.ingredients)
-            ? patch.ingredients
-            : String(patch.ingredients)
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean),
-        }
+        ingredients: Array.isArray(patch.ingredients)
+          ? patch.ingredients
+          : String(patch.ingredients)
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+      }
       : {}),
     ...(patch.dietTags !== undefined
       ? {
-          dietTags: Array.isArray(patch.dietTags)
-            ? patch.dietTags
-            : String(patch.dietTags)
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean),
-        }
+        dietTags: Array.isArray(patch.dietTags)
+          ? patch.dietTags
+          : String(patch.dietTags)
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+      }
       : {}),
     ...(patch.allergenTags !== undefined
       ? {
-          allergenTags: Array.isArray(patch.allergenTags)
-            ? patch.allergenTags
-            : String(patch.allergenTags)
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean),
-        }
+        allergenTags: Array.isArray(patch.allergenTags)
+          ? patch.allergenTags
+          : String(patch.allergenTags)
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+      }
       : {}),
     ...(patch.active !== undefined ? { active: Boolean(patch.active) } : {}),
   };
@@ -515,20 +534,25 @@ export async function listPlans(includeInactive = false) {
 
 export async function upsertSubscriptionPlan(data) {
   const days = Math.max(1, Number(data.days) || 7);
-  const id = String(data.id || `plan-${days}`).toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const rawId = data.id ? String(data.id) : `plan-${days}-${Date.now().toString(36)}`;
+  const id = rawId.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const perks = (
+    Array.isArray(data.perks)
+      ? data.perks
+      : String(data.perks || '').split('\n')
+  )
+    .map((s) => String(s || '').trim())
+    .filter(Boolean);
+  const badge = String(data.badge || '').trim();
   const payload = {
     id,
     name: String(data.name || `${days}-Day Plan`).trim(),
     days,
     price: Math.max(1, Number(data.price) || 499),
     perDay: Math.round((Math.max(1, Number(data.price) || 499)) / days),
-    badge: String(data.badge || '').trim(),
-    perks: Array.isArray(data.perks)
-      ? data.perks
-      : String(data.perks || '')
-          .split('\n')
-          .map((s) => s.trim())
-          .filter(Boolean),
+    badge,
+    popular: Boolean(data.popular || (badge && /popular/i.test(badge))),
+    perks,
     active: data.active !== undefined ? Boolean(data.active) : true,
   };
   if (mongoConnected) {
@@ -604,7 +628,7 @@ export async function listSlotsForDate(dateStr = '') {
 
   const dayDiff = Math.round(
     (new Date(`${targetDate}T00:00:00`).getTime() - new Date(`${todayStr}T00:00:00`).getTime()) /
-      86400000
+    86400000
   );
 
   return slots.map((slot) => {
@@ -675,7 +699,7 @@ export async function validateDeliverySchedule({ scheduledDate, slotId }) {
 
   const dayDiff = Math.round(
     (new Date(`${targetDate}T00:00:00`).getTime() - new Date(`${todayStr}T00:00:00`).getTime()) /
-      86400000
+    86400000
   );
   if (Number.isNaN(dayDiff) || dayDiff < 0) {
     throw new Error('Please choose today or a future delivery date.');
@@ -897,9 +921,9 @@ export async function upsertCoupon(data) {
     Array.isArray(val)
       ? val.map((x) => String(x).trim()).filter(Boolean)
       : String(val || '')
-          .split(',')
-          .map((x) => x.trim())
-          .filter(Boolean);
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean);
 
   const eligibleProductIds = normalizeList(data.eligibleProductIds);
   const eligibleCategories = normalizeList(data.eligibleCategories).map((c) => c.toLowerCase());
@@ -1157,14 +1181,14 @@ export async function calculateCheckoutQuote({
       const eligibleSubtotal = !hasProductFilter
         ? subtotal
         : lineItems
-            .filter((li) => {
-              if (li.isCustomBowl) return false;
-              const matchProd = eligibleIds.length === 0 || eligibleIds.includes(li.productId);
-              const cat = productCatMap.get(li.productId) || '';
-              const matchCat = eligibleCats.length === 0 || eligibleCats.includes(cat);
-              return matchProd && matchCat;
-            })
-            .reduce((sum, li) => sum + (li.lineTotal || 0), 0);
+          .filter((li) => {
+            if (li.isCustomBowl) return false;
+            const matchProd = eligibleIds.length === 0 || eligibleIds.includes(li.productId);
+            const cat = productCatMap.get(li.productId) || '';
+            const matchCat = eligibleCats.length === 0 || eligibleCats.includes(cat);
+            return matchProd && matchCat;
+          })
+          .reduce((sum, li) => sum + (li.lineTotal || 0), 0);
 
       const allRedemptions = await listCouponRedemptions(500);
       const redeemedRows = allRedemptions.filter(
@@ -1174,9 +1198,9 @@ export async function calculateCheckoutQuote({
       const perUserLimit = coupon.firstOrderOnly ? 1 : Number(coupon.perUserLimit || 0);
       const alreadyUsedCount = userId
         ? Math.max(
-            redeemedRows.filter((r) => r.customerId === userId).length,
-            userValidOrders ? userValidOrders.filter((o) => o.pricing?.couponCode === coupon.code).length : 0
-          )
+          redeemedRows.filter((r) => r.customerId === userId).length,
+          userValidOrders ? userValidOrders.filter((o) => o.pricing?.couponCode === coupon.code).length : 0
+        )
         : 0;
 
       if (allowedEmails.length > 0 && (!customerEmail || !allowedEmails.includes(customerEmail))) {
@@ -1582,6 +1606,38 @@ export async function getOrderById(id) {
   return found ? { ...found } : null;
 }
 
+export async function updateOrderDeliveryLocation(orderId, { liveLocation, etaMinutes, estimatedArrivalAt }) {
+  const deliveryPatch = {};
+  if (liveLocation) deliveryPatch.liveLocation = liveLocation;
+  if (etaMinutes !== undefined && etaMinutes !== null) deliveryPatch.etaMinutes = etaMinutes;
+  if (estimatedArrivalAt) deliveryPatch.estimatedArrivalAt = estimatedArrivalAt;
+
+  if (mongoConnected) {
+    const setObj = {};
+    if (liveLocation) setObj['delivery.liveLocation'] = liveLocation;
+    if (etaMinutes !== undefined && etaMinutes !== null) setObj['delivery.etaMinutes'] = etaMinutes;
+    if (estimatedArrivalAt) setObj['delivery.estimatedArrivalAt'] = estimatedArrivalAt;
+    const updated = await Order.findOneAndUpdate(
+      { id: orderId },
+      { $set: setObj },
+      { new: true }
+    ).lean();
+    return stripMongo(updated);
+  }
+
+  const idx = mem.orders.findIndex((o) => o.id === orderId);
+  if (idx === -1) return null;
+  mem.orders[idx] = {
+    ...mem.orders[idx],
+    delivery: {
+      ...(mem.orders[idx].delivery || {}),
+      ...deliveryPatch,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+  return { ...mem.orders[idx] };
+}
+
 export async function getOrderByRazorpayOrderId(razorpayOrderId) {
   if (mongoConnected) {
     const doc = await Order.findOne({ razorpayOrderId }).lean();
@@ -1720,7 +1776,7 @@ export async function confirmOrderPayment({ orderId, razorpayPaymentId, by = 'cu
   }
 
   // Credit referral reward if this is the customer's first successful paid order
-  await processReferralRewardForOrder(confirmedOrder).catch(() => {});
+  await processReferralRewardForOrder(confirmedOrder).catch(() => { });
   return confirmedOrder;
 }
 
@@ -1814,7 +1870,7 @@ export async function transitionOrderStatus({ orderId, status, note = '', by = '
   }
 
   if (status === 'delivered' && paymentStatus === 'paid') {
-    await processReferralRewardForOrder(resultOrder).catch(() => {});
+    await processReferralRewardForOrder(resultOrder).catch(() => { });
   }
   return resultOrder;
 }
@@ -1950,6 +2006,55 @@ export async function updateUser(id, patch) {
   if (idx === -1) return null;
   mem.users[idx] = { ...mem.users[idx], ...normalizedPatch };
   return { ...mem.users[idx] };
+}
+
+export async function getUserWallet(userId) {
+  const user = await findUserById(userId);
+  return {
+    balance: Number(user?.walletBalance || 0),
+    transactions: Array.isArray(user?.walletTransactions) ? user.walletTransactions : [],
+  };
+}
+
+export async function adjustUserWallet({ userId, delta, type = 'credit', description = '', orderId = '' }) {
+  const amt = Number(delta || 0);
+  const tx = {
+    id: `wtx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    type,
+    amount: Math.abs(amt),
+    delta: amt,
+    description: String(description || (amt >= 0 ? 'Wallet Top-up' : 'Order Payment')).trim(),
+    orderId: String(orderId || ''),
+    at: new Date().toISOString(),
+  };
+
+  if (mongoConnected) {
+    const query = amt < 0 ? { id: userId, walletBalance: { $gte: Math.abs(amt) } } : { id: userId };
+    const doc = await User.findOneAndUpdate(
+      query,
+      {
+        $inc: { walletBalance: amt },
+        $push: { walletTransactions: { $each: [tx], $position: 0, $slice: 50 } },
+      },
+      { new: true }
+    ).lean();
+    if (!doc) return null;
+    return {
+      balance: Number(doc.walletBalance || 0),
+      transactions: Array.isArray(doc.walletTransactions) ? doc.walletTransactions : [],
+      transaction: tx,
+    };
+  }
+
+  const idx = mem.users.findIndex((u) => u.id === userId);
+  if (idx === -1) return null;
+  const currentBal = Number(mem.users[idx].walletBalance || 0);
+  if (amt < 0 && currentBal < Math.abs(amt)) return null;
+  const nextBal = Math.max(0, currentBal + amt);
+  const prevTxs = Array.isArray(mem.users[idx].walletTransactions) ? mem.users[idx].walletTransactions : [];
+  const nextTxs = [tx, ...prevTxs].slice(0, 50);
+  mem.users[idx] = { ...mem.users[idx], walletBalance: nextBal, walletTransactions: nextTxs };
+  return { balance: nextBal, transactions: nextTxs, transaction: tx };
 }
 
 export async function deleteUser(id) {
@@ -2172,6 +2277,81 @@ export async function revokeAllUserRefreshSessions(userId) {
     if (s.userId === userId && !s.revokedAt) s.revokedAt = now;
   }
   return true;
+}
+
+export async function listUserRefreshSessions(userId) {
+  const now = new Date();
+  if (mongoConnected) {
+    const docs = await RefreshSession.find({
+      userId,
+      revokedAt: null,
+      expiresAt: { $gt: now },
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+    return docs.map((d) => ({
+      id: String(d._id),
+      userId: d.userId,
+      hashedRefreshToken: d.hashedRefreshToken,
+      rememberMe: Boolean(d.rememberMe),
+      userAgent: d.userAgent || '',
+      ipAddress: d.ipAddress || '',
+      createdAt: d.createdAt,
+      expiresAt: d.expiresAt,
+    }));
+  }
+  return mem.refreshSessions
+    .filter((s) => s.userId === userId && !s.revokedAt && new Date(s.expiresAt) > now)
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    .map((s) => ({
+      id: s.id || s.hashedRefreshToken.slice(0, 16),
+      userId: s.userId,
+      hashedRefreshToken: s.hashedRefreshToken,
+      rememberMe: Boolean(s.rememberMe),
+      userAgent: s.userAgent || '',
+      ipAddress: s.ipAddress || '',
+      createdAt: s.createdAt || new Date().toISOString(),
+      expiresAt: s.expiresAt,
+    }));
+}
+
+export async function revokeRefreshSessionById(userId, sessionId) {
+  const now = new Date();
+  if (mongoConnected) {
+    const res = await RefreshSession.updateOne(
+      { _id: sessionId, userId, revokedAt: null },
+      { $set: { revokedAt: now } }
+    );
+    return res.modifiedCount > 0;
+  }
+  let revoked = false;
+  for (const s of mem.refreshSessions) {
+    const sid = s.id || s.hashedRefreshToken.slice(0, 16);
+    if (s.userId === userId && sid === sessionId && !s.revokedAt) {
+      s.revokedAt = now;
+      revoked = true;
+    }
+  }
+  return revoked;
+}
+
+export async function revokeOtherUserRefreshSessions(userId, currentHashedToken) {
+  const now = new Date();
+  if (mongoConnected) {
+    const filter = currentHashedToken
+      ? { userId, revokedAt: null, hashedRefreshToken: { $ne: currentHashedToken } }
+      : { userId, revokedAt: null };
+    const res = await RefreshSession.updateMany(filter, { $set: { revokedAt: now } });
+    return res.modifiedCount || 0;
+  }
+  let count = 0;
+  for (const s of mem.refreshSessions) {
+    if (s.userId === userId && !s.revokedAt && s.hashedRefreshToken !== currentHashedToken) {
+      s.revokedAt = now;
+      count += 1;
+    }
+  }
+  return count;
 }
 
 // Separate Address Collection Repository (Multiple Addresses per Customer)
@@ -3002,8 +3182,8 @@ export async function upsertCombo(data) {
   }
   const items = Array.isArray(data.items)
     ? data.items
-        .filter((it) => it && it.productId)
-        .map((it) => ({ productId: String(it.productId), qty: Math.max(1, Number(it.qty) || 1) }))
+      .filter((it) => it && it.productId)
+      .map((it) => ({ productId: String(it.productId), qty: Math.max(1, Number(it.qty) || 1) }))
     : [];
   if (items.length === 0) {
     throw new Error('Select at least one component product for this combo.');

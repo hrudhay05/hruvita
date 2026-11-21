@@ -23,6 +23,7 @@ import {
 } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
 import OrderDetailModal from '../components/OrderDetailModal.jsx';
+import LiveDeliveryMap from '../components/LiveDeliveryMap.jsx';
 import ProductCard from '../components/ProductCard.jsx';
 import RealtimeBadge from '../components/RealtimeBadge.jsx';
 import Login from './Login.jsx';
@@ -32,7 +33,15 @@ import { useCatalog } from '../context/CatalogContext.jsx';
 import { useCart } from '../context/CartContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { apiRequest } from '../lib/api.js';
+import { loadRazorpayScript } from '../lib/razorpay.js';
 import { isPasskeySupported, registerDevicePasskey } from '../lib/passkey.js';
+import {
+  isPushSupported,
+  getCurrentPushSubscription,
+  subscribeToPush,
+  unsubscribeFromPush,
+  sendTestPush,
+} from '../lib/pushNotifications.js';
 import { money } from '../lib/format.js';
 import './Account.css';
 import './AuthFlow.css';
@@ -100,27 +109,107 @@ export default function Account() {
     newPassword: '',
     confirmPassword: '',
   });
+  const [wallet, setWallet] = useState({ balance: 0, transactions: [] });
+  const [topupAmount, setTopupAmount] = useState(500);
+  const [walletBusy, setWalletBusy] = useState(false);
   const [passkeys, setPasskeys] = useState([]);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [sessions, setSessions] = useState([]);
+  const [sessionsBusy, setSessionsBusy] = useState(false);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [expandedTrackOrderId, setExpandedTrackOrderId] = useState('');
 
   const loadDashboardData = useCallback(async () => {
     if (!user) return;
     try {
-      const [ordRes, subRes, refRes, pkRes] = await Promise.all([
+      const [ordRes, subRes, refRes, walRes, pkRes, sessRes, curSub] = await Promise.all([
         apiRequest('/api/orders/my'),
         apiRequest('/api/subscriptions/my'),
         apiRequest('/api/referrals/my').catch(() => ({ referrals: [], summary: null })),
+        apiRequest('/api/wallet').catch(() => ({ balance: 0, transactions: [] })),
         apiRequest('/api/auth/passkey/list').catch(() => ({ passkeys: [] })),
+        apiRequest('/api/auth/sessions').catch(() => ({ sessions: [] })),
+        getCurrentPushSubscription().catch(() => null),
       ]);
       setMyOrders(ordRes.orders || []);
       setMySubscriptions(subRes.subscriptions || []);
       setMyReferrals(refRes.referrals || []);
       if (refRes.summary) setReferralSummary(refRes.summary);
+      setWallet({ balance: Number(walRes.balance || 0), transactions: walRes.transactions || [] });
       setPasskeys(pkRes.passkeys || []);
+      setSessions(sessRes.sessions || []);
+      setPushSubscribed(Boolean(curSub));
     } catch {
       // ignore if offline
     }
   }, [user]);
+
+  const handleEnablePush = async () => {
+    setPushBusy(true);
+    setError('');
+    try {
+      await subscribeToPush();
+      setPushSubscribed(true);
+      showToast('Push notifications enabled on this device!');
+    } catch (err) {
+      setError(err.message || 'Could not enable push notifications.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handleDisablePush = async () => {
+    setPushBusy(true);
+    try {
+      await unsubscribeFromPush();
+      setPushSubscribed(false);
+      showToast('Push notifications turned off for this device.');
+    } catch (err) {
+      setError(err.message || 'Could not disable push notifications.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handleTestPush = async () => {
+    setPushBusy(true);
+    try {
+      const res = await sendTestPush();
+      if (res.sent > 0) showToast('Test push notification sent! Check your notification tray.');
+      else showToast('No active push subscription found on this device yet.', 'error');
+    } catch (err) {
+      setError(err.message || 'Could not send test push.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handleRevokeSession = async (sessionId) => {
+    setSessionsBusy(true);
+    try {
+      await apiRequest(`/api/auth/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      showToast('Device session signed out.');
+    } catch (err) {
+      setError(err.message || 'Could not revoke session.');
+    } finally {
+      setSessionsBusy(false);
+    }
+  };
+
+  const handleRevokeOtherSessions = async () => {
+    setSessionsBusy(true);
+    try {
+      const res = await apiRequest('/api/auth/sessions/revoke-others', { method: 'POST' });
+      setSessions((prev) => prev.filter((s) => s.isCurrent));
+      showToast(`Signed out ${res.revokedCount || 0} other device(s).`);
+    } catch (err) {
+      setError(err.message || 'Could not sign out other devices.');
+    } finally {
+      setSessionsBusy(false);
+    }
+  };
 
   const handleRegisterPasskey = async () => {
     setPasskeyBusy(true);
@@ -148,6 +237,69 @@ export default function Account() {
     }
   };
 
+  const handleWalletTopup = async (amtOverride = null) => {
+    const amount = Math.round(Number(amtOverride ?? topupAmount));
+    if (!amount || amount < 50 || amount > 10000) {
+      showToast('Enter an amount between ₹50 and ₹10,000.', 'error');
+      return;
+    }
+    setWalletBusy(true);
+    try {
+      const res = await apiRequest('/api/wallet/topup', {
+        method: 'POST',
+        body: JSON.stringify({ amount }),
+      });
+      if (res.credited) {
+        setWallet({ balance: Number(res.balance || 0), transactions: res.transactions || [] });
+        showToast(`Added ${money(amount)} to your HRUVITA Wallet!`);
+        setWalletBusy(false);
+        return;
+      }
+      if (res.razorpay?.isRealGateway && (await loadRazorpayScript()) && window.Razorpay) {
+        const rzp = new window.Razorpay({
+          key: res.razorpay.keyId,
+          amount: res.razorpay.amountPaise,
+          currency: 'INR',
+          name: 'HRUVITA Wallet',
+          description: `Wallet Top-up ${money(amount)}`,
+          order_id: res.razorpay.orderId,
+          prefill: {
+            name: user?.fullName || user?.name || '',
+            email: user?.email || '',
+            contact: user?.mobileNumber || user?.phone || '',
+          },
+          theme: { color: '#1b4d38' },
+          handler: async (rzpRes) => {
+            try {
+              const ver = await apiRequest('/api/wallet/verify-topup', {
+                method: 'POST',
+                body: JSON.stringify({
+                  amount,
+                  razorpay_order_id: rzpRes.razorpay_order_id,
+                  razorpay_payment_id: rzpRes.razorpay_payment_id,
+                  razorpay_signature: rzpRes.razorpay_signature,
+                }),
+              });
+              setWallet({ balance: Number(ver.balance || 0), transactions: ver.transactions || [] });
+              showToast(`Added ${money(amount)} to your HRUVITA Wallet!`);
+            } catch (verErr) {
+              showToast(verErr.message || 'Wallet top-up verification failed.', 'error');
+            } finally {
+              setWalletBusy(false);
+            }
+          },
+          modal: { ondismiss: () => setWalletBusy(false) },
+        });
+        rzp.open();
+        return;
+      }
+      setWalletBusy(false);
+    } catch (err) {
+      showToast(err.message || 'Could not top up wallet.', 'error');
+      setWalletBusy(false);
+    }
+  };
+
   useEffect(() => {
     const onOrderPlaced = () => {
       setSection('orders');
@@ -162,23 +314,65 @@ export default function Account() {
       ? {
           'order:created': () => loadDashboardData(),
           'order:updated': (p) => {
+            if (p?.order?.id) {
+              setMyOrders((prev) =>
+                prev.map((o) =>
+                  o.id === p.order.id
+                    ? { ...o, ...p.order, customerDeliveryOtp: o.customerDeliveryOtp || p.order.customerDeliveryOtp }
+                    : o
+                )
+              );
+              setSelectedOrder((prev) =>
+                prev && prev.id === p.order.id
+                  ? { ...prev, ...p.order, customerDeliveryOtp: prev.customerDeliveryOtp || p.order.customerDeliveryOtp }
+                  : prev
+              );
+            }
             loadDashboardData();
-            if (p?.orderId) showToast(`Order ${p.orderId} updated.`);
           },
-          'order:out-for-delivery': (p) => {
+          'order:out-for-delivery': () => {
             loadDashboardData();
-            showToast(`Order ${p?.orderId || ''} is out for delivery!`);
           },
-          'order:delivered': (p) => {
+          'order:delivered': () => {
             loadDashboardData();
-            showToast(`Order ${p?.orderId || ''} delivered!`);
           },
           'order:cancelled': () => loadDashboardData(),
           'delivery:assigned': () => {
             loadDashboardData();
-            showToast('Delivery partner assigned to your order.');
           },
           'delivery:updated': () => loadDashboardData(),
+          'delivery:location-updated': (p) => {
+            if (p?.orderId && (p?.order?.delivery || p?.liveLocation)) {
+              const nextDeliveryPatch = p.order?.delivery || { liveLocation: p.liveLocation };
+              setMyOrders((prev) =>
+                prev.map((o) =>
+                  o.id === p.orderId ? { ...o, delivery: { ...(o.delivery || {}), ...nextDeliveryPatch } } : o
+                )
+              );
+              setSelectedOrder((prev) =>
+                prev && prev.id === p.orderId
+                  ? { ...prev, delivery: { ...(prev.delivery || {}), ...nextDeliveryPatch } }
+                  : prev
+              );
+            } else {
+              loadDashboardData();
+            }
+          },
+          'order:location-updated': (p) => {
+            if (p?.orderId && (p?.order?.delivery || p?.liveLocation)) {
+              const nextDeliveryPatch = p.order?.delivery || { liveLocation: p.liveLocation };
+              setMyOrders((prev) =>
+                prev.map((o) =>
+                  o.id === p.orderId ? { ...o, delivery: { ...(o.delivery || {}), ...nextDeliveryPatch } } : o
+                )
+              );
+              setSelectedOrder((prev) =>
+                prev && prev.id === p.orderId
+                  ? { ...prev, delivery: { ...(prev.delivery || {}), ...nextDeliveryPatch } }
+                  : prev
+              );
+            }
+          },
           'delivery:otp-refreshed': () => loadDashboardData(),
           'payment:successful': () => loadDashboardData(),
           'payment:updated': () => loadDashboardData(),
@@ -448,6 +642,13 @@ export default function Account() {
         </button>
         <button
           type="button"
+          className={`account-nav-pill ${section === 'wallet' ? 'account-nav-pill-active' : ''}`.trim()}
+          onClick={() => setSection('wallet')}
+        >
+          ⚡ Wallet ({money(wallet.balance)})
+        </button>
+        <button
+          type="button"
           className={`account-nav-pill ${section === 'referrals' ? 'account-nav-pill-active' : ''}`.trim()}
           onClick={() => setSection('referrals')}
         >
@@ -461,6 +662,100 @@ export default function Account() {
           <FiLock size={15} /> Account Settings
         </button>
       </div>
+
+      {section === 'wallet' && (
+        <section className="account-card" style={{ display: 'grid', gap: 18 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <div>
+              <h2>HRUVITA Wallet &amp; 1-Tap Morning Pay</h2>
+              <p style={{ color: 'var(--muted)', fontSize: '0.88rem', marginTop: 4 }}>
+                Pre-load your wallet once for instant 1-tap morning checkout with zero UPI/OTP friction.
+              </p>
+            </div>
+            <div
+              style={{
+                padding: '12px 18px',
+                borderRadius: 14,
+                background: 'linear-gradient(135deg, #123728 0%, #1b4d38 100%)',
+                color: '#ffffff',
+                minWidth: 170,
+              }}
+            >
+              <span style={{ fontSize: '0.72rem', opacity: 0.85, display: 'block' }}>Available Balance</span>
+              <strong style={{ fontSize: '1.5rem' }}>{money(wallet.balance)}</strong>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            {[200, 500, 1000].map((preset) => (
+              <Button
+                key={preset}
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={walletBusy}
+                onClick={() => handleWalletTopup(preset)}
+              >
+                + {money(preset)}
+              </Button>
+            ))}
+            <input
+              type="number"
+              min={50}
+              max={10000}
+              value={topupAmount}
+              onChange={(e) => setTopupAmount(e.target.value)}
+              style={{
+                width: 110,
+                padding: '8px 10px',
+                borderRadius: 10,
+                border: '1px solid #d5e1d8',
+              }}
+              aria-label="Custom wallet top-up amount"
+            />
+            <Button type="button" size="sm" disabled={walletBusy} onClick={() => handleWalletTopup()}>
+              {walletBusy ? 'Adding...' : 'Add Money'}
+            </Button>
+          </div>
+
+          <div>
+            <h3 style={{ fontSize: '0.98rem', marginBottom: 10 }}>Recent Wallet Transactions</h3>
+            {wallet.transactions.length === 0 ? (
+              <p style={{ color: 'var(--muted)', fontSize: '0.88rem' }}>
+                No wallet transactions yet. Top up above to try 1-Tap Morning Pay!
+              </p>
+            ) : (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {wallet.transactions.map((tx) => (
+                  <div
+                    key={tx.id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '10px 12px',
+                      borderRadius: 10,
+                      border: '1px solid #e3ebe5',
+                      background: '#f9fcfa',
+                      fontSize: '0.86rem',
+                    }}
+                  >
+                    <div>
+                      <strong>{tx.description}</strong>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                        {tx.at ? new Date(tx.at).toLocaleString('en-IN') : ''}
+                      </div>
+                    </div>
+                    <strong style={{ color: tx.delta >= 0 ? '#166534' : '#b91c1c' }}>
+                      {tx.delta >= 0 ? `+${money(tx.amount)}` : `-${money(tx.amount)}`}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {section === 'orders' && (
         <section className="account-card">
@@ -538,11 +833,11 @@ export default function Account() {
                   const isCancelled = ['cancelled', 'refunded', 'refund_initiated'].includes(ord.status);
                   const placedStr = ord.createdAt
                     ? new Date(ord.createdAt).toLocaleString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })
+                      day: 'numeric',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })
                     : ord.scheduledDate;
 
                   return (
@@ -557,13 +852,12 @@ export default function Account() {
                           setSelectedOrder(ord);
                         }
                       }}
-                      className={`account-order-card account-order-clickable ${
-                        isCancelled
-                          ? 'account-order-cancelled'
-                          : ord.status === 'delivered'
-                            ? 'account-order-delivered'
-                            : ''
-                      }`.trim()}
+                      className={`account-order-card account-order-clickable ${isCancelled
+                        ? 'account-order-cancelled'
+                        : ord.status === 'delivered'
+                          ? 'account-order-delivered'
+                          : ''
+                        }`.trim()}
                     >
                       <div className="account-order-visual-row">
                         <div className={`account-order-collage ${items.length > 1 ? 'account-collage-multi' : ''}`}>
@@ -612,64 +906,122 @@ export default function Account() {
                         </div>
                       </div>
 
-                          <div className="account-order-foot">
-                            <div style={{ width: '100%', fontSize: '0.8rem', color: ord.deliveryAssignment?.deliveryBoyId ? 'var(--primary)' : 'var(--muted)', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                              {ord.deliveryAssignment?.deliveryBoyId ? (
-                                <>
-                                  <span>
-                                    Delivery Partner: <strong>{ord.deliveryAssignment.deliveryBoyName}</strong> ({ord.deliveryAssignment.deliveryBoyPhone})
-                                  </span>
-                                  {ord.deliveryAssignment.deliveryBoyPhone && (
-                                    <a
-                                      href={`tel:${ord.deliveryAssignment.deliveryBoyPhone}`}
-                                      onClick={(e) => e.stopPropagation()}
-                                      style={{ color: 'var(--primary)', fontWeight: 700 }}
-                                    >
-                                      Call Partner
-                                    </a>
-                                  )}
-                                </>
+                      <div className="account-order-foot">
+                        <div style={{ width: '100%', fontSize: '0.8rem', color: ord.deliveryAssignment?.deliveryBoyId ? 'var(--primary)' : 'var(--muted)', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                          {ord.deliveryAssignment?.deliveryBoyId ? (
+                            <>
+                              <span>
+                                Delivery Partner: <strong>{ord.deliveryAssignment.deliveryBoyName}</strong> ({ord.deliveryAssignment.deliveryBoyPhone})
+                              </span>
+                              {ord.deliveryAssignment.deliveryBoyPhone && (
+                                <a
+                                  href={`tel:${ord.deliveryAssignment.deliveryBoyPhone}`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  style={{ color: 'var(--primary)', fontWeight: 700 }}
+                                >
+                                  Call Partner
+                                </a>
+                              )}
+                            </>
+                          ) : (
+                            <span>Your delivery partner will be assigned soon.</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {(ord.deliveryStatus === 'out_for_delivery' || ord.status === 'out_for_delivery') && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            margin: '8px 0 4px',
+                            padding: '10px 12px',
+                            borderRadius: 12,
+                            background: '#ecfdf3',
+                            border: '1px solid #86efac',
+                            display: 'grid',
+                            gap: 10,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              flexWrap: 'wrap',
+                              gap: 8,
+                            }}
+                          >
+                            <div style={{ fontSize: '0.82rem', color: '#14532d' }}>
+                              <strong>🏍️ Bike Live Tracking</strong>
+                              {ord.delivery?.liveLocation?.updatedAt ? (
+                                <span>
+                                  {' '}
+                                  &bull;{' '}
+                                  {ord.delivery.liveLocation.speedKmh > 0
+                                    ? `${ord.delivery.liveLocation.speedKmh} km/h`
+                                    : 'Live GPS'}{' '}
+                                  &bull; Updated{' '}
+                                  {new Date(ord.delivery.liveLocation.updatedAt).toLocaleTimeString('en-IN', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                  })}
+                                </span>
                               ) : (
-                                <span>Your delivery partner will be assigned soon.</span>
+                                <span> &bull; Waiting for partner GPS ping...</span>
                               )}
                             </div>
-                          </div>
-
-                          {ord.customerDeliveryOtp && (
-                            <div
-                              onClick={(e) => e.stopPropagation()}
-                              style={{
-                                margin: '6px 0 4px',
-                                padding: '8px 12px',
-                                borderRadius: 10,
-                                background: '#fffbeb',
-                                border: '1px solid #fcd34d',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                flexWrap: 'wrap',
-                                gap: 8,
-                              }}
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() =>
+                                setExpandedTrackOrderId((cur) => (cur === ord.id ? '' : ord.id))
+                              }
                             >
-                              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#92400e' }}>
-                                Delivery OTP (share on arrival):
-                              </span>
-                              <strong
-                                style={{
-                                  fontFamily: 'monospace',
-                                  fontSize: '1.08rem',
-                                  letterSpacing: '0.18em',
-                                  color: '#92400e',
-                                  background: '#ffffff',
-                                  padding: '3px 9px',
-                                  borderRadius: 6,
-                                  border: '1px dashed #f59e0b',
-                                }}
-                              >
-                                {ord.customerDeliveryOtp}
-                              </strong>
-                            </div>
+                              {expandedTrackOrderId === ord.id ? 'Hide Live Map' : 'Track Bike Live'}
+                            </Button>
+                          </div>
+                          {expandedTrackOrderId === ord.id && (
+                            <LiveDeliveryMap order={ord} height={230} />
                           )}
+                        </div>
+                      )}
+
+                      {ord.customerDeliveryOtp && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            margin: '6px 0 4px',
+                            padding: '8px 12px',
+                            borderRadius: 10,
+                            background: '#fffbeb',
+                            border: '1px solid #fcd34d',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            flexWrap: 'wrap',
+                            gap: 8,
+                          }}
+                        >
+                          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#92400e' }}>
+                            Delivery OTP (share on arrival):
+                          </span>
+                          <strong
+                            style={{
+                              fontFamily: 'monospace',
+                              fontSize: '1.08rem',
+                              letterSpacing: '0.18em',
+                              color: '#92400e',
+                              background: '#ffffff',
+                              padding: '3px 9px',
+                              borderRadius: 6,
+                              border: '1px dashed #f59e0b',
+                            }}
+                          >
+                            {ord.customerDeliveryOtp}
+                          </strong>
+                        </div>
+                      )}
 
                       <div className="account-order-foot">
                         <div className="account-order-pay">
@@ -678,8 +1030,8 @@ export default function Account() {
                             {ord.originalPaymentMethod === 'COD' && (ord.currentPaymentMethod === 'Online' || ord.paymentMethod === 'razorpay') && ord.paymentStatus === 'paid'
                               ? 'COD → Online Payment (Prepaid) • PAID'
                               : ord.paymentMethod === 'cod' && ord.paymentStatus !== 'paid'
-                              ? 'COD – Payment Pending'
-                              : `${ord.paymentMethod.toUpperCase()} (${ord.paymentStatus})`}
+                                ? 'COD – Payment Pending'
+                                : `${ord.paymentMethod.toUpperCase()} (${ord.paymentStatus})`}
                           </span>
                           <strong className="account-order-total">
                             {money(ord.pricing?.grandTotal)}
@@ -757,9 +1109,8 @@ export default function Account() {
                       </div>
                     </div>
                     <span
-                      className={`account-status-badge ${
-                        sub.status === 'paused' ? 'account-status-pending' : ''
-                      }`.trim()}
+                      className={`account-status-badge ${sub.status === 'paused' ? 'account-status-pending' : ''
+                        }`.trim()}
                     >
                       {sub.status}
                     </span>
@@ -841,8 +1192,7 @@ export default function Account() {
                 </Button>
                 <a
                   href={`https://wa.me/?text=${encodeURIComponent(
-                    `Order fresh fruit bowls & healthy breakfasts from HRUVITA! Use my referral code ${
-                      user.referralCode || ''
+                    `Order fresh fruit bowls & healthy breakfasts from HRUVITA! Use my referral code ${user.referralCode || ''
                     } at ${window.location.origin}/signup?ref=${encodeURIComponent(
                       user.referralCode || ''
                     )} to earn reward points on your first order.`
@@ -1229,6 +1579,126 @@ export default function Account() {
                     >
                       <FiTrash2 size={13} /> Remove
                     </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="account-card" style={{ display: 'grid', gap: 14 }}>
+            <div>
+              <h2>🔔 Push Notifications (PWA Alerts)</h2>
+              <p style={{ color: 'var(--muted)', fontSize: '0.86rem', marginTop: 4 }}>
+                Get instant mobile &amp; desktop alerts for &ldquo;Out for Delivery&rdquo;, &ldquo;Order Delivered&rdquo;, and morning reminders — even when the browser is closed.
+              </p>
+            </div>
+
+            {isPushSupported() ? (
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                {pushSubscribed ? (
+                  <>
+                    <Button type="button" size="sm" disabled={pushBusy} onClick={handleTestPush}>
+                      {pushBusy ? 'Sending...' : 'Send Test Notification'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={pushBusy}
+                      onClick={handleDisablePush}
+                    >
+                      Disable on This Device
+                    </Button>
+                  </>
+                ) : (
+                  <Button type="button" size="sm" disabled={pushBusy} onClick={handleEnablePush}>
+                    {pushBusy ? 'Enabling...' : '🔔 Enable Push Notifications'}
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--muted)', fontSize: '0.84rem' }}>
+                Web Push requires HTTPS (or localhost) in a supported browser (Chrome, Edge, or iOS 16.4+ Safari Home Screen PWA).
+              </p>
+            )}
+          </section>
+
+          <section className="account-card" style={{ display: 'grid', gap: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+              <div>
+                <h2>🛡️ Active Sessions &amp; Device Manager</h2>
+                <p style={{ color: 'var(--muted)', fontSize: '0.86rem', marginTop: 4 }}>
+                  Review devices currently signed into your HRUVITA account and sign out unrecognized sessions remotely.
+                </p>
+              </div>
+              {sessions.filter((s) => !s.isCurrent).length > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={sessionsBusy}
+                  onClick={handleRevokeOtherSessions}
+                >
+                  Sign Out Other Devices
+                </Button>
+              )}
+            </div>
+
+            {sessions.length === 0 ? (
+              <p style={{ color: 'var(--muted)', fontSize: '0.84rem' }}>
+                No active refresh sessions recorded for this account.
+              </p>
+            ) : (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {sessions.map((s) => (
+                  <div
+                    key={s.id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: 10,
+                      padding: '10px 12px',
+                      borderRadius: 10,
+                      border: s.isCurrent ? '1px solid #86efac' : '1px solid #e3ebe5',
+                      background: s.isCurrent ? '#f0fdf4' : '#f9fcfa',
+                      fontSize: '0.84rem',
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <strong>{s.deviceLabel || 'Browser Session'}</strong>
+                        {s.isCurrent && (
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: 999,
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              background: '#dcfce7',
+                              color: '#166534',
+                            }}
+                          >
+                            Current Device
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '0.74rem', color: 'var(--muted)', marginTop: 2 }}>
+                        IP: {s.ipAddress || 'Unknown'} &bull; Signed in{' '}
+                        {s.createdAt ? new Date(s.createdAt).toLocaleString('en-IN') : ''}
+                      </div>
+                    </div>
+                    {!s.isCurrent && (
+                      <button
+                        type="button"
+                        className="account-mini-btn"
+                        disabled={sessionsBusy}
+                        onClick={() => handleRevokeSession(s.id)}
+                      >
+                        <FiLogOut size={13} /> Sign Out
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

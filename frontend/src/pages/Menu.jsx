@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ProductCard from '../components/ProductCard.jsx';
 import Button from '../components/Button.jsx';
+import { ProductGridSkeleton } from '../components/Skeleton.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
 import { unitPrice } from '../lib/format.js';
 import './Menu.css';
@@ -159,11 +160,7 @@ export default function Menu() {
       </div>
 
       {loading ? (
-        <div className="menu-cards">
-          {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-            <div key={n} className="skeleton-card" />
-          ))}
-        </div>
+        <ProductGridSkeleton count={8} className="menu-cards" />
       ) : list.length === 0 ? (
         <div className="menu-empty">
           <p>No items match your current filters.</p>

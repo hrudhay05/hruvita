@@ -40,6 +40,8 @@ import {
   transitionOrderStatus,
   findUserById,
   updateUser,
+  getUserWallet,
+  adjustUserWallet,
 } from '../store/repository.js';
 
 const router = Router();
@@ -106,6 +108,17 @@ router.post('/orders', requireAuth, async (req, res) => {
     const settings = await getSettings();
     if (settings.storeOpen === false) {
       return res.status(400).json({ error: 'The store is currently closed for new orders.' });
+    }
+
+    const activePincodes =
+      Array.isArray(settings.serviceablePincodes) && settings.serviceablePincodes.length
+        ? settings.serviceablePincodes.map((p) => String(p).trim())
+        : ['500001', '500032', '500033', '500034', '500081', '500082', '500084'];
+    const pinClean = String(address.pincode || '').trim();
+    if (!activePincodes.includes(pinClean)) {
+      return res.status(400).json({
+        error: `Delivery is currently unavailable for pincode ${pinClean}.`,
+      });
     }
 
     if (paymentMethod === 'cod' && settings.codEnabled === false) {
@@ -222,6 +235,110 @@ router.post('/orders', requireAuth, async (req, res) => {
 
       emitOrderCreated(order);
       return res.status(201).json({ order, payment });
+    }
+
+    if (paymentMethod === 'wallet') {
+      const wallet = await getUserWallet(req.user.id);
+      if (wallet.balance < quote.pricing.grandTotal) {
+        return res.status(400).json({
+          error: `Insufficient HRUVITA Wallet balance (₹${wallet.balance}). Please top up or choose Razorpay/COD.`,
+        });
+      }
+
+      await deductOrderStockAtomically(quote.items, {
+        reason: 'order_deducted',
+        orderId,
+        actor: req.user.email,
+      });
+
+      const walletDebit = await adjustUserWallet({
+        userId: req.user.id,
+        delta: -quote.pricing.grandTotal,
+        type: 'debit',
+        description: `1-Tap Morning Pay (${orderId})`,
+        orderId,
+      });
+      if (!walletDebit) {
+        return res.status(400).json({ error: 'Insufficient wallet balance.' });
+      }
+
+      if (quote.pricing.rewardPointsUsed > 0) {
+        const user = await findUserById(req.user.id);
+        if (user) {
+          const nextPoints = Math.max(0, (user.rewardPoints || 0) - quote.pricing.rewardPointsUsed);
+          await updateUser(user.id, { rewardPoints: nextPoints });
+        }
+      }
+
+      const order = await createOrderRecord({
+        id: orderId,
+        idempotencyKey: idempotencyKey || `${req.user.id}-${orderId}`,
+        userId: req.user.id,
+        customerName: req.user.name,
+        customerEmail: req.user.email,
+        customerPhone: address.phone || req.user.phone,
+        items: quote.items,
+        pricing: quote.pricing,
+        address,
+        scheduledDate: deliveryDate,
+        slotId: slot.id,
+        slotLabel: `${slot.name} (${slot.window})`,
+        paymentMethod: 'wallet',
+        originalPaymentMethod: 'Wallet',
+        currentPaymentMethod: 'Wallet',
+        paymentStatus: 'paid',
+        status: 'confirmed',
+        stockDeducted: true,
+        statusHistory: [
+          {
+            status: 'confirmed',
+            note: 'Paid via HRUVITA Wallet (1-Tap Morning Pay)',
+            by: req.user.email,
+            at: now,
+          },
+        ],
+      });
+
+      if (quote.pricing.couponCode) {
+        await recordCouponRedemption({
+          couponCode: quote.pricing.couponCode,
+          customerId: req.user.id,
+          customerEmail: req.user.email,
+          orderId,
+          discountAmount: quote.pricing.couponDiscount,
+          status: 'redeemed',
+        });
+      }
+
+      const payment = await createPaymentRecord({
+        id: `PAY-${Date.now().toString(36).toUpperCase()}`,
+        orderId: order.id,
+        userId: req.user.id,
+        method: 'wallet',
+        amount: quote.pricing.grandTotal,
+        currency: 'INR',
+        status: 'captured',
+      });
+
+      await sendUserNotification({
+        userId: req.user.id,
+        email: req.user.email,
+        type: 'order',
+        title: `Order Confirmed (${order.id})`,
+        message: `Your 1-Tap Wallet order of ₹${quote.pricing.grandTotal} is confirmed for ${deliveryDate} (${slot.name}).`,
+      });
+
+      notifyAdmins({
+        dedupKey: `new-wallet-${order.id}`,
+        category: 'order',
+        title: `New Wallet Order ${order.id}`,
+        description: `₹${quote.pricing.grandTotal} paid via HRUVITA Wallet by ${req.user.name || req.user.email}.`,
+        entityType: 'order',
+        entityId: order.id,
+      }).catch(() => {});
+
+      emitOrderCreated(order);
+      return res.status(201).json({ order, payment, walletBalance: walletDebit.balance });
     }
 
     // Razorpay Online Flow: reserve stock for 10 minutes while customer completes payment

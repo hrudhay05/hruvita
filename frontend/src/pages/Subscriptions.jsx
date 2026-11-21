@@ -20,24 +20,16 @@ export default function Subscriptions() {
   return (
     <div className="container" style={{ paddingBottom: 56 }}>
       <header className="subscriptions-head">
-        <span className="home-eyebrow">Daily Wellness Routine</span>
-        <h1 style={{ marginTop: 12 }}>Daily Breakfast Subscriptions</h1>
+        <span className="subscriptions-eyebrow">Daily Wellness Routine</span>
+        <h1>Daily Breakfast Subscriptions</h1>
         <p>
           Select your preferred morning meal and delivery slot. You can pause or resume your plan
           anytime directly from your Customer Dashboard.
         </p>
       </header>
 
-      <div
-        className="account-card"
-        style={{
-          marginBottom: 32,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-          gap: 16,
-        }}
-      >
-        <div className="auth-field">
+      <div className="subscriptions-prefs-card">
+        <div className="subscriptions-field">
           <label htmlFor="sub-breakfast">Preferred Morning Meal</label>
           <select
             id="sub-breakfast"
@@ -52,7 +44,7 @@ export default function Subscriptions() {
           </select>
         </div>
 
-        <div className="auth-field">
+        <div className="subscriptions-field">
           <label htmlFor="sub-slot">Preferred Delivery Slot</label>
           <select id="sub-slot" value={slotId} onChange={(e) => setSlotId(e.target.value)}>
             <option value="morning">Morning Slot (6:30 AM – 9:00 AM)</option>

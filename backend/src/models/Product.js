@@ -13,6 +13,7 @@ const productSchema = new mongoose.Schema(
     id: { type: String, required: true, unique: true, index: true },
     name: { type: String, required: true, trim: true },
     category: { type: String, required: true, index: true },
+    businessType: { type: String, enum: ['fruits', 'grocery'], default: 'fruits', index: true },
     emoji: { type: String, default: '🍲' },
     image: { type: String, default: '' },
     images: { type: [String], default: [] },

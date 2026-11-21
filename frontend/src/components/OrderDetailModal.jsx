@@ -18,6 +18,7 @@ import {
 import { apiRequest } from '../lib/api.js';
 import { loadRazorpayScript } from '../lib/razorpay.js';
 import { money } from '../lib/format.js';
+import LiveDeliveryMap from './LiveDeliveryMap.jsx';
 import './OrderDetailModal.css';
 
 const LIFECYCLE_STAGES = [
@@ -72,6 +73,7 @@ export default function OrderDetailModal({
   const [payBusy, setPayBusy] = useState(false);
   const [payErr, setPayErr] = useState('');
   const [payMsg, setPayMsg] = useState('');
+  const [trackLiveOpen, setTrackLiveOpen] = useState(true);
 
   if (!order) return null;
 
@@ -665,6 +667,50 @@ export default function OrderDetailModal({
                       </div>
                     )}
                   </div>
+
+                  {(order.deliveryStatus === 'out_for_delivery' || order.status === 'out_for_delivery') && (() => {
+                    const etaMins = Number(order.delivery?.etaMinutes || 20);
+                    const bikeProgressPct = Math.max(18, Math.min(92, 100 - etaMins * 3));
+                    return (
+                    <div className="odm-live-tracker">
+                      <div className="odm-live-header">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <div className="odm-live-eta-block">
+                            <span className="odm-live-badge">
+                              <span className="odm-live-dot" /> LIVE
+                            </span>
+                            <div>
+                              <strong className="odm-live-eta-title">
+                                Arriving in ~{etaMins} mins
+                              </strong>
+                              <span className="odm-live-eta-sub">
+                                {order.delivery?.estimatedArrivalAt
+                                  ? `Estimated arrival ${formatDateTime(order.delivery.estimatedArrivalAt)}`
+                                  : 'Fresh morning bowl is on the way to you'}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="odm-map-float-btn odm-map-float-btn-static"
+                            onClick={() => setTrackLiveOpen((v) => !v)}
+                          >
+                            <FiMapPin size={13} /> {trackLiveOpen ? 'Hide Live Map' : 'Track Live Order'}
+                          </button>
+                        </div>
+                        <div className="odm-live-route-strip" aria-hidden="true">
+                          <span className="odm-route-node">🏪 Kitchen</span>
+                          <span className="odm-route-track">
+                            <span className="odm-route-bike" style={{ left: `${bikeProgressPct}%` }}>🛵</span>
+                          </span>
+                          <span className="odm-route-node">📍 You</span>
+                        </div>
+                      </div>
+
+                      {trackLiveOpen && <LiveDeliveryMap order={order} height={240} />}
+                    </div>
+                    );
+                  })()}
                 </>
               ) : (
                 <p style={{ fontSize: '0.84rem', color: 'var(--muted)' }}>

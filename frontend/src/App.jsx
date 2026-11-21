@@ -2,12 +2,16 @@ import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
+import OfflineBanner from './components/OfflineBanner.jsx';
+import { PageSkeleton } from './components/Skeleton.jsx';
 import Home from './pages/Home.jsx';
 
 const Menu = lazy(() => import('./pages/Menu.jsx'));
+const Groceries = lazy(() => import('./pages/Groceries.jsx'));
 const BuildBowl = lazy(() => import('./pages/BuildBowl.jsx'));
 const ProductDetail = lazy(() => import('./pages/ProductDetail.jsx'));
 const Subscriptions = lazy(() => import('./pages/Subscriptions.jsx'));
+const GroupDrops = lazy(() => import('./pages/GroupDrops.jsx'));
 const About = lazy(() => import('./pages/About.jsx'));
 const Contact = lazy(() => import('./pages/Contact.jsx'));
 const LegalPage = lazy(() => import('./pages/LegalPage.jsx'));
@@ -22,19 +26,16 @@ const AddressFormPage = lazy(() => import('./pages/AddressFormPage.jsx'));
 const SavedAddresses = lazy(() => import('./pages/SavedAddresses.jsx'));
 const Account = lazy(() => import('./pages/Account.jsx'));
 const Admin = lazy(() => import('./pages/Admin.jsx'));
+const GroceryAdmin = lazy(() => import('./pages/GroceryAdmin.jsx'));
 const AdminAnalystPage = lazy(() => import('./pages/AdminAnalystPage.jsx'));
 const DeliveryDashboard = lazy(() => import('./pages/DeliveryDashboard.jsx'));
 const NotFound = lazy(() => import('./pages/NotFound.jsx'));
 
 export default function App() {
   return (
-    <Suspense
-      fallback={
-        <div style={{ minHeight: '60vh', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: '0.92rem' }}>
-          Loading...
-        </div>
-      }
-    >
+    <>
+      <OfflineBanner />
+      <Suspense fallback={<PageSkeleton />}>
       <Routes>
       {/* Dedicated Role-Protected Workspaces */}
       <Route
@@ -42,6 +43,14 @@ export default function App() {
         element={
           <ProtectedRoute allowedRoles={['admin', 'staff']}>
             <Admin />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="grocery-admin"
+        element={
+          <ProtectedRoute allowedRoles={['grocery_admin']}>
+            <GroceryAdmin />
           </ProtectedRoute>
         }
       />
@@ -67,9 +76,40 @@ export default function App() {
       <Route element={<Layout />}>
         <Route index element={<Home />} />
         <Route path="menu" element={<Menu />} />
-        <Route path="build-bowl" element={<BuildBowl />} />
+        <Route path="groceries" element={<Groceries />} />
+        <Route
+          path="build-bowl"
+          element={
+            <ProtectedRoute redirectTo="/login">
+              <BuildBowl />
+            </ProtectedRoute>
+          }
+        />
         <Route path="product/:id" element={<ProductDetail />} />
-        <Route path="subscriptions" element={<Subscriptions />} />
+        <Route
+          path="subscriptions"
+          element={
+            <ProtectedRoute redirectTo="/login">
+              <Subscriptions />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="group-drops"
+          element={
+            <ProtectedRoute redirectTo="/login">
+              <GroupDrops />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="group-drops/:code"
+          element={
+            <ProtectedRoute redirectTo="/login">
+              <GroupDrops />
+            </ProtectedRoute>
+          }
+        />
         <Route path="about" element={<About />} />
         <Route path="contact" element={<Contact />} />
         <Route path="privacy" element={<LegalPage type="privacy" />} />
@@ -91,5 +131,6 @@ export default function App() {
       </Route>
     </Routes>
     </Suspense>
+    </>
   );
 }

@@ -349,3 +349,319 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* ---------- Swiggy / Zomato Style Live Delivery Map & ETA ---------- */
+.odm-live-tracker {
+  margin-top: 10px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid #cce3d4;
+  background: #ffffff;
+  box-shadow: 0 10px 26px rgba(18, 55, 40, 0.09);
+}
+
+.odm-live-header {
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #103524 0%, #1d573b 100%);
+  color: #ffffff;
+  display: grid;
+  gap: 12px;
+}
+
+.odm-live-eta-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.odm-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #bbf7d0;
+  flex-shrink: 0;
+}
+
+.odm-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+  animation: odmLivePulse 1.6s infinite;
+}
+
+@keyframes odmLivePulse {
+  0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+  70% { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+}
+
+.odm-live-eta-title {
+  display: block;
+  font-size: 1.04rem;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.odm-live-eta-sub {
+  display: block;
+  font-size: 0.76rem;
+  color: rgba(255, 255, 255, 0.82);
+  margin-top: 2px;
+}
+
+.odm-live-route-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.odm-route-node {
+  white-space: nowrap;
+  color: #ecfdf5;
+}
+
+.odm-route-track {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  border-radius: 999px;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.45) 0 6px,
+    transparent 6px 12px
+  );
+}
+
+.odm-route-bike {
+  position: absolute;
+  top: 50%;
+  left: 52%;
+  transform: translate(-50%, -56%);
+  font-size: 1rem;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+}
+
+.odm-map-viewport {
+  position: relative;
+  width: 100%;
+  height: 210px;
+  background: #e8f1eb;
+}
+
+.odm-map-viewport iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.odm-map-bike-pin {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+}
+
+.odm-map-bike-halo {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(34, 197, 94, 0.24);
+  animation: odmLivePulse 1.8s infinite;
+}
+
+.odm-map-bike-icon {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #16a34a;
+  display: grid;
+  place-items: center;
+  font-size: 1.15rem;
+  box-shadow: 0 4px 12px rgba(16, 53, 36, 0.3);
+}
+
+.odm-map-float-tag {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(16, 53, 36, 0.9);
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.odm-map-float-btn {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #123728;
+  border: 1px solid #cfe0d5;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-decoration: none;
+  box-shadow: 0 6px 16px rgba(11, 36, 25, 0.2);
+  transition: transform 0.14s ease, background 0.14s ease;
+}
+
+.odm-map-float-btn:hover {
+  transform: translateY(-1px);
+  background: #f4faf6;
+}
+
+.odm-map-float-btn-static {
+  position: static;
+  box-shadow: 0 2px 8px rgba(11, 36, 25, 0.08);
+  white-space: nowrap;
+}
+
+.odm-map-fallback {
+  padding: 18px 16px 14px;
+  background:
+    radial-gradient(circle at 20% 25%, rgba(34, 197, 94, 0.12), transparent 45%),
+    radial-gradient(circle at 80% 70%, rgba(27, 77, 56, 0.1), transparent 50%),
+    linear-gradient(#f4f8f5 1px, transparent 1px),
+    linear-gradient(90deg, #f4f8f5 1px, transparent 1px),
+    #fbfdfb;
+  background-size: auto, auto, 24px 24px, 24px 24px, auto;
+  display: grid;
+  gap: 14px;
+}
+
+.odm-map-fallback-route {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px;
+}
+
+.odm-map-pin {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 1.05rem;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(18, 55, 40, 0.16);
+}
+
+.odm-map-pin-start {
+  background: #ffffff;
+  border: 2px solid #1b4d38;
+}
+
+.odm-map-pin-end {
+  background: #1b4d38;
+  color: #ffffff;
+}
+
+.odm-map-dash-line {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: repeating-linear-gradient(
+    90deg,
+    #2f7d4d 0 8px,
+    transparent 8px 15px
+  );
+}
+
+.odm-map-moving-scooter {
+  position: absolute;
+  top: 50%;
+  left: 55%;
+  transform: translate(-50%, -55%);
+  font-size: 1.35rem;
+  background: #ffffff;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 2px solid #22c55e;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25);
+  animation: odmScooterRide 2.8s ease-in-out infinite alternate;
+}
+
+@keyframes odmScooterRide {
+  0% { left: 28%; }
+  100% { left: 72%; }
+}
+
+.odm-map-fallback-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e2ebe5;
+}
+
+.odm-map-fallback-info strong {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--green-900);
+}
+
+.odm-map-fallback-info span {
+  display: block;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.odm-map-live-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  background: #f4faf6;
+  border-top: 1px solid #dce8e0;
+  font-size: 0.76rem;
+  color: var(--green-900);
+}
+
+.odm-map-live-sync {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-weight: 700;
+  font-size: 0.7rem;
+}
