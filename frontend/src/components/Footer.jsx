@@ -63,7 +63,7 @@ export default function Footer() {
         <div>
           <h3>Contact</h3>
           <ul className="footer-contact-list">
-           <li><FiPhone size={14} /> 7569754679</li>
+            <li><FiPhone size={14} /> 7569754679</li>
             <li><FiMail size={14} /> sanjaydasaraju@gmail.com</li>
             <li><FiMapPin size={14} /> {settings.city}, India</li>
             <li>{settings.hours}</li>

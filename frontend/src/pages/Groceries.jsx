@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { FiSearch, FiShoppingBag } from 'react-icons/fi';
 import { Link, useSearchParams } from 'react-router-dom';
 import Button from '../components/Button.jsx';
+import SeoHead from '../components/SeoHead.jsx';
 import { ProductGridSkeleton } from '../components/Skeleton.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
 import { useCart } from '../context/CartContext.jsx';
@@ -68,6 +69,11 @@ export default function Groceries() {
 
   return (
     <div className="container groc-page">
+      <SeoHead
+        title="Fresh Groceries, Fruits, Cooking & Home Essentials | HRUVITA"
+        description="Shop farm-fresh fruits, vegetables, cold-pressed cooking oils, basmati rice, bath soaps, and home cleaning essentials delivered in Hyderabad."
+        path="/groceries"
+      />
       <section className="groc-hero">
         <div>
           <span className="groc-badge">⚡ HRUVITA INSTAMART &bull; HOME &amp; GROCERY</span>

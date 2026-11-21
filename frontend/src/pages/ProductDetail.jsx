@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { FiArrowLeft, FiClock, FiHeart, FiMinus, FiPlus, FiSliders } from 'react-icons/fi';
 import Button from '../components/Button.jsx';
 import ProductCard from '../components/ProductCard.jsx';
+import SeoHead from '../components/SeoHead.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
 import { useCart } from '../context/CartContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -69,6 +70,25 @@ export default function ProductDetail() {
 
   return (
     <div className="container">
+      <SeoHead
+        title={`${product.name} — Order Online | HRUVITA`}
+        description={product.description || `Order ${product.name} fresh from HRUVITA in Hyderabad.`}
+        path={`/product/${product.id}`}
+        image={product.image}
+        jsonLd={{
+          '@context': 'https://schema.org',
+          '@type': 'Product',
+          name: product.name,
+          description: product.description || product.name,
+          image: product.image ? [product.image] : undefined,
+          offers: {
+            '@type': 'Offer',
+            priceCurrency: 'INR',
+            price: displayPrice,
+            availability: out ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock',
+          },
+        }}
+      />
       <Link to="/menu" className="product-detail-back">
         <FiArrowLeft size={16} /> Back to Menu
       </Link>

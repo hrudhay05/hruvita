@@ -6,6 +6,7 @@ import SectionHeader from '../components/SectionHeader.jsx';
 import ProductCard from '../components/ProductCard.jsx';
 import PlanCard from '../components/PlanCard.jsx';
 import BowlBuilderSection from '../components/BowlBuilderSection.jsx';
+import SeoHead from '../components/SeoHead.jsx';
 import { ProductGridSkeleton } from '../components/Skeleton.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
 import { useCart } from '../context/CartContext.jsx';
@@ -121,6 +122,11 @@ export default function Home() {
 
   return (
     <>
+      <SeoHead
+        title="HRUVITA — Fresh Fruit Bowls, Breakfast & Morning Groceries in Hyderabad"
+        description="Order hand-cut fresh fruit bowls, wholesome South Indian breakfasts, and farm-fresh home groceries delivered across Hyderabad."
+        path="/"
+      />
       {/* Hero Section */}
       <section className="home-hero">
         <div className="container home-hero-inner">

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ProductCard from '../components/ProductCard.jsx';
 import Button from '../components/Button.jsx';
+import SeoHead from '../components/SeoHead.jsx';
 import { ProductGridSkeleton } from '../components/Skeleton.jsx';
 import { useCatalog } from '../context/CatalogContext.jsx';
 import { unitPrice } from '../lib/format.js';
@@ -71,6 +72,11 @@ export default function Menu() {
 
   return (
     <div className="container" style={{ paddingBottom: 48 }}>
+      <SeoHead
+        title="Explore Menu — Fresh Fruit Bowls & Healthy Breakfast | HRUVITA"
+        description="Browse HRUVITA's menu of hand-cut fruit bowls, steamed idlis, dosas, cold-pressed juices, and healthy snacks in Hyderabad."
+        path="/menu"
+      />
       <header className="menu-head">
         <div>
           <h1>Explore Our Menu</h1>

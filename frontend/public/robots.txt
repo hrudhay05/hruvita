@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /grocery-admin
+Disallow: /admin-analyser
+Disallow: /delivery
+Disallow: /account
+Disallow: /dashboard
+Disallow: /cart
+Disallow: /login
+Disallow: /signup
+
+Sitemap: /sitemap.xml

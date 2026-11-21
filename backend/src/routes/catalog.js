@@ -163,4 +163,21 @@ router.get('/plans', async (_req, res) => {
   res.json({ plans });
 });
 
+// Dynamic SEO Sitemap (includes all active fruit & grocery product pages)
+router.get('/sitemap.xml', async (req, res) => {
+  const baseUrl = (process.env.FRONTEND_URL || 'https://hruvita.vercel.app').split(',')[0].trim().replace(/\/$/, '');
+  const products = await listProducts();
+  const staticUrls = ['/', '/menu', '/groceries', '/about', '/contact'];
+  const xmlRows = [
+    ...staticUrls.map(
+      (p) => `<url><loc>${baseUrl}${p}</loc><changefreq>daily</changefreq><priority>${p === '/' ? '1.0' : '0.8'}</priority></url>`
+    ),
+    ...products.map(
+      (prod) => `<url><loc>${baseUrl}/product/${encodeURIComponent(prod.id)}</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>`
+    ),
+  ];
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  return res.send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${xmlRows.join('')}</urlset>`);
+});
+
 export default router;
