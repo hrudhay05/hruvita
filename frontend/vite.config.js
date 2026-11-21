@@ -31,6 +31,11 @@ export default defineConfig({
         clientsClaim: true,
         cleanupOutdatedCaches: true,
         navigateFallback: '/index.html',
+        navigateFallbackDenylist: [
+          /^\/google[a-z0-9]+\.html$/i,
+          /^\/robots\.txt$/,
+          /^\/sitemap\.xml$/,
+        ],
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
       },
     }),
