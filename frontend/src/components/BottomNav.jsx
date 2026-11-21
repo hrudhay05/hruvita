@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { FiCalendar, FiGrid, FiHome, FiShoppingCart, FiUser } from 'react-icons/fi';
+import { FiGrid, FiHome, FiShoppingBag, FiShoppingCart, FiUser } from 'react-icons/fi';
 import { useCart } from '../context/CartContext.jsx';
 import './BottomNav.css';
 
@@ -16,9 +16,9 @@ export default function BottomNav() {
         <FiGrid size={20} />
         <span>Menu</span>
       </NavLink>
-      <NavLink to="/subscriptions" className="bottom-nav-item">
-        <FiCalendar size={20} />
-        <span>Plans</span>
+      <NavLink to="/groceries" className="bottom-nav-item">
+        <FiShoppingBag size={20} />
+        <span>Groceries</span>
       </NavLink>
       <NavLink to="/cart" className="bottom-nav-item">
         <span className="bottom-nav-icon">
